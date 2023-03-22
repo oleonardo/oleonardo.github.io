@@ -3,7 +3,6 @@ const nextConfig = {
   experimental: {
     appDir: true,
   },
-  assetPrefix: isProd ? '/oleonardo.github.io/' : '',
   images: {
     unoptimized: true,
   },
