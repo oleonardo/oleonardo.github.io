@@ -6,7 +6,7 @@ const inter = Inter({ subsets: ['latin'] })
 export default function Home() {
   return (
     <main className={styles.main}>
-      <h1>LEONARDO DE OLIVEIRA</h1>
+      <h1>LEONARDO DE OLIVEIRA - Léo</h1>
     </main>
   )
 }
