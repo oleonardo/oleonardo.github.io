@@ -1,0 +1,2270 @@
+/* ==========================================================================
+   DESIGN SYSTEM & CSS VARIABLE TOKENS
+   ========================================================================== */
+:root {
+    --bg-color: #02040b; /* Abyssal deep sea midnight blue */
+    --bg-darker: #010206; /* Darkest oceanic abyss black */
+    --bg-panel: rgba(2, 4, 11, 0.88); /* Integrated deep sea panel background */
+    --border-color: rgba(255, 255, 255, 0.12); /* Brighter border for a clean card contour */
+    --border-hover: rgba(0, 243, 255, 0.4);
+    
+    /* Neon Accents */
+    --color-cyan: #00f3ff;
+    --color-cyan-rgb: 0, 243, 255;
+    --color-purple: #8b5cf6;
+    --color-purple-rgb: 139, 92, 246;
+    --color-pink: #ff007f;
+    --color-pink-rgb: 255, 0, 127;
+    
+    /* Text Colors - High Contrast */
+    --text-primary: #ffffff;      /* Pure white for headers */
+    --text-secondary: #e5e7eb;    /* Very light gray for crisp body texts */
+    --text-muted: #9ca3af;        /* Medium gray for highly readable labels */
+    
+    /* Fonts */
+    --font-heading: 'Syne', sans-serif;
+    --font-hud: 'Orbitron', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    
+    /* Animation speed defaults */
+    --transition-smooth: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    --transition-fast: all 0.2s ease-out;
+}
+
+/* Headings Text Shadow for Maximum Contrast against particles */
+h1, h2, h3, h4, h5, h6 {
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+}
+
+/* ==========================================================================
+   BASE & RESET STYLES
+   ========================================================================== */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+    cursor: none; /* Hide default cursor */
+}
+
+input, textarea, button {
+    cursor: none; /* Hide default cursor */
+}
+
+/* Custom Scrollbar for container-driven scrolling if needed */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-color);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--color-cyan);
+    border-radius: 2px;
+}
+
+/* Custom Selection color */
+::selection {
+    background: rgba(0, 243, 255, 0.2);
+    color: var(--color-cyan);
+}
+
+/* ==========================================================================
+   PRELOADER
+   ========================================================================== */
+.preloader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent; /* Fully transparent to let WebGL particles render at maximum cinematic brightness */
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    transition: opacity 1.2s cubic-bezier(0.85, 0, 0.15, 1), visibility 1.2s;
+}
+
+.preloader.fade-out {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.loader-content {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 320px;
+}
+
+.loader-logo {
+    font-family: var(--font-heading);
+    font-size: 1.8rem;
+    letter-spacing: 4px;
+    margin-bottom: 25px;
+    display: flex;
+}
+
+.loader-logo .logo-light {
+    color: var(--text-primary);
+    font-weight: 300;
+}
+
+.loader-logo .logo-bold {
+    color: var(--color-cyan);
+    font-weight: 800;
+    text-shadow: 0 0 15px rgba(0, 243, 255, 0.4);
+}
+
+.loader-bar-container {
+    width: 100%;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 1px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.loader-bar {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-purple), var(--color-cyan));
+    box-shadow: 0 0 8px var(--color-cyan);
+    transition: width 0.1s linear;
+}
+
+.loader-status {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+}
+
+.status-label {
+    color: var(--text-muted);
+}
+
+.status-percent {
+    color: var(--color-cyan);
+    font-weight: 700;
+}
+
+.loader-grid {
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.007) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.007) 1px, transparent 1px);
+    background-size: 40px 40px;
+    transform: rotateX(60deg) translateY(-20%) translateZ(0);
+    opacity: 0.8;
+    animation: gridScroll 20s linear infinite;
+}
+
+@keyframes gridScroll {
+    0% { background-position: 0 0; }
+    100% { background-position: 0 800px; }
+}
+
+/* ==========================================================================
+   CANVAS & STAGE SETUPS
+   ========================================================================== */
+.webgl-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 2; /* Layered in front of the hero text for real 3D volumetric depth! */
+    pointer-events: none; /* Allows mouse hovers/clicks to pass through seamlessly to DOM elements underneath */
+}
+
+.pointer-events-none {
+    pointer-events: none;
+}
+
+/* ==========================================================================
+   CUSTOM CURSOR
+   ========================================================================== */
+.custom-cursor {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 10000;
+    transition: width 0.3s var(--transition-smooth), height 0.3s var(--transition-smooth), border-color 0.3s;
+}
+
+.custom-cursor-dot {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 6px;
+    height: 6px;
+    background-color: var(--color-cyan);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 10000;
+    box-shadow: 0 0 10px var(--color-cyan);
+    transition: transform 0.1s ease-out;
+}
+
+.custom-cursor.hover {
+    width: 50px;
+    height: 50px;
+    border-color: var(--color-pink);
+    background-color: rgba(255, 0, 127, 0.05);
+}
+
+.custom-cursor-dot.hover {
+    background-color: var(--color-pink);
+    box-shadow: 0 0 12px var(--color-pink);
+}
+
+/* ==========================================================================
+   BIOLUMINESCENT AMBIENT REMNANTS (CSS SPARKS & GLOW BLOBS)
+   ========================================================================== */
+.ambient-remnants {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0; /* Behind all text/cards, but in front of WebGL canvas for seamless integration */
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.remnant {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    will-change: transform, opacity;
+}
+
+/* Bioluminescent floating sparks (particle remnants) */
+.spark-1 {
+    width: 8px;
+    height: 8px;
+    background: var(--color-cyan);
+    box-shadow: 0 0 15px var(--color-cyan), 0 0 30px rgba(0, 243, 255, 0.3);
+    top: 15%;
+    left: 10%;
+    filter: blur(2px);
+    animation: floatSpark 22s ease-in-out infinite;
+}
+
+.spark-2 {
+    width: 10px;
+    height: 10px;
+    background: var(--color-purple);
+    box-shadow: 0 0 20px var(--color-purple), 0 0 35px rgba(139, 92, 246, 0.3);
+    top: 65%;
+    left: 85%;
+    filter: blur(2.5px);
+    animation: floatSpark 28s ease-in-out infinite alternate;
+}
+
+.spark-3 {
+    width: 6px;
+    height: 6px;
+    background: var(--color-pink);
+    box-shadow: 0 0 12px var(--color-pink), 0 0 24px rgba(255, 0, 127, 0.3);
+    top: 80%;
+    left: 20%;
+    filter: blur(1.5px);
+    animation: floatSpark 18s ease-in-out infinite;
+}
+
+.spark-4 {
+    width: 9px;
+    height: 9px;
+    background: var(--color-cyan);
+    box-shadow: 0 0 18px var(--color-cyan), 0 0 32px rgba(0, 243, 255, 0.3);
+    top: 30%;
+    left: 75%;
+    filter: blur(2px);
+    animation: floatSpark 25s ease-in-out infinite alternate;
+}
+
+/* Gigantic slow-drifting deep sea ambient glowing blobs */
+.glow-blob-1 {
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(0, 243, 255, 0.08) 0%, transparent 70%);
+    top: -150px;
+    left: -100px;
+    filter: blur(40px);
+    animation: floatBlob 42s ease-in-out infinite alternate;
+}
+
+.glow-blob-2 {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
+    bottom: -200px;
+    right: -100px;
+    filter: blur(50px);
+    animation: floatBlob 55s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes floatSpark {
+    0% {
+        transform: translate(0, 0) scale(1.0);
+        opacity: 0.15;
+    }
+    50% {
+        transform: translate(140px, -90px) scale(1.3);
+        opacity: 0.45;
+    }
+    100% {
+        transform: translate(-30px, 50px) scale(0.9);
+        opacity: 0.15;
+    }
+}
+
+@keyframes floatBlob {
+    0% {
+        transform: translate(0, 0) scale(1.0);
+    }
+    50% {
+        transform: translate(100px, 60px) scale(1.15);
+    }
+    100% {
+        transform: translate(-40px, -70px) scale(0.9);
+    }
+}
+
+/* ==========================================================================
+   MAIN HEADER
+   ========================================================================== */
+.main-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 30px 5%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 100; /* Sits above the WebGL particle canvas (z-index: 2) so the header always reads on top */
+    opacity: 0; /* Hidden during loading, revealed via GSAP after load completion */
+}
+
+.logo {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    text-decoration: none; /* Prevents browser underlines */
+    position: relative;
+    
+    /* Isometric 3D Space projection tilt! */
+    transform: skewX(-4deg) rotateY(-8deg);
+    transform-style: preserve-3d;
+    perspective: 500px;
+    transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), filter 0.3s ease;
+    
+    /* Drop shadow instead of text shadow for vector elements */
+    filter: drop-shadow(1px 1px 0px var(--color-cyan))
+            drop-shadow(2px 2px 0px rgba(0, 243, 255, 0.7))
+            drop-shadow(3px 3px 0px var(--color-purple))
+            drop-shadow(4px 4px 0px rgba(139, 92, 246, 0.7))
+            drop-shadow(5px 5px 12px rgba(0, 0, 0, 0.9));
+}
+
+.logo:hover {
+    /* Push forward in local Z-axis on hover with an epic energetic scale! */
+    transform: skewX(-4deg) rotateY(-8deg) translate3d(0, -3px, 12px) scale(1.06);
+    filter: drop-shadow(1px 1px 0px var(--color-cyan))
+            drop-shadow(2px 2px 0px rgba(0, 243, 255, 0.9))
+            drop-shadow(3px 3px 0px var(--color-purple))
+            drop-shadow(4px 4px 0px rgba(139, 92, 246, 0.9))
+            drop-shadow(0 0 10px rgba(0, 243, 255, 0.8))
+            drop-shadow(6px 6px 18px rgba(0, 243, 255, 0.4));
+}
+
+/* Dynamic Minimalist Developer Code Logo Elements Styling */
+.logo-svg {
+    width: 90px;
+    height: 42px;
+    display: block;
+    overflow: visible;
+}
+
+.logo-emblem {
+    transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transform-origin: 44px 20px;
+}
+
+.emblem-bracket-open, .emblem-bracket-close {
+    transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), stroke 0.4s ease, filter 0.4s ease;
+}
+
+.emblem-l, .emblem-o, .emblem-dot {
+    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Hover micro-interactions for a beautiful responsive wow factor */
+.logo:hover .emblem-bracket-open {
+    transform: translateX(-3px);
+    stroke: #00f3ff;
+    filter: drop-shadow(0 0 5px rgba(0, 243, 255, 0.7));
+}
+
+.logo:hover .emblem-bracket-close {
+    transform: translateX(3px);
+    stroke: #d946ef;
+    filter: drop-shadow(0 0 5px rgba(217, 70, 239, 0.7));
+}
+
+.logo:hover .logo-emblem {
+    transform: scale(1.1);
+}
+
+.logo:hover .emblem-l {
+    stroke: #00f3ff;
+    filter: drop-shadow(0 0 5px rgba(0, 243, 255, 0.8));
+}
+
+.logo:hover .emblem-o {
+    stroke: #d946ef;
+    transform: rotate(15deg);
+    transform-origin: 44px 20px;
+    fill: rgba(217, 70, 239, 0.15);
+    filter: drop-shadow(0 0 8px rgba(217, 70, 239, 0.6));
+}
+
+.logo:hover .emblem-dot {
+    r: 3;
+    fill: #ffffff;
+    filter: drop-shadow(0 0 10px #00f3ff);
+}
+
+.nav-menu {
+    display: flex;
+    gap: 30px;
+}
+
+.nav-link {
+    font-family: var(--font-hud);
+    font-size: 0.75rem;
+    letter-spacing: 1.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+    padding: 5px 0;
+    position: relative;
+    isolation: isolate;             /* own stacking context: particles render BEHIND the label */
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55); /* keep the label crisp above the particle field */
+}
+
+.nav-link:hover {
+    color: var(--color-cyan);
+    text-shadow: 0 0 10px rgba(0, 243, 255, 0.4), 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+.nav-link.active {
+    color: var(--color-cyan);
+    text-shadow: 0 0 12px rgba(0, 243, 255, 0.45), 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+/* ==========================================================================
+   NAV LINK PARTICLE LAYER (Hover Probe & Active Beacon)
+   The whole layer sits BEHIND the label (negative z-index inside the link's
+   own stacking context) — no underline, and the text always reads on top.
+   ========================================================================== */
+.nav-link-particles {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 100%;
+    height: 64px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    overflow: visible;
+    z-index: -1;
+}
+
+/* --- Neural Beacon: soft pulsing energy halo behind the active label --- */
+.nav-beacon-anchor {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 90%;
+    height: 24px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center,
+        rgba(0, 243, 255, 0.30) 0%,
+        rgba(139, 92, 246, 0.16) 45%,
+        transparent 72%);
+    filter: blur(7px);
+    animation: navBeaconPulse 2.6s ease-in-out infinite;
+}
+
+@keyframes navBeaconPulse {
+    0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(0.92); }
+    50%      { opacity: 1;    transform: translate(-50%, -50%) scale(1.08); }
+}
+
+/* --- HOVER particles: Quantum Probe burst (ephemeral cyan, rises from behind) --- */
+.nav-hover-particle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--color-cyan);
+    box-shadow: 0 0 6px var(--color-cyan), 0 0 12px rgba(0, 243, 255, 0.55);
+    pointer-events: none;
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: navHoverProbe 0.95s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes navHoverProbe {
+    0% {
+        opacity: 0;
+        transform: translate(calc(-50% + var(--p-x0, 0px)), -50%) scale(0.3);
+    }
+    20% {
+        opacity: 1;
+        transform: translate(calc(-50% + var(--p-x0, 0px)), calc(-50% - 8px)) scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(calc(-50% + var(--p-x1, 0px)), calc(-50% - 40px)) scale(0.15);
+    }
+}
+
+/* --- ACTIVE particles: Neural Beacon stream (cyan + purple, ascends behind label) --- */
+.nav-active-particle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2.5px;
+    height: 2.5px;
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: navActiveAscend 2.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.nav-active-particle.cyan {
+    background: var(--color-cyan);
+    box-shadow: 0 0 5px var(--color-cyan), 0 0 10px rgba(0, 243, 255, 0.55);
+}
+
+.nav-active-particle.purple {
+    background: var(--color-purple);
+    box-shadow: 0 0 5px var(--color-purple), 0 0 10px rgba(139, 92, 246, 0.55);
+}
+
+@keyframes navActiveAscend {
+    0% {
+        opacity: 0;
+        transform: translate(calc(-50% + var(--p-x0, 0px)), -50%) scale(0.3);
+    }
+    14% {
+        opacity: 0.9;
+        transform: translate(calc(-50% + var(--p-x0, 0px)), calc(-50% - 10px)) scale(1);
+    }
+    65% {
+        opacity: 0.5;
+        transform: translate(calc(-50% + var(--p-x1, 0px)), calc(-50% - 42px)) scale(0.85);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(calc(-50% + var(--p-x1, 0px)), calc(-50% - 60px)) scale(0.15);
+    }
+}
+
+/* Respect users with reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .nav-beacon-anchor { animation: none; opacity: 0.7; }
+    .nav-hover-particle,
+    .nav-active-particle { display: none; }
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+.pulse-dot {
+    width: 6px;
+    height: 6px;
+    background-color: #10b981;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #10b981;
+    animation: pulse 1.8s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(0.9); opacity: 0.6; }
+    50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 12px #10b981; }
+    100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+/* ==========================================================================
+   FLOATING HUD LAYER
+   ========================================================================== */
+.hud-layer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 5;
+}
+
+.hud-box {
+    position: absolute;
+    bottom: 40px;
+    background: rgba(5, 5, 8, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    padding: 15px 20px;
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    backdrop-filter: blur(10px);
+    transition: var(--transition-smooth);
+}
+
+.hud-left {
+    left: 5%;
+}
+
+.hud-right {
+    right: 5%;
+}
+
+.hud-line {
+    display: flex;
+    justify-content: space-between;
+    width: 150px;
+    color: var(--text-muted);
+}
+
+.hud-line span:last-child {
+    color: var(--color-cyan);
+    font-weight: 700;
+}
+
+/* ==========================================================================
+   SCROLL STRUCTURE
+   ========================================================================== */
+.scroll-container {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 2;
+    /* Proximity (not mandatory) so the tall, sticky timeline section can be
+       scrolled through freely while shorter sections still snap into place. */
+    scroll-snap-type: y proximity;
+}
+
+.scroll-container.no-scroll {
+    overflow-y: hidden !important;
+}
+
+.section {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    padding: 100px 8%;
+    display: flex;
+    align-items: center;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    overflow: hidden;
+    z-index: 3; /* Sections default to stacking in front of the background WebGL canvas */
+}
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 10;
+}
+
+/* ==========================================================================
+   GLASSMORPHIC REUSABLE TOKENS
+   ========================================================================== */
+.glass-panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    backdrop-filter: blur(25px);
+    -webkit-backdrop-filter: blur(25px);
+    border-radius: 12px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    position: relative;
+    overflow: hidden;
+    transition: var(--transition-smooth);
+}
+
+.glass-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Card Outer Glow */
+.card-glow {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(800px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(0, 243, 255, 0.08), transparent 40%);
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+
+.glass-panel:hover .card-glow {
+    opacity: 1;
+}
+
+/* ==========================================================================
+   BUTTONS STYLING
+   ========================================================================== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px 32px;
+    font-family: var(--font-hud);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border-radius: 6px;
+    transition: var(--transition-smooth);
+    border: none;
+    background: none;
+    outline: none;
+}
+
+.btn-primary {
+    background: linear-gradient(90deg, var(--color-purple), var(--color-cyan));
+    color: var(--bg-darker);
+    box-shadow: 0 5px 25px rgba(0, 243, 255, 0.2);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 5px 35px rgba(0, 243, 255, 0.4);
+    transform: translateY(-2px);
+}
+
+.btn-secondary {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.btn-secondary:hover {
+    border-color: var(--color-cyan);
+    background: rgba(0, 243, 255, 0.03);
+    color: var(--color-cyan);
+    box-shadow: 0 0 20px rgba(0, 243, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+.btn-icon {
+    transition: transform 0.3s ease;
+}
+
+.btn-primary:hover .btn-icon {
+    transform: translateX(4px);
+}
+
+/* ==========================================================================
+   SECTION 1: HERO
+   ========================================================================== */
+.hero-section {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1; /* Rendered behind the WebGL canvas so bioluminescent particles float over the text! */
+}
+
+.hero-content {
+    position: relative;
+    max-width: 720px;
+    text-align: left;
+}
+
+.hero-cyber-tag {
+    font-family: var(--font-hud);
+    font-size: 0.85rem;
+    color: var(--color-cyan);
+    letter-spacing: 3px;
+    margin-bottom: 25px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-transform: uppercase;
+    text-shadow: 0 0 15px rgba(0, 243, 255, 0.2);
+    opacity: 0; /* Hidden during loading, revealed via GSAP after load completion */
+}
+
+.pulse-dot-cyan {
+    width: 8px;
+    height: 8px;
+    background-color: var(--color-cyan);
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 10px var(--color-cyan);
+    animation: cyanPulse 1.8s infinite;
+}
+
+@keyframes cyanPulse {
+    0% { box-shadow: 0 0 0 0 rgba(0, 243, 255, 0.7); }
+    70% { box-shadow: 0 0 0 8px rgba(0, 243, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 243, 255, 0); }
+}
+
+.hero-title {
+    font-family: var(--font-heading);
+    font-size: clamp(1.8rem, 4vw, 3.2rem);
+    line-height: 1.2;
+    font-weight: 800;
+    margin-bottom: 25px;
+    letter-spacing: -1px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    opacity: 0; /* Hidden during loading, revealed via GSAP after load completion */
+}
+
+.hero-title .text-line {
+    display: block;
+    position: relative;
+    cursor: default;
+}
+
+.scramble-char {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
+    display: inline-block;
+}
+
+.hero-subtitle {
+    font-size: clamp(0.88rem, 1.5vw, 0.98rem);
+    color: var(--text-secondary);
+    max-width: 600px;
+    line-height: 1.8;
+    margin-bottom: 35px;
+    font-weight: 300;
+    opacity: 0; /* Hidden during loading, revealed via GSAP after load completion */
+}
+
+.hero-subtitle strong {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    z-index: 20;
+    position: relative;
+    opacity: 0; /* Hidden during loading, revealed via GSAP after load completion */
+}
+
+.scroll-prompt {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    z-index: 10;
+    opacity: 0; /* Hidden during loading, revealed via GSAP afterwards */
+}
+
+.scroll-mouse {
+    width: 20px;
+    height: 36px;
+    border: 2px solid var(--text-muted);
+    border-radius: 12px;
+    position: relative;
+}
+
+.scroll-mouse .wheel {
+    width: 4px;
+    height: 8px;
+    background-color: var(--color-cyan);
+    border-radius: 2px;
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    animation: mouseWheelScroll 1.6s infinite ease-out;
+}
+
+@keyframes mouseWheelScroll {
+    0% { top: 6px; opacity: 1; }
+    100% { top: 20px; opacity: 0; }
+}
+
+.scroll-text {
+    font-family: var(--font-hud);
+    font-size: 0.55rem;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+}
+
+/* ==========================================================================
+   SECTION 2: 3D SPLINE TIMELINE (EXPERIENCE)
+   ========================================================================== */
+.experience-section {
+    position: relative;
+    display: block;
+    height: 380vh;      /* Scroll length: gives room for 4 cards to descend & center one-by-one */
+    min-height: 380vh;
+    padding: 0;
+    overflow: visible;  /* Allow the sticky stage to pin instead of being clipped */
+}
+
+/* Sticky stage stays pinned to the viewport (Active Theory style) while the
+   tall .experience-section scrolls past. The rotating WebGL spine sits behind it. */
+.timeline-stage {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: 100%;
+    overflow: visible;
+    perspective: 2000px;        /* Softened depth for high-end look and natural 3D positioning */
+    perspective-origin: 50% 50%;
+}
+
+/* The vertical DOM rail is retired — the rotating WebGL particle backbone
+   ("espinha dorsal") is now the timeline's spine. */
+.experience-progress-track {
+    display: none;
+}
+
+.progress-bar-fill {
+    width: 100%;
+    height: 0%;
+    background: linear-gradient(to bottom, var(--color-purple), var(--color-cyan));
+    box-shadow: 0 0 15px var(--color-cyan), 0 0 30px var(--color-purple);
+    transition: height 0.1s linear;
+}
+
+.milestone-indicator {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 16px;
+    height: 16px;
+    background: var(--bg-darker);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 50%;
+    z-index: 6;
+    transition: var(--transition-fast);
+}
+
+.milestone-indicator.active {
+    border-color: var(--color-cyan);
+    background: var(--color-cyan);
+    box-shadow: 0 0 20px var(--color-cyan), 0 0 35px var(--color-purple);
+}
+
+.milestone-year {
+    position: absolute;
+    left: 24px;
+    top: -2px;
+    font-family: var(--font-hud);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 700;
+    white-space: nowrap;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+    transition: var(--transition-fast);
+}
+
+.milestone-indicator.active .milestone-year {
+    color: var(--color-cyan);
+    text-shadow: 0 0 8px rgba(0, 243, 255, 0.6);
+}
+
+/* Cyber Spine Horizontal Branches */
+.spine-branch {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    width: 0px; /* Expanded dynamically when active */
+    background: linear-gradient(90deg, var(--color-cyan), var(--color-purple));
+    box-shadow: 0 0 8px var(--color-cyan);
+    transform: translateY(-50%);
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+}
+
+.spine-branch.branch-left {
+    right: 16px; /* Starts at outer dot edge */
+    background: linear-gradient(270deg, var(--color-cyan), var(--color-purple));
+}
+
+.spine-branch.branch-right {
+    left: 16px; /* Starts at outer dot edge */
+    background: linear-gradient(90deg, var(--color-cyan), var(--color-purple));
+}
+
+/* Branch full extension to touch card borders on desktop */
+.milestone-indicator.active .spine-branch.branch-left,
+.milestone-indicator.active .spine-branch.branch-right {
+    width: calc(23vw - 55px);
+}
+
+@media (max-width: 1024px) {
+    .spine-branch {
+        display: none !important; /* Hide horizontal connectors on stacked mobile layout */
+    }
+}
+
+/* Card active glowing focus when touched by cyber branch */
+.timeline-card-wrapper.focused-active {
+    opacity: 1 !important; /* Ensure focused card is fully visible */
+}
+
+.timeline-card-wrapper.focused-active .timeline-card {
+    border-color: var(--color-cyan);
+    box-shadow:
+        0 40px 100px rgba(0, 243, 255, 0.18),
+        0 0 80px rgba(139, 92, 246, 0.12);
+    transform: scale(1.02);
+}
+
+.timeline-card-wrapper.focused-active.left .timeline-card {
+    border-left: 3px solid var(--color-cyan) !important;
+}
+
+.timeline-card-wrapper.focused-active.right .timeline-card {
+    border-right: 3px solid var(--color-purple) !important;
+}
+
+
+.timeline-cards-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
+    transform-style: preserve-3d;
+    pointer-events: none; /* only the centered card re-enables pointer events */
+}
+
+/* Cards are stacked dead-center; JS drives their Y/scale/tilt as you scroll so
+   they descend through the centre one at a time. */
+.timeline-card-wrapper {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: min(440px, 88vw);
+    opacity: 0;
+    transform: translate(-50%, -50%) translate3d(0, 0, 470px);
+    transform-style: preserve-3d;
+    will-change: transform, opacity, filter;
+    pointer-events: auto;
+}
+
+/* Left/right alternation no longer drives layout (centered stack); kept only
+   so the focused-active border accents below still resolve. */
+.timeline-card-wrapper.left,
+.timeline-card-wrapper.right {
+    align-self: auto;
+}
+
+.timeline-card {
+    padding: 30px 35px;
+    width: 100%;
+    z-index: 2;
+    background: rgba(2, 4, 11, 0.95); /* Matched to project-card opaque dark look to block rain overlap */
+    border: 1px solid var(--border-color); /* Premium card border matching project cards */
+    border-radius: 12px;
+    backdrop-filter: blur(35px) saturate(140%); /* Ultra premium Apple-style glassmorphism backdrop blur */
+    -webkit-backdrop-filter: blur(35px) saturate(140%);
+    transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+}
+
+.timeline-card:hover {
+    border-color: var(--color-cyan);
+    box-shadow:
+        0 40px 100px rgba(0, 243, 255, 0.18),
+        0 0 80px rgba(139, 92, 246, 0.12);
+}
+
+/* Card Border Particles (energy flow from DNA to experiences) */
+.card-border-particle {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 5;
+    will-change: transform, opacity;
+    opacity: 0;
+}
+
+.card-border-particle.cyan {
+    background: var(--color-cyan);
+    box-shadow: 0 0 6px var(--color-cyan), 0 0 12px rgba(0, 243, 255, 0.6);
+}
+
+.card-border-particle.purple {
+    background: var(--color-purple);
+    box-shadow: 0 0 6px var(--color-purple), 0 0 12px rgba(139, 92, 246, 0.6);
+}
+
+@keyframes cardParticleFloat {
+    0% {
+        transform: translate3d(0, 0, 0) scale(0.3);
+        opacity: 0;
+    }
+    15% {
+        opacity: 0.8;
+    }
+    85% {
+        opacity: 0.8;
+    }
+    100% {
+        transform: translate3d(var(--drift-x), var(--float-y), 20px) scale(1.2);
+        opacity: 0;
+    }
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.1); /* HUD panel divider style */
+    z-index: 2;
+    position: relative;
+    transition: border-color 0.4s ease;
+}
+
+.timeline-card:hover .card-header {
+    border-color: rgba(0, 243, 255, 0.2);
+}
+
+.card-year {
+    font-family: var(--font-hud);
+    font-size: 0.72rem;
+    color: var(--color-cyan);
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.card-year::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background-color: var(--color-cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--color-cyan);
+    display: inline-block;
+    animation: cyanPulse 1.8s infinite;
+}
+
+.card-role {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    color: var(--color-purple);
+    background: rgba(139, 92, 246, 0.1);
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    letter-spacing: 0.5px;
+    transition: all 0.4s ease;
+}
+
+.timeline-card:hover .card-role {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(139, 92, 246, 0.4);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+    color: #ffffff;
+}
+
+.card-title {
+    font-family: var(--font-heading);
+    font-size: 1.4rem; /* matched perfectly to project title 1.4rem */
+    font-weight: 700;
+    margin-bottom: 12px;
+    z-index: 2;
+    position: relative;
+    transition: color 0.4s ease, text-shadow 0.4s ease;
+}
+
+.timeline-card:hover .card-title {
+    color: #ffffff;
+    text-shadow: 0 0 15px rgba(255, 255, 255, 0.35);
+}
+
+.card-desc {
+    font-size: 0.8rem; /* matched perfectly to project desc 0.8rem */
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 25px;
+    font-weight: 300;
+    z-index: 2;
+    position: relative;
+}
+
+.card-tech {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    z-index: 2;
+    position: relative;
+}
+
+.tech-tag {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 3px 8px;
+    border-radius: 3px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.timeline-card:hover .tech-tag {
+    border-color: rgba(0, 243, 255, 0.25);
+    background: rgba(0, 243, 255, 0.06);
+    color: var(--color-cyan);
+    box-shadow: 0 0 8px rgba(0, 243, 255, 0.15);
+    transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   SECTION 3: GENERATIVE LAB (AI PLAYGROUND)
+   ========================================================================== */
+.playground-layout {
+    display: grid;
+    grid-template-columns: 45% 50%;
+    gap: 5%;
+    align-items: center;
+}
+
+.playground-hud {
+    padding: 40px;
+}
+
+.hud-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.hud-title-icon {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    color: var(--color-pink);
+    font-weight: 700;
+}
+
+.hud-heading {
+    font-family: var(--font-heading);
+    font-size: 2.2rem;
+    font-weight: 800;
+}
+
+.hud-desc {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin-bottom: 35px;
+    font-weight: 300;
+}
+
+.playground-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    margin-bottom: 40px;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.control-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-hud);
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+}
+
+.control-label {
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+
+.control-val {
+    color: var(--color-cyan);
+    font-weight: 700;
+    text-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
+}
+
+/* Premium Neo Slider */
+.neon-slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+    outline: none;
+    transition: var(--transition-fast);
+}
+
+.neon-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-cyan);
+    box-shadow: 0 0 10px var(--color-cyan);
+    cursor: none;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.neon-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.3);
+    background: var(--color-pink);
+    box-shadow: 0 0 12px var(--color-pink);
+}
+
+.preset-label {
+    font-family: var(--font-hud);
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    font-weight: 700;
+}
+
+.preset-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.btn-preset {
+    padding: 10px 15px;
+    font-family: var(--font-hud);
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+    transition: var(--transition-fast);
+}
+
+.btn-preset:hover {
+    border-color: rgba(255, 0, 127, 0.3);
+    background: rgba(255, 0, 127, 0.03);
+    color: var(--color-pink);
+}
+
+.btn-preset.active {
+    border-color: var(--color-pink);
+    background: rgba(255, 0, 127, 0.1);
+    color: var(--color-pink);
+    box-shadow: 0 0 15px rgba(255, 0, 127, 0.2);
+}
+
+.playground-visual-hud {
+    position: relative;
+    aspect-ratio: 1;
+    border: 1px solid rgba(255, 255, 255, 0.02);
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+}
+
+.hud-reticle {
+    position: absolute;
+    width: 60%;
+    height: 60%;
+    border: 1px dashed rgba(0, 243, 255, 0.1);
+    border-radius: 50%;
+    animation: rotateReticle 15s linear infinite;
+}
+
+@keyframes rotateReticle {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.corner-bracket {
+    position: absolute;
+    width: 15px;
+    height: 15px;
+    border-color: rgba(0, 243, 255, 0.3);
+    border-style: solid;
+}
+
+.top-left { top: 0; left: 0; border-width: 1px 0 0 1px; }
+.top-right { top: 0; right: 0; border-width: 1px 1px 0 0; }
+.bottom-left { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+.bottom-right { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+
+.visual-hud-label {
+    position: absolute;
+    bottom: -30px;
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    letter-spacing: 2px;
+}
+
+/* ==========================================================================
+   SECTION 4: PROJECTS SHOWCASE
+   ========================================================================== */
+/* Tall section + sticky stage: as the page scrolls through these extra
+   viewports, the 3D coverflow is scrubbed (same mechanic as the timeline). */
+.projects-section {
+    display: block;
+    height: 340vh;
+    min-height: 340vh;
+    padding: 0;
+    overflow: visible;
+}
+
+.projects-sticky {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    padding: 80px 8%;
+    overflow: hidden;
+}
+
+.projects-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: center;
+    max-width: 100%; /* Utilize full width for maximum display capacity */
+}
+
+.section-header {
+    margin-bottom: 50px;
+}
+
+.section-tag {
+    font-family: var(--font-hud);
+    font-size: 0.75rem;
+    color: var(--color-cyan);
+    letter-spacing: 3px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: block;
+}
+
+.section-title {
+    font-family: var(--font-heading);
+    font-size: 2.8rem;
+    font-weight: 800;
+}
+
+/* --- 3D COVERFLOW STAGE --- */
+.projects-3d-stage {
+    position: relative;
+    width: 100%;
+    height: 560px;
+    perspective: 1600px;
+    perspective-origin: 50% 50%;
+    user-select: none;
+    isolation: isolate;
+}
+
+/* Dark radial vignette behind the 3D stage — removed to eliminate the dark background */
+.projects-3d-stage::before {
+    content: "";
+    position: absolute;
+    inset: -15% -10%;
+    background: none;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.projects-3d-carousel {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    z-index: 1;
+    transform: translateZ(-460px); /* Counteract individual card shift to preserve original visual proportions */
+}
+
+.project-card-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 360px;
+    height: 520px;
+    margin-left: -180px;
+    margin-top: -260px;
+    transform-style: preserve-3d;
+    transform-origin: center center;
+    will-change: transform, opacity;
+    transform: translate3d(0, 0, 0);
+    pointer-events: none; /* Make the container bounding box transparent to mouse events */
+}
+
+.project-card-container.is-active {
+    z-index: 200;
+    filter: none;
+    opacity: 1;
+    pointer-events: auto; /* Active container accepts all mouse events */
+}
+
+.project-card-container:not(.is-active) .project-card {
+    cursor: pointer;
+    pointer-events: auto; /* Allow clicking side cards to snap to them */
+}
+
+.project-card-container:not(.is-active) .project-link {
+    pointer-events: none; /* Disable links on non-active cards */
+}
+
+.projects-3d-stage .project-card {
+    /* preserve-3d disables backdrop-filter; replace the glass effect with a
+       solid panel that lifts off the near-black page background. */
+    background: linear-gradient(180deg, #0d1424 0%, #070b16 100%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow:
+        0 40px 90px rgba(0, 0, 0, 0.75),
+        0 0 0 1px rgba(255, 255, 255, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.project-card-container.is-active .project-card {
+    background: linear-gradient(180deg, #101a30 0%, #080d1c 100%);
+    border-color: rgba(0, 243, 255, 0.55);
+    box-shadow:
+        0 50px 110px rgba(0, 0, 0, 0.85),
+        0 0 0 1px rgba(0, 243, 255, 0.18),
+        0 0 60px rgba(0, 243, 255, 0.15),
+        0 0 120px rgba(139, 92, 246, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.project-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    border-radius: 12px;
+    position: relative;
+    cursor: none;
+    transition: border-color 0.4s ease, box-shadow 0.4s ease;
+    background: rgba(2, 4, 11, 0.98) !important; /* Fully opaque background to block background rain */
+}
+
+.project-card-container.is-active .project-card:hover {
+    border-color: var(--color-cyan);
+    box-shadow:
+        0 40px 100px rgba(0, 243, 255, 0.18),
+        0 0 80px rgba(139, 92, 246, 0.12);
+}
+
+/* --- SCROLL-DRIVEN PROGRESS HUD (replaces arrows & bullets) --- */
+.projects-scrollbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 44px;
+    font-family: var(--font-hud);
+    position: relative;
+    z-index: 50;
+}
+
+.projects-scroll-index {
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--color-cyan);
+    text-shadow: 0 0 12px rgba(0, 243, 255, 0.5);
+    min-width: 2ch;
+    text-align: right;
+}
+
+.projects-scroll-track {
+    position: relative;
+    flex: 0 0 240px;
+    max-width: 30vw;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+}
+
+.projects-scroll-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0%;
+    background: linear-gradient(90deg, var(--color-purple), var(--color-cyan));
+    box-shadow: 0 0 12px var(--color-cyan);
+    border-radius: 2px;
+    transition: width 0.1s linear;
+}
+
+/* Glowing scrubber knob riding the end of the fill */
+.projects-scroll-fill::after {
+    content: "";
+    position: absolute;
+    right: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-cyan);
+    box-shadow: 0 0 10px var(--color-cyan), 0 0 20px rgba(0, 243, 255, 0.6);
+}
+
+.projects-scroll-total {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+}
+
+.projects-scroll-name {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-secondary);
+    margin-left: 6px;
+    transition: color 0.3s ease;
+    white-space: nowrap;
+}
+
+.projects-scroll-hint {
+    margin-left: auto;
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.projects-scroll-hint::after {
+    content: "";
+    width: 22px;
+    height: 12px;
+    background:
+        linear-gradient(var(--color-cyan), var(--color-cyan)) no-repeat;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+    animation: scrollHintPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes scrollHintPulse {
+    0%, 100% { opacity: 0.25; transform: translateY(-2px); }
+    50% { opacity: 1; transform: translateY(2px); }
+}
+
+.project-img-placeholder {
+    height: 200px;
+    background: radial-gradient(circle at center, rgba(139, 92, 246, 0.1), transparent);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.project-card:hover .project-img-placeholder {
+    border-color: rgba(0, 243, 255, 0.15);
+}
+
+.floating-grid {
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.005) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.005) 1px, transparent 1px);
+    background-size: 20px 20px;
+    transform: perspective(500px) rotateX(60deg) translateY(-20%);
+    opacity: 0.7;
+    transition: transform 0.8s var(--transition-smooth);
+}
+
+.project-card:hover .floating-grid {
+    transform: perspective(500px) rotateX(50deg) translateY(-10%) scale(1.1);
+    opacity: 1;
+}
+
+.project-icon {
+    position: relative;
+    z-index: 5;
+    transition: transform 0.6s var(--transition-smooth);
+}
+
+.project-card:hover .project-icon {
+    transform: scale(1.2);
+}
+
+.neon-svg-cyan { color: var(--color-cyan); filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.4)); }
+.neon-svg-purple { color: var(--color-purple); filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.4)); }
+.neon-svg-pink { color: var(--color-pink); filter: drop-shadow(0 0 10px rgba(255, 0, 127, 0.4)); }
+
+.project-content {
+    padding: 30px;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+
+.project-tags {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.project-tags span {
+    font-family: var(--font-hud);
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+}
+
+.project-card:hover .project-tags span {
+    color: var(--color-cyan);
+}
+
+.project-title {
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.project-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 25px;
+    font-weight: 300;
+    flex-grow: 1;
+}
+
+.project-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-hud);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--color-cyan);
+    margin-top: auto;
+}
+
+.project-link svg {
+    transition: transform 0.3s ease;
+}
+
+.project-card:hover .project-link svg {
+    transform: translate(2px, -2px);
+}
+
+/* ==========================================================================
+   SECTION 5: CONTACT & TERMINAL
+   ========================================================================== */
+.contact-container {
+    height: 80%;
+    display: flex;
+    align-items: center;
+}
+
+.contact-grid {
+    display: grid;
+    grid-template-columns: 45% 50%;
+    gap: 5%;
+    width: 100%;
+}
+
+.contact-desc {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    margin-top: 20px;
+    margin-bottom: 40px;
+    font-weight: 300;
+}
+
+.social-links {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.social-node {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    background: rgba(255, 255, 255, 0.01);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    padding: 12px 20px;
+    border-radius: 6px;
+    transition: var(--transition-fast);
+}
+
+.social-node:hover {
+    border-color: var(--color-cyan);
+    background: rgba(0, 243, 255, 0.03);
+    transform: translateX(8px);
+}
+
+.social-icon {
+    font-family: var(--font-hud);
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: var(--color-cyan);
+    background: rgba(0, 243, 255, 0.08);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+}
+
+.social-text {
+    font-family: var(--font-hud);
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    font-weight: 700;
+}
+
+/* Interactive Dark Terminal */
+.contact-terminal {
+    border-color: rgba(255, 255, 255, 0.05);
+    background: rgba(3, 3, 5, 0.7);
+    display: flex;
+    flex-direction: column;
+}
+
+.terminal-header {
+    background: rgba(10, 10, 15, 0.8);
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.terminal-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.terminal-dots .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.terminal-dots .close { background: #ef4444; }
+.terminal-dots .minimize { background: #fbbf24; }
+.terminal-dots .expand { background: #34d399; }
+
+.terminal-title {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+}
+
+.terminal-body {
+    padding: 25px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.terminal-log {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.65rem;
+}
+
+.text-cyan { color: var(--color-cyan); }
+.text-purple { color: var(--color-purple); }
+.text-pink { color: var(--color-pink); }
+
+.terminal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.terminal-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    transition: var(--transition-fast);
+}
+
+.terminal-field:focus-within {
+    border-color: var(--color-cyan);
+}
+
+.prompt-arrow {
+    color: var(--color-pink);
+    font-weight: 700;
+}
+
+.terminal-label {
+    color: var(--color-purple);
+    font-weight: 700;
+    min-width: 110px;
+}
+
+.terminal-field input, .terminal-field textarea {
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    flex-grow: 1;
+}
+
+.terminal-field:has(textarea) {
+    align-items: flex-start;
+}
+
+.terminal-field:has(textarea) .prompt-arrow,
+.terminal-field:has(textarea) .terminal-label {
+    margin-top: 4px;
+}
+
+.terminal-field textarea {
+    resize: vertical;
+    min-height: 80px;
+    height: 80px;
+    line-height: 1.5;
+    padding-top: 4px;
+}
+
+.terminal-field input::placeholder, .terminal-field textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+
+.btn-terminal {
+    background: rgba(0, 243, 255, 0.08);
+    border: 1px solid var(--color-cyan);
+    color: var(--color-cyan);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 12px;
+    border-radius: 4px;
+    letter-spacing: 1px;
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.05);
+}
+
+.btn-terminal:hover {
+    background: var(--color-cyan);
+    color: var(--bg-darker);
+    box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
+}
+
+.btn-terminal:disabled {
+    background: rgba(2, 4, 11, 0.6) !important;
+    border: 1px dashed rgba(255, 255, 255, 0.15) !important;
+    color: var(--text-muted) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    cursor: not-allowed !important;
+    opacity: 0.4;
+    letter-spacing: 0.5px;
+}
+
+.terminal-output {
+    font-size: 0.65rem;
+    margin-top: 10px;
+    min-height: 20px;
+}
+
+.main-footer {
+    position: absolute;
+    bottom: 20px;
+    left: 8%;
+    font-family: var(--font-mono);
+    font-size: 0.5rem;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+}
+
+/* ==========================================================================
+   RESPONSIVE DESIGN (MEDIA QUERIES)
+   ========================================================================== */
+@media (max-width: 1024px) {
+    .hero-title {
+        font-size: 2.6rem;
+    }
+    
+    .playground-layout, .contact-grid {
+        grid-template-columns: 100%;
+        gap: 40px;
+    }
+    
+    .playground-visual-hud {
+        display: none;
+    }
+    
+    /* Mobile fallback: drop the tall sticky scrub and flow cards vertically. */
+    .projects-section {
+        height: auto !important;
+        min-height: auto !important;
+    }
+
+    .projects-sticky {
+        position: static;
+        height: auto;
+        padding: 120px 5% 60px 5%;
+        overflow: visible;
+    }
+
+    .projects-3d-stage {
+        height: auto;
+        perspective: none;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .projects-3d-carousel {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        height: auto;
+        transform-style: flat;
+        cursor: default;
+    }
+
+    .project-card-container {
+        position: static;
+        width: 100%;
+        height: auto;
+        margin: 0;
+        transform: none !important;
+        opacity: 1 !important;
+        filter: none !important;
+        z-index: auto !important;
+    }
+
+    .project-card-container .project-card {
+        height: 100%;
+    }
+
+    .projects-scrollbar {
+        display: none;
+    }
+    
+    .experience-progress-track {
+        display: none;
+    }
+
+    /* Mobile: drop the sticky 3D stack and just flow the cards vertically. */
+    .experience-section {
+        height: auto !important;
+        min-height: auto !important;
+        padding: 120px 5% 60px 5% !important;
+    }
+
+    .timeline-stage {
+        position: static;
+        height: auto;
+        perspective: none;
+    }
+
+    .timeline-cards-container {
+        position: static;
+        inset: auto;
+        height: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+        transform-style: flat;
+        pointer-events: auto;
+    }
+
+    .timeline-card-wrapper {
+        position: static;
+        top: auto;
+        left: auto;
+        width: 100% !important;
+        align-self: center !important;
+        opacity: 1 !important;
+        transform: none !important;
+    }
+
+    .scroll-container {
+        scroll-snap-type: none; /* Better mobile scroll experience */
+    }
+    
+    .section {
+        height: auto;
+        min-height: 100vh;
+        padding: 120px 5% 60px 5%;
+        scroll-snap-align: none;
+    }
+    
+    .hud-layer {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .main-header {
+        padding: 20px 5%;
+    }
+    
+    .nav-menu {
+        display: none; /* Simplification for small mobile */
+    }
+    
+    .hero-title {
+        font-size: 2.0rem;
+    }
+    
+    .hero-subtitle {
+        font-size: 0.88rem;
+    }
+    
+    .hero-actions {
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .btn {
+        width: 100%;
+    }
+}
+
+/* ==========================================================================
+   3D KINETIC CARD EFFECTS (PRESERVE-3D & PARALLAX)
+   ========================================================================== */
+.timeline-card-wrapper, .project-card-container {
+    perspective: 1000px;
+    transform-style: preserve-3d;
+}
+
+.timeline-card, .project-card {
+    transform-style: preserve-3d;
+    transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94), border-color 0.3s, box-shadow 0.3s;
+    will-change: transform;
+}
+
+/* Push children layers inside the 3D preserve context */
+.timeline-card > *, .project-card > * {
+    transform: translateZ(12px);
+    transform-style: preserve-3d;
+}
+
+/* Elements that pop out dramatically */
+.card-year, .project-icon, .tech-tag {
+    transform: translateZ(28px) !important;
+    transition: transform 0.2s ease-out;
+}
+
+.card-title, .project-title {
+    transform: translateZ(20px) !important;
+}
+

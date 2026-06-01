@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Leonardo de Oliveira — AI-DLC com Human Oversight</title>
+
+    <!-- Meta tags SEO -->
+    <meta
+      name="description"
+      content="Portfólio 3D interativo de Leonardo de Oliveira — foco em AI-DLC com human oversight, arquitetura e plataformas de alta escala. IA que amplifica pessoas, não as substitui. Explore a linha do tempo neural."
+    />
+    <meta
+      name="keywords"
+      content="Leonardo de Oliveira, Léo, AI-DLC, Human Oversight, AI Development Life Cycle, Spec-Driven Development, Inteligência Artificial, Engenharia de Software, Arquitetura de Software, Portfólio 3D, WebGL, Three.js, GSAP"
+    />
+    <meta name="author" content="Leonardo de Oliveira" />
+
+    <!-- Open Graph (Facebook/LinkedIn) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Leonardo de Oliveira" />
+    <meta
+      property="og:description"
+      content="Explore o portfólio interativo 3D de Leonardo de Oliveira, focado em IA, inovação e tecnologia disruptiva."
+    />
+    <meta
+      property="og:image"
+      content="https://leonardodeoliveira.dev/assets/og-image.jpg"
+    />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Orbitron:wght@500;700;900&family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="style.css" />
+
+    <!-- External Libraries (CDN) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+  </head>
+  <body>
+    <!-- PRELOADER -->
+    <div id="preloader" class="preloader"></div>
+
+    <!-- BACKGROUND WEBGL CANVAS -->
+    <canvas id="webgl-canvas" class="webgl-canvas"></canvas>
+
+    <!-- CUSTOM CURSOR -->
+    <div class="custom-cursor" id="custom-cursor"></div>
+    <div class="custom-cursor-dot" id="custom-cursor-dot"></div>
+
+    <!-- BIOLUMINESCENT AMBIENT REMNANTS -->
+    <div class="ambient-remnants pointer-events-none">
+      <div class="remnant spark-1"></div>
+      <div class="remnant spark-2"></div>
+      <div class="remnant spark-3"></div>
+      <div class="remnant spark-4"></div>
+      <div class="remnant glow-blob-1"></div>
+      <div class="remnant glow-blob-2"></div>
+    </div>
+
+    <!-- MAIN HEADER -->
+    <header class="main-header">
+      <a href="#hero" class="logo">
+        <svg
+          class="logo-svg"
+          viewBox="0 0 84 40"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <defs>
+            <linearGradient
+              id="logo-cyan-grad"
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="100%"
+            >
+              <stop offset="0%" stop-color="#00f3ff" />
+              <stop offset="100%" stop-color="#0088ff" />
+            </linearGradient>
+            <linearGradient
+              id="logo-purple-grad"
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="100%"
+            >
+              <stop offset="0%" stop-color="#d946ef" />
+              <stop offset="100%" stop-color="#8b5cf6" />
+            </linearGradient>
+          </defs>
+
+          <!-- Opening Bracket < -->
+          <path
+            class="emblem-bracket-open"
+            d="M 15 12 L 6 20 L 15 28"
+            stroke="var(--text-primary)"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+
+          <!-- Emblem Group (L + O) -->
+          <g class="logo-emblem">
+            <!-- Geometric L -->
+            <path
+              class="emblem-l"
+              d="M 28 12 V 28 H 42"
+              stroke="url(#logo-cyan-grad)"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <!-- Cyber Hexagon O -->
+            <polygon
+              class="emblem-o"
+              points="44,13 51,17 51,23 44,27 37,23 37,17"
+              stroke="url(#logo-purple-grad)"
+              stroke-width="2"
+              stroke-linejoin="round"
+              fill="rgba(139, 92, 246, 0.05)"
+            />
+            <!-- Neural Connection Core Dot -->
+            <circle class="emblem-dot" cx="44" cy="20" r="2.5" fill="#00f3ff" />
+          </g>
+
+          <!-- Closing Bracket /> -->
+          <path
+            class="emblem-bracket-close"
+            d="M 64 28 L 71 12 M 68 12 L 77 20 L 68 28"
+            stroke="var(--text-primary)"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </a>
+      <nav class="nav-menu">
+        <a href="#hero" class="nav-link active" data-section="0">INÍCIO</a>
+        <a href="#experience" class="nav-link" data-section="1"
+          >LINHA DO TEMPO</a
+        >
+        <a href="#projects" class="nav-link" data-section="2">PROJETOS</a>
+        <a href="#contact" class="nav-link" data-section="3">CONTATO</a>
+      </nav>
+      <div class="status-indicator">
+        <span class="pulse-dot"></span>
+        <span class="status-text">SYS_ONLINE: AI_AGENT_v2.6</span>
+      </div>
+    </header>
+
+    <!-- SCROLL CONTAINER -->
+    <main class="scroll-container" id="scroll-container">
+      <!-- SECTION 1: HERO -->
+      <section id="hero" class="section hero-section">
+        <div class="container hero-container">
+          <div class="hero-content">
+            <div class="hero-cyber-tag">
+              <span class="pulse-dot-cyan"></span> SYSTEM_CORE_ACTIVE //
+              COGNITIVE_AGENT_v2.6
+            </div>
+            <h1 class="hero-title">
+              <span
+                class="text-line reveal-text"
+                data-text="O FUTURO NÃO É ESCRITO."
+                >O FUTURO NÃO É ESCRITO.</span
+              >
+              <span
+                class="text-line reveal-text text-purple"
+                data-text="É COMPILADO."
+                >É COMPILADO.</span
+              >
+            </h1>
+            <p class="hero-subtitle">
+              Sou <strong>Leonardo de Oliveira</strong>, engenheiro de software
+              focado em plataformas, arquitetura e segurança — acelerando o ciclo
+              de desenvolvimento com <strong>AI-DLC</strong> sob
+              <strong>human oversight</strong>. Não uma fábrica 100% autônoma, mas
+              inteligência que amplifica pessoas, mantendo a conexão humana e a
+              decisão sempre no centro.
+            </p>
+            <div class="hero-actions">
+              <a href="#experience" class="btn btn-primary btn-hover-effect">
+                <span class="btn-text">VIAJAR NO TEMPO</span>
+                <span class="btn-glow"></span>
+              </a>
+              <a href="#contact" class="btn btn-secondary btn-hover-effect">
+                <span class="btn-text">ABRIR CONEXÃO</span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="scroll-prompt">
+          <span class="scroll-mouse"><span class="wheel"></span></span>
+          <span class="scroll-text">ROLE PARA VIAJAR NO TEMPO</span>
+        </div>
+      </section>
+
+      <!-- SECTION 2: 3D SPLINE TIMELINE (EXPERIENCE) -->
+      <section id="experience" class="section experience-section">
+        <!-- Sticky stage: stays pinned to the viewport while the tall section scrolls past -->
+        <div class="timeline-stage">
+          <div class="experience-progress-track">
+            <div class="progress-bar-fill" id="experience-progress"></div>
+
+            <!-- Nodes & Branches (Cyber-Neural Spine Connectors) -->
+            <div
+              class="milestone-indicator"
+              style="top: 0%"
+              id="milestone-2013"
+            >
+              <span class="milestone-year">2013</span>
+              <div class="spine-branch branch-left"></div>
+            </div>
+            <div
+              class="milestone-indicator"
+              style="top: 33%"
+              id="milestone-2015"
+            >
+              <span class="milestone-year">2015</span>
+              <div class="spine-branch branch-right"></div>
+            </div>
+            <div
+              class="milestone-indicator"
+              style="top: 66%"
+              id="milestone-2016"
+            >
+              <span class="milestone-year">2016</span>
+              <div class="spine-branch branch-left"></div>
+            </div>
+            <div
+              class="milestone-indicator"
+              style="top: 100%"
+              id="milestone-present"
+            >
+              <span class="milestone-year">PRESENTE</span>
+              <div class="spine-branch branch-right"></div>
+            </div>
+          </div>
+
+          <div class="timeline-cards-container">
+            <!-- CARD 2013 -->
+            <div class="timeline-card-wrapper left" id="card-2013">
+              <div class="timeline-card glass-panel">
+                <div class="card-glow"></div>
+                <div class="card-header">
+                  <span class="card-year">2013 - 2015</span>
+                  <span class="card-role">Technical Team Lead</span>
+                </div>
+                <h3 class="card-title">Liderança Técnica & Governança</h3>
+                <p class="card-desc">
+                  Atuação na Capemisa Seguradora liderando equipes
+                  multidisciplinares no desenvolvimento de sistemas corporativos
+                  críticos. Foco em arquitetura resiliente, padrões de design
+                  (SOA/WCF) e governança técnica.
+                </p>
+                <div class="card-tech">
+                  <span class="tech-tag">.NET</span>
+                  <span class="tech-tag">C#</span>
+                  <span class="tech-tag">SQL Server</span>
+                  <span class="tech-tag">SOA / WCF</span>
+                  <span class="tech-tag">Design Patterns</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- CARD 2015 -->
+            <div class="timeline-card-wrapper right" id="card-2015">
+              <div class="timeline-card glass-panel">
+                <div class="card-glow"></div>
+                <div class="card-header">
+                  <span class="card-year">2015 - 2016</span>
+                  <span class="card-role">Entrepreneur</span>
+                </div>
+                <h3 class="card-title">Empreendedorismo & Soluções</h3>
+                <p class="card-desc">
+                  Como um dos fundadores da Tatios Soluções em Informática,
+                  liderei a concepção, arquitetura e entrega de softwares sob
+                  medida para diversos nichos, focando na resolução de problemas
+                  complexos de engenharia.
+                </p>
+                <div class="card-tech">
+                  <span class="tech-tag">Full Stack</span>
+                  <span class="tech-tag">Web API</span>
+                  <span class="tech-tag">Node.js</span>
+                  <span class="tech-tag">Solutions Arch</span>
+                  <span class="tech-tag">DevOps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- CARD 2016 -->
+            <div class="timeline-card-wrapper left" id="card-2016">
+              <div class="timeline-card glass-panel">
+                <div class="card-glow"></div>
+                <div class="card-header">
+                  <span class="card-year">2016 - 2025</span>
+                  <span class="card-role">Solutions Engineer</span>
+                </div>
+                <h3 class="card-title">Arquitetura de Larga Escala</h3>
+                <p class="card-desc">
+                  Engenharia de Soluções na CWI Software atendendo a grandes
+                  contas. Cases: liderança da migração para Microfrontends com
+                  Angular no Banco ABC, automação de faturamento no CIEE
+                  (Spring/React) e reescrita do app Ouze (Flutter).
+                </p>
+                <div class="card-tech">
+                  <span class="tech-tag">Angular</span>
+                  <span class="tech-tag">Microfrontends</span>
+                  <span class="tech-tag">Java / Spring</span>
+                  <span class="tech-tag">React</span>
+                  <span class="tech-tag">Flutter</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- CARD PRESENT -->
+            <div class="timeline-card-wrapper right" id="card-present">
+              <div class="timeline-card glass-panel">
+                <div class="card-glow"></div>
+                <div class="card-header">
+                  <span class="card-year">2025 - PRESENTE</span>
+                  <span class="card-role">AI & Solutions Architect</span>
+                </div>
+                <h3 class="card-title">Orquestração Corporativa & Agentes</h3>
+                <p class="card-desc">
+                  Liderança técnica em arquitetura corporativa e engenharia de
+                  IA na CWI. Mentoria de Staffs, evangelização de ADRs, criação
+                  de visões de referência e desenvolvimento baseado em
+                  Spec-Driven Development e agentes de IA sob human oversight.
+                </p>
+                <div class="card-tech">
+                  <span class="tech-tag">AI Agents</span>
+                  <span class="tech-tag">Spec-Driven Dev</span>
+                  <span class="tech-tag">ADRs</span>
+                  <span class="tech-tag">LLMs</span>
+                  <span class="tech-tag">Mentorship</span>
+                  <span class="tech-tag">Reference Arch</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4: PROJECTS SHOWCASE -->
+      <section id="projects" class="section projects-section">
+        <!-- Sticky stage pins to the viewport while the tall section scrolls past,
+             scrubbing the 3D coverflow with scroll (same pattern as the timeline). -->
+        <div class="projects-sticky">
+          <div class="container projects-container">
+            <div class="projects-3d-stage" id="projects-stage">
+              <div class="projects-3d-carousel" id="projects-carousel">
+                <!-- PROJECT: AI-DLC (initial active / centered) -->
+                <div class="project-card-container" data-project="ai-dlc">
+                  <div class="project-card glass-panel btn-hover-effect">
+                    <div class="project-img-placeholder">
+                      <div class="floating-grid"></div>
+                      <div class="project-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="48"
+                          height="48"
+                          class="neon-svg-cyan"
+                        >
+                          <path
+                            fill="currentColor"
+                            d="M12 2A2 2 0 0 1 14 4C14 4.74 13.6 5.39 13 5.73V7H14A7 7 0 0 1 21 14H22A1 1 0 0 1 23 15V18A1 1 0 0 1 22 19H21V20A2 2 0 0 1 19 22H5A2 2 0 0 1 3 20V19H2A1 1 0 0 1 1 18V15A1 1 0 0 1 2 14H3A7 7 0 0 1 10 7H11V5.73C10.4 5.39 10 4.74 10 4A2 2 0 0 1 12 2M7.5 13A2.5 2.5 0 0 0 5 15.5A2.5 2.5 0 0 0 7.5 18A2.5 2.5 0 0 0 10 15.5A2.5 2.5 0 0 0 7.5 13M16.5 13A2.5 2.5 0 0 0 14 15.5A2.5 2.5 0 0 0 16.5 18A2.5 2.5 0 0 0 19 15.5A2.5 2.5 0 0 0 16.5 13z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="project-content">
+                      <div class="project-tags">
+                        <span>AI-DLC FRAMEWORK</span>
+                        <span>HUMAN OVERSIGHT</span>
+                      </div>
+                      <h3 class="project-title">Adoção AI-DLC</h3>
+                      <p class="project-desc">
+                        Condução da iniciativa de adoção do AI Development Life
+                        Cycle na CWI, estruturando agentes de IA sob human
+                        oversight, spec-driven development e ciclos de entrega
+                        que aceleram o time sem tirar a decisão das pessoas.
+                      </p>
+                      <a href="#" class="project-link">
+                        <span>VISÃO DA INICIATIVA</span>
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="currentColor"
+                            d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PROJECT: Banco ABC -->
+                <div class="project-card-container" data-project="banco-abc">
+                  <div class="project-card glass-panel btn-hover-effect">
+                    <div class="project-img-placeholder">
+                      <div class="floating-grid"></div>
+                      <div class="project-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="48"
+                          height="48"
+                          class="neon-svg-cyan"
+                        >
+                          <path
+                            fill="currentColor"
+                            d="M12 2A10 10 0 0 0 2 12a9.9 9.9 0 0 0 2.25 6.35l-.07.07L12 22l7.82-3.58a10 10 0 0 0-7.82-16.42m0 2a8 8 0 0 1 7.15 4.39l-4.15 4.15L12 9.5l-3 3L6.85 10.3A8 8 0 0 1 12 4m0 14a6 6 0 1 1 6-6a6 6 0 0 1-6 6z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="project-content">
+                      <div class="project-tags">
+                        <span>MICROFRONTENDS</span>
+                        <span>ANGULAR ARCHITECTURE</span>
+                      </div>
+                      <h3 class="project-title">Modularização Banco ABC</h3>
+                      <p class="project-desc">
+                        Liderança técnica na transição da plataforma corporativa
+                        de Internet Banking para uma arquitetura baseada em
+                        Microfrontends com Angular, promovendo alta autonomia
+                        entre equipes e baixo acoplamento.
+                      </p>
+                      <a href="#" class="project-link">
+                        <span>ARQUITETURA DE REFERÊNCIA</span>
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="currentColor"
+                            d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PROJECT: CIEE -->
+                <div class="project-card-container" data-project="ciee">
+                  <div class="project-card glass-panel btn-hover-effect">
+                    <div class="project-img-placeholder">
+                      <div class="floating-grid"></div>
+                      <div class="project-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="48"
+                          height="48"
+                          class="neon-svg-purple"
+                        >
+                          <path
+                            fill="currentColor"
+                            d="M12 3c-4.97 0-9 4.03-9 9c0 2.12.74 4.07 1.97 5.61L4.35 19.4c3.9 3.9 10.23 3.9 14.13 0c3.9-3.9 3.9-10.23 0-14.13c-.39-.39-.81-.74-1.25-1.06c.46-.22.95-.4 1.46-.53L18 3c-1.63 0-3.15.52-4.4 1.4c-.52-.25-1.09-.4-1.6-.4m0 2c3.87 0 7 3.13 7 7s-3.13 7-7 7s-7-3.13-7-7s3.13-7 7-7m0 2a5 5 0 0 0-5 5a5 5 0 0 0 5 5a5 5 0 0 0 5-5a5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3a3 3 0 0 1-3 3a3 3 0 0 1-3-3a3 3 0 0 1 3-3z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="project-content">
+                      <div class="project-tags">
+                        <span>FINANCIAL ENGINES</span>
+                        <span>JAVA / SPRING / REACT</span>
+                      </div>
+                      <h3 class="project-title">Cobrança CIEE</h3>
+                      <p class="project-desc">
+                        Projeto e desenvolvimento de uma solução de faturamento
+                        e conciliação financeira de alta resiliência, elevando
+                        substancialmente a eficiência operacional e
+                        automatizando fluxos bancários complexos.
+                      </p>
+                      <a href="#" class="project-link">
+                        <span>ARQUITETURA DE INTEGRAÇÃO</span>
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="currentColor"
+                            d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PROJECT: App Ouze -->
+                <div class="project-card-container" data-project="app-ouze">
+                  <div class="project-card glass-panel btn-hover-effect">
+                    <div class="project-img-placeholder">
+                      <div class="floating-grid"></div>
+                      <div class="project-icon">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="48"
+                          height="48"
+                          class="neon-svg-pink"
+                        >
+                          <path
+                            fill="currentColor"
+                            d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 2a8 8 0 0 1 8 8a8 8 0 0 1-8 8a8 8 0 0 1-8-8a8 8 0 0 1 8-8m-1 3v2H9v2h2v5h2V11h2V9h-2V7h-2z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div class="project-content">
+                      <div class="project-tags">
+                        <span>MOBILE ARCHITECTURE</span>
+                        <span>FLUTTER / DART</span>
+                      </div>
+                      <h3 class="project-title">Reescrita App Ouze</h3>
+                      <p class="project-desc">
+                        Reengenharia e reescrita de ponta a ponta do aplicativo
+                        móvel corporativo utilizando Flutter, resultando em uma
+                        experiência de alta performance, responsividade fluida e
+                        arquitetura modular.
+                      </p>
+                      <a href="#" class="project-link">
+                        <span>ARQUITETURA MOBILE</span>
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="currentColor"
+                            d="M14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3m-2 16H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scroll-driven progress HUD (replaces arrows & bullets) -->
+            <div class="projects-scrollbar" id="projects-scrollbar">
+              <span class="projects-scroll-index" id="projects-scroll-index"
+                >01</span
+              >
+              <div class="projects-scroll-track">
+                <div
+                  class="projects-scroll-fill"
+                  id="projects-scroll-fill"
+                ></div>
+              </div>
+              <span class="projects-scroll-total">04</span>
+              <span class="projects-scroll-name" id="projects-scroll-name"
+                >ADOÇÃO AI-DLC</span
+              >
+              <span class="projects-scroll-hint">ROLE PARA EXPLORAR</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 5: MINIMALIST TERMINAL CONTACT -->
+      <section id="contact" class="section contact-section">
+        <div class="container contact-container">
+          <div class="contact-grid">
+            <div class="contact-info">
+              <span class="section-tag">NEURAL INTEGRATION</span>
+              <h2 class="section-title">VAMOS INICIAR UMA CONEXÃO?</h2>
+              <p class="contact-desc">
+                Estou sempre aberto a discussões sobre AI-DLC, IA com human
+                oversight e arquitetura de plataformas — sempre com pessoas no
+                centro. Envie uma mensagem diretamente ao meu console neural.
+              </p>
+
+              <div class="social-links">
+                <a
+                  href="https://www.linkedin.com/in/leonardo-oliveira-60749a115/"
+                  target="_blank"
+                  class="social-node btn-hover-effect"
+                >
+                  <span class="social-icon">IN</span>
+                  <span class="social-text">LINKEDIN</span>
+                </a>
+                <a
+                  href="https://stackoverflow.com/users/4920091/leonardo-oliveira"
+                  target="_blank"
+                  class="social-node btn-hover-effect"
+                >
+                  <span class="social-icon">SO</span>
+                  <span class="social-text">STACKOVERFLOW</span>
+                </a>
+                <a
+                  href="mailto:leonardooliveira.sl@gmail.com"
+                  class="social-node btn-hover-effect"
+                >
+                  <span class="social-icon">TX</span>
+                  <span class="social-text">EMAIL</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="contact-terminal glass-panel">
+              <div class="terminal-header">
+                <div class="terminal-dots">
+                  <span class="dot close"></span>
+                  <span class="dot minimize"></span>
+                  <span class="dot expand"></span>
+                </div>
+                <span class="terminal-title">bash</span>
+              </div>
+              <div class="terminal-body">
+                <div class="terminal-log">
+                  <div class="log-line text-cyan">
+                    SYSTEM: CONEXÃO INICIADA A PARTIR DE 127.0.0.1
+                  </div>
+                  <div class="log-line">
+                    SYSTEM: INSIRA OS PARÂMETROS PARA ENVIAR TRANSMISSÃO.
+                  </div>
+                </div>
+
+                <form id="terminal-form" class="terminal-form">
+                  <div class="terminal-field">
+                    <span class="prompt-arrow">&gt;_</span>
+                    <label for="form-name" class="terminal-label"
+                      >NOME_ORIGEM:</label
+                    >
+                    <input
+                      type="text"
+                      id="form-name"
+                      required
+                      placeholder="Seu nome ou organização..."
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="terminal-field">
+                    <span class="prompt-arrow">&gt;_</span>
+                    <label for="form-email" class="terminal-label"
+                      >CONTATO_IP:</label
+                    >
+                    <input
+                      type="email"
+                      id="form-email"
+                      required
+                      placeholder="Seu email de contato..."
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="terminal-field">
+                    <span class="prompt-arrow">&gt;_</span>
+                    <label for="form-message" class="terminal-label"
+                      >MENSAGEM:</label
+                    >
+                    <textarea
+                      id="form-message"
+                      required
+                      placeholder="Transmissão codificada aqui..."
+                    ></textarea>
+                  </div>
+                  <!-- Honeypot anti-spam protection (invisible to users, traps bots) -->
+                  <div
+                    style="
+                      display: none !important;
+                      opacity: 0;
+                      position: absolute;
+                      left: -9999px;
+                      top: -9999px;
+                    "
+                  >
+                    <input
+                      type="text"
+                      id="form-honey"
+                      name="_honey"
+                      autocomplete="off"
+                      tabindex="-1"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    class="btn btn-terminal"
+                    id="terminal-submit-btn"
+                  >
+                    <span>EXECUTAR TRANSMISSÃO</span>
+                  </button>
+                </form>
+
+                <div class="terminal-output" id="terminal-output"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer class="main-footer">
+          <p>
+            © 2026 LEONARDO DE OLIVEIRA. ARQUITETADO EM SINERGIA HUMANO-IA. ALL
+            RIGHTS RECLAIMED.
+          </p>
+        </footer>
+      </section>
+    </main>
+
+    <!-- App Logic Scripts -->
+    <script src="animations.js"></script>
+    <script src="timeline3d.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
