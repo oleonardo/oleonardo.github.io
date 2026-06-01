@@ -51,8 +51,9 @@ function initAnimations() {
             const scrollContainer = document.getElementById('scroll-container');
             
             if (targetSec && scrollContainer) {
+                const targetTop = targetSec.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;
                 scrollContainer.scrollTo({
-                    top: targetSec.offsetTop,
+                    top: targetTop,
                     behavior: 'smooth'
                 });
             }
@@ -68,8 +69,9 @@ function initAnimations() {
             const scrollContainer = document.getElementById('scroll-container');
             
             if (targetSec && scrollContainer) {
+                const targetTop = targetSec.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;
                 scrollContainer.scrollTo({
-                    top: targetSec.offsetTop,
+                    top: targetTop,
                     behavior: 'smooth'
                 });
             }
@@ -180,8 +182,9 @@ function initAnimations() {
             const targetSec = document.querySelector('#contact');
             const scrollContainer = document.getElementById('scroll-container');
             if (targetSec && scrollContainer) {
+                const targetTop = targetSec.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;
                 scrollContainer.scrollTo({
-                    top: targetSec.offsetTop,
+                    top: targetTop,
                     behavior: 'smooth'
                 });
             }

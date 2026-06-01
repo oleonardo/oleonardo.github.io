@@ -9,10 +9,14 @@ window.PortfolioApp = {
     threeEngine: null,
     animations: null,
     mouse: { x: 0, y: 0, targetX: 0, targetY: 0 },
-    currentSection: 0
+    currentSection: 0,
+    lowPerf: false // Central flag for low-performance eco-mode
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+    // 0. Detect device computational capabilities immediately
+    detectDeviceCapability();
+
     // 1. Initialize interactive custom cursor mapping immediately
     initCursor();
 
@@ -80,6 +84,9 @@ function initPreloader() {
                         window.PortfolioApp.animations.triggerHeroEntry();
                     }
                     
+                    // Start monitoring real-time frame rates to protect low-end devices
+                    startFPSMonitor();
+                    
                     // Unlock scrolling 1.2s later (when the hero text entry animation is fully complete!)
                     setTimeout(() => {
                         if (scrollContainer) {
@@ -93,6 +100,7 @@ function initPreloader() {
                 if (window.PortfolioApp.animations) {
                     window.PortfolioApp.animations.triggerHeroEntry();
                 }
+                startFPSMonitor();
                 if (scrollContainer) {
                     scrollContainer.classList.remove('no-scroll');
                 }
@@ -134,6 +142,9 @@ function initSystem() {
 
     // 8. Initialize the immersive 3D coverflow carousel for the Projects section
     initProjects3DCarousel();
+
+    // 9. Initialize custom scroll snapping & section transitions helper for physical mouse wheels
+    initScrollSnapHandler();
 }
 
 /**
@@ -544,6 +555,126 @@ function initTimelineCardBioluminescence() {
 }
 
 /**
+ * CUSTOM SCROLL SNAPPING & SECTION TRANSITIONS
+ * Specifically addresses physical mouse wheel scrolls to prevent "stucking"
+ * between sections, while keeping trackpad smooth inertia native scroll.
+ */
+function initScrollSnapHandler() {
+    const scrollContainer = document.getElementById('scroll-container');
+    if (!scrollContainer) return;
+
+    let isTransitioning = false;
+
+    // Cross-browser helper to get absolute scroll top of a section relative to the container
+    function getSectionScrollTop(sec) {
+        return sec.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;
+    }
+
+    const isDesktop = () => window.matchMedia('(min-width: 1025px)').matches;
+
+    scrollContainer.addEventListener('wheel', (e) => {
+        if (!isDesktop()) return;
+
+        // If we are currently transitioning, block any further wheel inputs to prevent jitter
+        if (isTransitioning) {
+            e.preventDefault();
+            return;
+        }
+
+        // Heuristic to detect a physical mouse wheel notch:
+        // Safari and Chrome might emit lower deltaY for gentle mouse scrolls, so we use a lower threshold of >= 10
+        const isPhysicalWheel = Math.abs(e.deltaY) >= 10 || e.deltaMode !== 0;
+        if (!isPhysicalWheel) return; // Keep trackpad scrolling 100% native
+
+        const scrollTop = scrollContainer.scrollTop;
+        const containerHeight = scrollContainer.clientHeight;
+        const maxScroll = scrollContainer.scrollHeight - containerHeight;
+        
+        // Clamp scrollTop to prevent Safari rubber-banding (negative or beyond maxScroll values) from breaking calculations
+        const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScroll));
+        
+        const sections = Array.from(document.querySelectorAll('.section'));
+        if (sections.length === 0) return;
+
+        // Detect current section index using getBoundingClientRect positions with clamped scroll top
+        let currentSecIdx = 0;
+        for (let i = 0; i < sections.length; i++) {
+            const sec = sections[i];
+            const secTop = getSectionScrollTop(sec);
+            const secHeight = sec.offsetHeight;
+            
+            if (clampedScrollTop >= secTop - 10 && clampedScrollTop < secTop + secHeight - 10) {
+                currentSecIdx = i;
+                break;
+            }
+        }
+
+        const currentSec = sections[currentSecIdx];
+        const secTop = getSectionScrollTop(currentSec);
+        const secHeight = currentSec.offsetHeight;
+        const isTall = secHeight > containerHeight + 50;
+        const scrollDirection = e.deltaY > 0 ? 'down' : 'up';
+
+        if (!isTall) {
+            // Shorter 100vh sections (Hero and Contact)
+            if (scrollDirection === 'down' && currentSecIdx < sections.length - 1) {
+                e.preventDefault();
+                smoothScrollToSection(currentSecIdx + 1);
+            } else if (scrollDirection === 'up' && currentSecIdx > 0) {
+                e.preventDefault();
+                smoothScrollToSection(currentSecIdx - 1);
+            }
+        } else {
+            // Tall sections (Experience timeline and Projects coverflow)
+            const isAtTop = clampedScrollTop <= secTop + 5;
+            const isAtBottom = clampedScrollTop >= secTop + secHeight - containerHeight - 5;
+
+            if (scrollDirection === 'up' && isAtTop && currentSecIdx > 0) {
+                e.preventDefault();
+                smoothScrollToSection(currentSecIdx - 1);
+            } else if (scrollDirection === 'down' && isAtBottom && currentSecIdx < sections.length - 1) {
+                e.preventDefault();
+                smoothScrollToSection(currentSecIdx + 1);
+            }
+            // If in the middle of a tall section, do nothing (allow natural scrub scrolling)
+        }
+    }, { passive: false });
+
+    function smoothScrollToSection(index) {
+        const sections = document.querySelectorAll('.section');
+        if (index < 0 || index >= sections.length) return;
+
+        const targetSec = sections[index];
+        const targetTop = getSectionScrollTop(targetSec);
+
+        // If we are already at the target scroll position (or extremely close), do nothing
+        if (Math.abs(scrollContainer.scrollTop - targetTop) < 3) {
+            isTransitioning = false;
+            return;
+        }
+
+        isTransitioning = true;
+
+        // Use custom object tweening to animate scrollTop directly: 
+        // 100% cross-browser compatible, ultra-smooth, bypasses Safari's native smooth-scroll bugs,
+        // and provides high-end easing physics!
+        const scrollObj = { y: scrollContainer.scrollTop };
+        gsap.to(scrollObj, {
+            y: targetTop,
+            duration: 0.8,
+            ease: "power2.out",
+            overwrite: "auto",
+            onUpdate: () => {
+                scrollContainer.scrollTop = scrollObj.y;
+            },
+            onComplete: () => {
+                isTransitioning = false;
+            }
+        });
+    }
+}
+
+/**
  * TEXT SHUFFLE / SCRAMBLER CLASS FOR CYBERNETIC INTEGRITY
  */
 class TextScrambler {
@@ -616,4 +747,123 @@ function initInteractiveHeroText() {
             scrambler.setText(originalText);
         });
     });
+}
+
+/**
+ * PERFORMANCE SCALING ENGINE (ECO / LOW-PERFORMANCE MODE)
+ * Dynamically adjusts styling and WebGL settings to match the user's hardware.
+ */
+function detectDeviceCapability() {
+    let reason = "";
+
+    // 1. Check logical CPU cores (e.g. dual-core processors are flagged as low-perf)
+    if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) {
+        reason = `CPU_CORES_${navigator.hardwareConcurrency}`;
+    }
+
+    // 2. Check system RAM (e.g. less than 4GB RAM)
+    if (navigator.deviceMemory && navigator.deviceMemory < 4) {
+        reason = `RAM_${navigator.deviceMemory}GB`;
+    }
+
+    // 3. WebGL GPU vendor/renderer inspection (identifies weak integrated or software GPUs)
+    if (!reason) {
+        try {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (gl) {
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) {
+                    const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
+                    // Identify weak / basic integrated graphics or virtual software rasterizers
+                    const isWeakGPU = /Intel|HD Graphics|Iris|UHD|Microsoft Basic Render Driver|SwiftShader|llvmpipe/i.test(renderer);
+                    if (isWeakGPU) {
+                        reason = "INTEGRATED_GPU";
+                    }
+                }
+            } else {
+                reason = "NO_WEBGL";
+            }
+        } catch (e) {
+            reason = "WEBGL_ERR";
+        }
+    }
+
+    // If a bottleneck is detected, bootstrap the site in Eco / Low-Performance Mode
+    if (reason) {
+        enableLowPerfMode(reason);
+    }
+}
+
+function enableLowPerfMode(reason) {
+    if (window.PortfolioApp.lowPerf) return; // already active
+    
+    window.PortfolioApp.lowPerf = true;
+    document.body.classList.add('low-perf');
+
+    // Update WebGL renderer pixel ratio dynamically if already initialized
+    const engine = window.PortfolioApp.threeEngine;
+    if (engine && engine.renderer) {
+        engine.renderer.setPixelRatio(1.0);
+        if (engine.uniforms && engine.uniforms.uPixelRatio) {
+            engine.uniforms.uPixelRatio.value = 1.0;
+        }
+        console.log("[Performance Engine] Dynamic WebGL pixel ratio downgraded to 1.0x.");
+    }
+
+    // Update the glowing status text on the header to match the cybernetic diagnostic theme
+    const statusText = document.querySelector('.status-text');
+    if (statusText) {
+        statusText.innerHTML = `SYS_ONLINE: ECO_MODE_ACTIVE <span style="font-size:0.55rem;color:var(--color-cyan);opacity:0.75;letter-spacing:0.5px;">[${reason}]</span>`;
+    }
+
+    // Add CSS transition smoothing to prevent layout snap
+    document.body.style.transition = "background-color 0.8s ease, backdrop-filter 0.8s ease";
+
+    console.warn(`[Performance Engine] Eco / Low-Performance Mode enabled. Reason: ${reason}`);
+}
+
+function startFPSMonitor() {
+    if (window.PortfolioApp.lowPerf) return; // already in eco mode
+
+    let frameCount = 0;
+    let startTime = performance.now();
+    const monitorStartTime = performance.now();
+    const MONITOR_DURATION = 6500; // monitor during first 6.5s of intense visuals
+    let lastTime = performance.now();
+
+    function loop() {
+        frameCount++;
+        const now = performance.now();
+        lastTime = now;
+
+        // Stop the monitor loop once the window is past target duration
+        if (now - monitorStartTime > MONITOR_DURATION) {
+            const totalDuration = (now - monitorStartTime) / 1000;
+            const avgFPS = frameCount / totalDuration;
+            console.log(`[Performance Engine] Finished FPS monitoring. Avg FPS: ${avgFPS.toFixed(1)}`);
+            return;
+        }
+
+        // Check frame rate every 1.5 seconds
+        if (now - startTime >= 1500) {
+            const elapsed = (now - startTime) / 1000;
+            const fps = frameCount / elapsed;
+            
+            console.log(`[Performance Engine] Current FPS: ${fps.toFixed(1)}`);
+
+            // If the PC drops below 36 FPS, immediately downgrade the visual quality to keep interactions buttery smooth
+            if (fps < 36) {
+                enableLowPerfMode("LOW_FPS");
+                return;
+            }
+
+            frameCount = 0;
+            startTime = now;
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
 }

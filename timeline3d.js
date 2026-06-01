@@ -430,7 +430,9 @@ function initThreeEngine() {
         powerPreference: "high-performance"
     });
     renderer.setSize(width, height);
-    const pixelRatio = Math.min(window.devicePixelRatio, 2);
+    // Limit pixelRatio to 1.0 in eco-mode to boost WebGL performance up to 400% on low-end screens
+    const maxPixelRatio = (window.PortfolioApp && window.PortfolioApp.lowPerf) ? 1.0 : 2.0;
+    const pixelRatio = Math.min(window.devicePixelRatio, maxPixelRatio);
     renderer.setPixelRatio(pixelRatio);
 
     // 2. Build the dual-target particle buffer (field positions + spine targets)
@@ -1275,7 +1277,9 @@ function initThreeEngine() {
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
         renderer.setSize(width, height);
-        const pr = Math.min(window.devicePixelRatio, 2);
+        // Limit pixel ratio in eco-mode on resize
+        const maxPr = (window.PortfolioApp && window.PortfolioApp.lowPerf) ? 1.0 : 2.0;
+        const pr = Math.min(window.devicePixelRatio, maxPr);
         renderer.setPixelRatio(pr);
         uniforms.uPixelRatio.value = pr;
     });

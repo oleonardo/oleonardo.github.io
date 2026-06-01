@@ -701,9 +701,9 @@ input, textarea, button {
     overflow-y: auto;
     overflow-x: hidden;
     z-index: 2;
-    /* Proximity (not mandatory) so the tall, sticky timeline section can be
-       scrolled through freely while shorter sections still snap into place. */
-    scroll-snap-type: y proximity;
+    /* CSS Scroll Snap disabled on desktop to completely prevent Safari native snap-locking bugs.
+       Custom premium section snapping transitions are now fully handled in JS. */
+    scroll-snap-type: none;
 }
 
 .scroll-container.no-scroll {
@@ -717,8 +717,8 @@ input, textarea, button {
     padding: 100px 8%;
     display: flex;
     align-items: center;
-    scroll-snap-align: start;
-    scroll-snap-stop: always;
+    scroll-snap-align: none;
+    scroll-snap-stop: normal;
     overflow: hidden;
     z-index: 3; /* Sections default to stacking in front of the background WebGL canvas */
 }
@@ -2266,5 +2266,34 @@ input, textarea, button {
 
 .card-title, .project-title {
     transform: translateZ(20px) !important;
+}
+
+/* ==========================================================================
+   LOW PERFORMANCE / ECO MODE STYLING
+   ========================================================================== */
+body.low-perf,
+body.low-perf * {
+    cursor: auto !important;
+}
+
+body.low-perf .custom-cursor,
+body.low-perf .custom-cursor-dot {
+    display: none !important; /* Hide custom cursor to eliminate drag lag */
+}
+
+body.low-perf .glass-panel {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(10, 10, 15, 0.96) !important;
+}
+
+body.low-perf .timeline-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(12, 12, 20, 0.96) !important;
+}
+
+body.low-perf .remnant {
+    display: none !important; /* Turn off dynamic ambient particle remnants */
 }
 
