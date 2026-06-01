@@ -646,8 +646,11 @@ function initThreeEngine() {
     }));
     scene.add(starField);
 
-    // 3a. 3D Hover particles system (bioluminescent energy shooting from DNA and orbiting card borders)
-    const HOVER_PARTICLE_COUNT = 150;
+    // 3a. Bioluminescent hover "tide": fine motes drift off the rotating DNA and
+    //     gather into a soft, slowly-breathing halo around the hovered card —
+    //     like plankton drawn to light. The cursor parts them hydrodynamically
+    //     (same ripple as the hero field). No lines, no scan, no lock-on.
+    const HOVER_PARTICLE_COUNT = 240;
     const hoverGeo = new THREE.BufferGeometry();
     const hoverPositions = new Float32Array(HOVER_PARTICLE_COUNT * 3);
     const hoverColors = new Float32Array(HOVER_PARTICLE_COUNT * 3);
@@ -674,7 +677,7 @@ function initThreeEngine() {
     }
     
     const hoverMaterial = new THREE.PointsMaterial({
-        size: 0.24,
+        size: 0.2,
         map: createGlowTexture(),
         vertexColors: true,
         transparent: true,
@@ -684,20 +687,23 @@ function initThreeEngine() {
     
     const hoverPoints = new THREE.Points(hoverGeo, hoverMaterial);
     scene.add(hoverPoints);
-    
+
     const hoverParticlesData = [];
     for (let i = 0; i < HOVER_PARTICLE_COUNT; i++) {
+        // A few motes drift further out as loose stray plankton; most hug the border.
+        let band = Math.random() * 0.36;
+        if (Math.random() < 0.18) band += 0.5;
         hoverParticlesData.push({
             x: 0, y: 0, z: 0,
-            vx: 0, vy: 0, vz: 0, // 3D Velocity vectors for reactive hover physics!
-            progress: 0,
-            speed: 0.015 + Math.random() * 0.015,
-            seed: Math.random() * 100,
-            orbitProgress: Math.random(),
-            orbitSpeed: 0.06 + Math.random() * 0.08,
-            isCyan: Math.random() > 0.5,
-            spawnY: (Math.random() - 0.5) * 16.0,
-            swirlOffset: (Math.random() - 0.5) * 2.0
+            progress: 0,                              // 0 = docked on the DNA, 1 = settled in the card halo
+            seed: Math.random() * Math.PI * 2.0,      // per-mote phase for organic wobble
+            spawnY: (Math.random() - 0.5) * 16.0,     // source height along the visible DNA
+            isCyan: Math.random() > 0.5,              // which double-helix groove it rides
+            haloAngle: Math.random() * Math.PI * 2.0, // base angle around the card border
+            band,                                     // radial offset (soft cloud thickness)
+            driftSpeed: (Math.random() - 0.5) * 0.12, // slow, mixed-direction orbital shimmer
+            driftRate: 1.8 + Math.random() * 1.6,     // staggered gather/return speed (the tide)
+            freq: 0.6 + Math.random() * 0.8           // breathing / wobble frequency
         });
     }
 
@@ -930,6 +936,11 @@ function initThreeEngine() {
     let spineRotCurrent = 0;
     let lastElapsedTime = 0;
 
+    // Reusable colour objects for the bioluminescent hover tide (allocated once).
+    const tideCyan   = new THREE.Color(0.0, 0.92, 1.0);
+    const tideViolet = new THREE.Color(0.55, 0.35, 1.0);
+    const tideColor  = new THREE.Color();
+
     function tick() {
         const elapsedTime = clock.getElapsedTime();
         const deltaTime = Math.min(elapsedTime - lastElapsedTime, 0.03);
@@ -958,10 +969,10 @@ function initThreeEngine() {
         spineRotCurrent += (spineRotTarget - spineRotCurrent) * 0.28;
         uniforms.uSpineRot.value = spineRotCurrent;
 
-        // ---- 3D HOVER PARTICLES SYSTEM UPDATE ----
+        // ---- BIOLUMINESCENT HOVER TIDE UPDATE ----
         const N = 4;
         const STEP_DEG = 90;
-        
+
         let targetX_card = 0;
         let targetY_card = 0;
         let targetZ_card = 0;
@@ -1043,153 +1054,112 @@ function initThreeEngine() {
 
         const W = cardWebGLWidth; 
         const H = cardWebGLHeight;
+        const cardOrigin = new THREE.Vector3(targetX_card, targetY_card, targetZ_card + translateZ_webgl);
 
+        function cardLocalToWorld(lx, ly, lz = 0) {
+            const cosX = Math.cos(angleX_mouse);
+            const sinX = Math.sin(angleX_mouse);
+            const cosY = Math.cos(targetTilt);
+            const sinY = Math.sin(targetTilt);
+
+            const y1 = ly * cosX - lz * sinX;
+            const z1 = ly * sinX + lz * cosX;
+            const rx = lx * cosY + z1 * sinY;
+            const rz = -lx * sinY + z1 * cosY;
+
+            return new THREE.Vector3(
+                cardOrigin.x + rx,
+                cardOrigin.y + y1,
+                cardOrigin.z + rz
+            );
+        }
+
+        // Shared slow breathing of the whole halo (matches the calm easing of the field morphs).
+        const haloBreath = 1.0 + 0.05 * Math.sin(elapsedTime * 0.9);
         const posArr = hoverGeo.attributes.position.array;
         const colArr = hoverGeo.attributes.color.array;
         
         for (let i = 0; i < HOVER_PARTICLE_COUNT; i++) {
-            const pData = hoverParticlesData[i];
-            
-            // DNA Spine source coordinates at y = pData.spawnY (perfectly aligned with double-helix backbone strands!)
-            const t_dna = (pData.spawnY / 20.0) + 0.5; // vertical DNA length is 20.0
-            const off = pData.isCyan ? 0.0 : 2.2; // major/minor groove offset matching backbone strands
+            const p = hoverParticlesData[i];
+
+            // ---- DNA SOURCE: a mote resting on the rotating double-helix at its own height ----
+            const t_dna = (p.spawnY / 20.0) + 0.5;        // vertical DNA length is 20.0
+            const off = p.isCyan ? 0.0 : 2.2;             // groove offset matching the backbone strands
             const angle_dna = t_dna * Math.PI * 2.0 * 4 + spineRotCurrent + off; // 4 turns
-            const taper_dna = 3.6 * (0.5 + 0.5 * Math.sin(t_dna * Math.PI)); // radius 3.6
+            const taper_dna = 3.6 * (0.5 + 0.5 * Math.sin(t_dna * Math.PI));     // radius 3.6
             const dnaX = Math.sin(angle_dna) * taper_dna;
-            const dnaY = pData.spawnY;
+            const dnaY = p.spawnY;
             const dnaZ = Math.cos(angle_dna) * taper_dna;
-            
+
             if (hoveredCardIndex !== null) {
-                // Fly to card: increase progress
-                pData.progress += pData.speed * (deltaTime * 60);
-                if (pData.progress > 1.0) pData.progress = 1.0;
-            } else {
-                // Fly back to DNA: decrease progress
-                pData.progress -= pData.speed * 1.5 * (deltaTime * 60);
-                if (pData.progress < 0.0) pData.progress = 0.0;
-                
-                // Reset physical velocity when flying back
-                pData.vx *= 0.8;
-                pData.vy *= 0.8;
-                pData.vz *= 0.8;
-            }
-            
-            // Calculate position based on progress
-            if (pData.progress <= 0.0) {
-                pData.x = dnaX;
-                pData.y = dnaY;
-                pData.z = dnaZ;
-            } else {
-                // 1. DYNAMIC PHYSICAL FLOATING CLOUD:
-                // Smooth Brownian-like noise floating around the card
-                const floatX = Math.sin(elapsedTime * 1.2 + pData.seed) * 2.4;
-                const floatY = Math.cos(elapsedTime * 1.0 + pData.seed * 1.3) * 1.5;
-                const floatZ = Math.sin(elapsedTime * 1.4 + pData.seed * 0.7) * 0.8;
-                
-                // Rotate local positions to match the card's tilted 3D space
-                const y1 = floatY * Math.cos(angleX_mouse) - floatZ * Math.sin(angleX_mouse);
-                const z1 = floatY * Math.sin(angleX_mouse) + floatZ * Math.cos(angleX_mouse);
-                const x1 = floatX;
-                
-                const rx = x1 * Math.cos(targetTilt) + z1 * Math.sin(targetTilt);
-                const ry = y1;
-                const rz = -x1 * Math.sin(targetTilt) + z1 * Math.cos(targetTilt);
-                
-                // Natural target position (incorporates CSS translateZ)
-                const natX = targetX_card + rx;
-                const natY = targetY_card + ry;
-                const natZ = targetZ_card + rz + translateZ_webgl;
-                
-                // Calculate physical cursor repulsion
-                let pushX = 0, pushY = 0, pushZ = 0;
-                if (hoveredCardIndex !== null) {
-                    const dx = pData.x - cursorWorld.x;
-                    const dy = pData.y - cursorWorld.y;
-                    const dz = pData.z - cursorWorld.z;
-                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                    
-                    const pushRadius = 4.0;
-                    if (dist < pushRadius && dist > 0.01) {
-                        // Repulsive push force: stronger when closer
-                        const pushStrength = (1.0 - dist / pushRadius) * 4.5;
-                        pushX = (dx / dist) * pushStrength;
-                        pushY = (dy / dist) * pushStrength;
-                        pushZ = (dz / dist) * pushStrength;
-                    }
+                // ---- TIDE IN: motes drift off the DNA and gather into a breathing halo ----
+                p.progress += (1.0 - p.progress) * Math.min(1, deltaTime * p.driftRate);
+                const e = p.progress * p.progress * (3.0 - 2.0 * p.progress); // smoothstep ease
+
+                // Soft luminous cloud hugging the card border (card-local -> world).
+                const ang = p.haloAngle + elapsedTime * p.driftSpeed;          // slow orbital drift
+                const wobble = 1.0 + 0.16 * Math.sin(elapsedTime * p.freq + p.seed);
+                const reach = (1.0 + p.band) * haloBreath * wobble;
+                const localX = Math.cos(ang) * (W * 0.5) * reach;
+                const localY = Math.sin(ang) * (H * 0.5) * reach;
+                const localZ = 0.18 + Math.sin(elapsedTime * p.freq * 0.7 + p.seed) * 0.12;
+                const halo = cardLocalToWorld(localX, localY, localZ);
+
+                // Marine-current swell, strongest mid-flight (same flavour as the hero field).
+                const swell = Math.sin(p.progress * Math.PI);
+                halo.x += Math.sin(elapsedTime * 0.6 + p.seed) * 0.55 * swell;
+                halo.y += Math.cos(elapsedTime * 0.5 + p.seed * 1.3) * 0.45 * swell;
+                halo.z += Math.sin(elapsedTime * 0.7 + p.seed * 0.7) * 0.40 * swell;
+
+                let tx = dnaX + (halo.x - dnaX) * e;
+                let ty = dnaY + (halo.y - dnaY) * e;
+                let tz = dnaZ + (halo.z - dnaZ) * e;
+
+                // The cursor parts the motes hydrodynamically — the soft ripple of the hero field.
+                const dx = tx - cursorWorld.x;
+                const dy = ty - cursorWorld.y;
+                const dz = tz - cursorWorld.z;
+                const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.0001;
+                const pushRadius = 2.4;
+                if (d < pushRadius) {
+                    const lens = 1.0 - d / pushRadius;
+                    const s = lens * lens * 1.7;          // ease-in: gentle core, no hard shove
+                    tx += (dx / d) * s;
+                    ty += (dy / d) * s;
+                    tz += (dz / d) * s;
                 }
-                
-                // Damped Spring-Mass system updates
-                const springStrength = 4.5; // pull towards home position
-                const damping = 0.85; // friction/damping to prevent unstable oscillation
-                
-                const forceX = (natX - pData.x) * springStrength + pushX;
-                const forceY = (natY - pData.y) * springStrength + pushY;
-                const forceZ = (natZ - pData.z) * springStrength + pushZ;
-                
-                // Integrate velocity and position
-                pData.vx = (pData.vx + forceX * deltaTime) * damping;
-                pData.vy = (pData.vy + forceY * deltaTime) * damping;
-                pData.vz = (pData.vz + forceZ * deltaTime) * damping;
-                
-                let targetX_final = pData.x + pData.vx * deltaTime;
-                let targetY_final = pData.y + pData.vy * deltaTime;
-                let targetZ_final = pData.z + pData.vz * deltaTime;
-                
-                // Beautiful spiraling swirl motion in flight during transition
-                const t = pData.progress;
-                
-                // Interpolate base coordinates from DNA to the final physical simulated target
-                let bx = dnaX + (targetX_final - dnaX) * t;
-                let by = dnaY + (targetY_final - dnaY) * t;
-                let bz = dnaZ + (targetZ_final - dnaZ) * t;
-                
-                // Add a volumetric spiral swirl (peaks in middle of flight, fully vanishes at t = 1)
-                const swirlVal = Math.sin(t * Math.PI); 
-                const swirlAngle = (1.0 - t) * Math.PI * 1.5 + pData.seed;
-                const swirlRad = swirlVal * 2.0;
-                
-                bx += Math.cos(swirlAngle) * swirlRad;
-                bz += Math.sin(swirlAngle) * swirlRad;
-                by += swirlVal * pData.swirlOffset;
-                
-                pData.x = bx;
-                pData.y = by;
-                pData.z = bz;
+
+                // Critically-damped follow keeps the motion silky on fast scroll / cursor moves.
+                const k = Math.min(1, deltaTime * 9.0);
+                p.x += (tx - p.x) * k;
+                p.y += (ty - p.y) * k;
+                p.z += (tz - p.z) * k;
+            } else {
+                // ---- TIDE OUT: motes calmly ebb back and re-dock onto the DNA ----
+                // Position and glow share one rate (symmetric with the gather) so the
+                // motes dim AS they return, dissolving back into the spine.
+                p.progress += (0.0 - p.progress) * Math.min(1, deltaTime * p.driftRate);
+                const k = Math.min(1, deltaTime * p.driftRate);
+                p.x += (dnaX - p.x) * k;
+                p.y += (dnaY - p.y) * k;
+                p.z += (dnaZ - p.z) * k;
             }
-            
-            // Set position inside Float32Array
-            posArr[i * 3]     = pData.x;
-            posArr[i * 3 + 1] = pData.y;
-            posArr[i * 3 + 2] = pData.z;
-            
-            // Color mapping: interpolate color from DNA/ambient values to bright glowing accents
-            let activeColorCyan = new THREE.Color(0.0, 0.95, 1.0);
-            let activeColorPurple = new THREE.Color(0.55, 0.35, 1.0);
-            
-            let finalColor = new THREE.Color();
-            let baseColor = pData.isCyan ? activeColorCyan : activeColorPurple;
-            
-            // Cybermatic bicolorous running gradient sweeps around the cloud!
-            let cardColor = new THREE.Color();
-            const colorProgress = (i / HOVER_PARTICLE_COUNT) + (elapsedTime * 0.4);
-            const colorWave = Math.sin(colorProgress * Math.PI * 4.0) * 0.5 + 0.5; 
-            cardColor.copy(activeColorCyan).lerp(activeColorPurple, colorWave);
-            
-            // Blend from base DNA color to target card color over progress
-            finalColor.copy(baseColor).lerp(cardColor, pData.progress);
-            
-            // Set RGB values inside Float32Array
-            colArr[i * 3]     = finalColor.r;
-            colArr[i * 3 + 1] = finalColor.g;
-            colArr[i * 3 + 2] = finalColor.b;
-            
-            // Make the particles glow and fade out near DNA when inactive
-            const alpha = Math.min(1.0, pData.progress / 0.15);
-            colArr[i * 3]     *= alpha;
-            colArr[i * 3 + 1] *= alpha;
-            colArr[i * 3 + 2] *= alpha;
+
+            posArr[i * 3]     = p.x;
+            posArr[i * 3 + 1] = p.y;
+            posArr[i * 3 + 2] = p.z;
+
+            // ---- COLOUR: a slow cyan<->violet tide sweeps the halo; bright on the card, dim at the DNA ----
+            const sweep = 0.5 + 0.5 * Math.sin(elapsedTime * 0.5 + p.haloAngle * 3.0 + p.seed * 0.2);
+            tideColor.copy(tideCyan).lerp(tideViolet, sweep);
+            const settle = 0.85 + 0.15 * Math.sin(elapsedTime * 0.9 + p.seed); // soft brightness breathing
+            const glow = (0.12 + 0.88 * p.progress) * settle; // brightness tracks progress: kindles in, dissolves out
+            const fade = Math.min(1.0, p.progress / 0.12); // fade in/out as it leaves / rejoins the spine
+            colArr[i * 3]     = tideColor.r * glow * fade;
+            colArr[i * 3 + 1] = tideColor.g * glow * fade;
+            colArr[i * 3 + 2] = tideColor.b * glow * fade;
         }
-        
+
         hoverGeo.attributes.position.needsUpdate = true;
         hoverGeo.attributes.color.needsUpdate = true;
 

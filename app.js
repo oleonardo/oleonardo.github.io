@@ -498,45 +498,20 @@ function initProjects3DCarousel() {
 }
 
 /**
- * BIOLUMINESCENT PARTICLE FLOW FROM DNA ON HOVER
- * Spawns glowing energy threads that shoot out from the central DNA spine direction,
- * hit the hovered card boundary, and run along its borders in a glowing loop.
+ * BIOLUMINESCENT HOVER TIDE
+ * On hover, fine motes drift off the rotating DNA spine and gather into a soft,
+ * slowly-breathing halo around the card (and ebb back to the spine on leave).
+ * The motion lives entirely in the WebGL engine; here we just notify it which
+ * card is active so the tide knows where to pool.
  */
 function initTimelineCardBioluminescence() {
     const timelineCards = document.querySelectorAll('.timeline-card-wrapper .timeline-card');
     
     timelineCards.forEach((card, index) => {
-        let particleInterval;
-        
         card.addEventListener('mouseenter', () => {
             // 1. Notify the WebGL shader system
             if (window.PortfolioApp.threeEngine && typeof window.PortfolioApp.threeEngine.setHoveredCard === 'function') {
                 window.PortfolioApp.threeEngine.setHoveredCard(index);
-            }
-            
-            // 2. Launch real-time CSS/DOM particle stream ascending around the tilted 3D space
-            const wrapper = card.closest('.timeline-card-wrapper');
-            if (wrapper) {
-                const rect = card.getBoundingClientRect();
-                particleInterval = setInterval(() => {
-                    const p = document.createElement('span');
-                    const isCyan = Math.random() > 0.5;
-                    p.className = `card-border-particle ${isCyan ? 'cyan' : 'purple'}`;
-                    
-                    // Position at the bottom edge of the card
-                    p.style.left = `${10 + Math.random() * 80}%`;
-                    p.style.top = `${rect.height}px`;
-                    
-                    // Set custom drifting vectors fed to the GPU CSS transform
-                    p.style.setProperty('--drift-x', `${(Math.random() - 0.5) * 80}px`);
-                    p.style.setProperty('--float-y', `-${rect.height + 60}px`);
-                    p.style.animation = 'cardParticleFloat 2.2s cubic-bezier(0.1, 0.8, 0.2, 1) forwards';
-                    
-                    wrapper.appendChild(p);
-                    
-                    // Cleanup particle once animated
-                    p.addEventListener('animationend', () => p.remove());
-                }, 100);
             }
         });
         
@@ -544,11 +519,6 @@ function initTimelineCardBioluminescence() {
             // 1. Notify the WebGL shader system
             if (window.PortfolioApp.threeEngine && typeof window.PortfolioApp.threeEngine.setHoveredCard === 'function') {
                 window.PortfolioApp.threeEngine.setHoveredCard(null);
-            }
-            
-            // 2. Stop the continuous DOM particle stream
-            if (particleInterval) {
-                clearInterval(particleInterval);
             }
         });
     });

@@ -1145,6 +1145,8 @@ input, textarea, button {
     backdrop-filter: blur(35px) saturate(140%); /* Ultra premium Apple-style glassmorphism backdrop blur */
     -webkit-backdrop-filter: blur(35px) saturate(140%);
     transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+    position: relative;
+    overflow: hidden; /* Encapsulates the scanner and holographic grid layers */
 }
 
 .timeline-card:hover {
@@ -1154,41 +1156,61 @@ input, textarea, button {
         0 0 80px rgba(139, 92, 246, 0.12);
 }
 
-/* Card Border Particles (energy flow from DNA to experiences) */
-.card-border-particle {
+/* Subtle high-tech holographic coordinates grid background */
+.timeline-card::before {
+    content: "";
     position: absolute;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    pointer-events: none;
-    z-index: 5;
-    will-change: transform, opacity;
+    inset: 0;
+    background-image: 
+        linear-gradient(rgba(0, 243, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 243, 255, 0.035) 1px, transparent 1px);
+    background-size: 16px 16px;
     opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.card-border-particle.cyan {
-    background: var(--color-cyan);
-    box-shadow: 0 0 6px var(--color-cyan), 0 0 12px rgba(0, 243, 255, 0.6);
+.timeline-card:hover::before,
+.timeline-card-wrapper.focused-active .timeline-card::before {
+    opacity: 1; /* Activates the grid interface overlay */
 }
 
-.card-border-particle.purple {
-    background: var(--color-purple);
-    box-shadow: 0 0 6px var(--color-purple), 0 0 12px rgba(139, 92, 246, 0.6);
+/* Glowing cyan-purple biometric HUD scanner sweep line */
+.timeline-card::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    top: -5px;
+    background: linear-gradient(90deg, transparent, var(--color-cyan), var(--color-purple), transparent);
+    box-shadow: 
+        0 0 10px var(--color-cyan), 
+        0 0 18px rgba(139, 92, 246, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 3;
 }
 
-@keyframes cardParticleFloat {
+.timeline-card:hover::after,
+.timeline-card-wrapper.focused-active .timeline-card::after {
+    animation: hudLaserScan 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes hudLaserScan {
     0% {
-        transform: translate3d(0, 0, 0) scale(0.3);
+        top: 0%;
         opacity: 0;
     }
-    15% {
-        opacity: 0.8;
+    12% {
+        opacity: 1;
     }
-    85% {
-        opacity: 0.8;
+    88% {
+        opacity: 1;
     }
     100% {
-        transform: translate3d(var(--drift-x), var(--float-y), 20px) scale(1.2);
+        top: 100%;
         opacity: 0;
     }
 }
