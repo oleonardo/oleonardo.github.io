@@ -1211,7 +1211,7 @@ input, textarea, button {
 
 .card-year {
     font-family: var(--font-hud);
-    font-size: 0.72rem;
+    font-size: clamp(0.68rem, 0.1vw + 0.65rem, 0.76rem);
     color: var(--color-cyan);
     font-weight: 700;
     letter-spacing: 1.5px;
@@ -1233,7 +1233,7 @@ input, textarea, button {
 
 .card-role {
     font-family: var(--font-mono);
-    font-size: 0.62rem;
+    font-size: clamp(0.58rem, 0.1vw + 0.55rem, 0.66rem);
     color: var(--color-purple);
     background: rgba(139, 92, 246, 0.1);
     padding: 4px 10px;
@@ -1252,7 +1252,7 @@ input, textarea, button {
 
 .card-title {
     font-family: var(--font-heading);
-    font-size: 1.4rem; /* matched perfectly to project title 1.4rem */
+    font-size: clamp(1.2rem, 1.2vw + 0.9rem, 1.55rem); /* perfectly fluid text sizing */
     font-weight: 700;
     margin-bottom: 12px;
     z-index: 2;
@@ -1266,7 +1266,7 @@ input, textarea, button {
 }
 
 .card-desc {
-    font-size: 0.8rem; /* matched perfectly to project desc 0.8rem */
+    font-size: clamp(0.78rem, 0.4vw + 0.7rem, 0.88rem); /* perfectly fluid text sizing */
     color: var(--text-secondary);
     line-height: 1.6;
     margin-bottom: 25px;
@@ -1285,7 +1285,7 @@ input, textarea, button {
 
 .tech-tag {
     font-family: var(--font-mono);
-    font-size: 0.55rem;
+    font-size: clamp(0.52rem, 0.1vw + 0.5rem, 0.6rem); /* fluid text sizing */
     color: var(--text-secondary);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -1809,7 +1809,7 @@ input, textarea, button {
 
 .project-tags span {
     font-family: var(--font-hud);
-    font-size: 0.55rem;
+    font-size: clamp(0.52rem, 0.1vw + 0.5rem, 0.6rem); /* fluid tag sizing */
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0.5px;
@@ -1821,13 +1821,13 @@ input, textarea, button {
 
 .project-title {
     font-family: var(--font-heading);
-    font-size: 1.4rem;
+    font-size: clamp(1.2rem, 1.2vw + 0.9rem, 1.55rem); /* fluid title sizing */
     font-weight: 700;
     margin-bottom: 12px;
 }
 
 .project-desc {
-    font-size: 0.8rem;
+    font-size: clamp(0.78rem, 0.4vw + 0.7rem, 0.88rem); /* fluid description sizing */
     color: var(--text-secondary);
     line-height: 1.6;
     margin-bottom: 25px;
@@ -2249,13 +2249,19 @@ input, textarea, button {
 .timeline-card, .project-card {
     transform-style: preserve-3d;
     transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94), border-color 0.3s, box-shadow 0.3s;
-    will-change: transform;
+    /* Prevent blurry text on Windows Chrome/Edge during transform hover by forcing subpixel rendering and avoiding pre-composed bitmap scale */
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    -webkit-font-smoothing: subpixel-antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-/* Push children layers inside the 3D preserve context */
+/* Push children layers inside the 3D preserve context & keep text sharp on GPU scale */
 .timeline-card > *, .project-card > * {
     transform: translateZ(12px);
     transform-style: preserve-3d;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 /* Elements that pop out dramatically */
