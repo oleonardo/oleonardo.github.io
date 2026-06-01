@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <!-- Gradiente Ciano (Idêntico ao logotipo do site) -->
+    <linearGradient id="fav-cyan-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f3ff" />
+      <stop offset="100%" stop-color="#0088ff" />
+    </linearGradient>
+    
+    <!-- Gradiente Roxo (Idêntico ao logotipo do site) -->
+    <linearGradient id="fav-purple-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d946ef" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+  </defs>
+
+  <!-- Emblema L (Geométrico) -->
+  <path
+    d="M 4.5 8 V 24 H 18.5"
+    stroke="url(#fav-cyan-grad)"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Emblema O (Hexágono Cyber) -->
+  <polygon
+    points="20.5,9 27.5,13 27.5,19 20.5,23 13.5,19 13.5,13"
+    stroke="url(#fav-purple-grad)"
+    stroke-width="2.2"
+    stroke-linejoin="round"
+    fill="rgba(139, 92, 246, 0.12)"
+  />
+
+  <!-- Ponto de Conexão Neural (Núcleo) -->
+  <circle
+    cx="20.5"
+    cy="16"
+    r="2.8"
+    fill="#00f3ff"
+  />
+</svg>
