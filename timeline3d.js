@@ -707,20 +707,20 @@ function initThreeEngine() {
     //     Submitting the contact form fires a shockwave across it + a flying packet.
     // Nodes sit on a jittered grid so they spread evenly across the view (instead of
     // piling up in the centre) and read as distinct points connected into a mesh.
-    const NEURAL_COLS = 12, NEURAL_ROWS = 5;
-    const NEURAL_NODES = NEURAL_COLS * NEURAL_ROWS; // 60 — few + well spaced reads as a NET
+    const NEURAL_COLS = 16, NEURAL_ROWS = 6; // Increased grid density from 12x5 to 16x6 (96 nodes) for complex cybernetic webs
+    const NEURAL_NODES = NEURAL_COLS * NEURAL_ROWS; // 96 nodes
     const nodeVecs = [];
     for (let r = 0; r < NEURAL_ROWS; r++) {
         for (let c = 0; c < NEURAL_COLS; c++) {
             nodeVecs.push(new THREE.Vector3(
-                (c / (NEURAL_COLS - 1) - 0.5) * 28.0 + (Math.random() - 0.5) * 1.5,
-                (r / (NEURAL_ROWS - 1) - 0.5) * 15.5 + (Math.random() - 0.5) * 1.5,
-                (Math.random() - 0.5) * 5.0 - 0.5
+                (c / (NEURAL_COLS - 1) - 0.5) * 48.0 + (Math.random() - 0.5) * 1.5, // Full-screen side-to-side spread
+                (r / (NEURAL_ROWS - 1) - 0.5) * 26.0 + (Math.random() - 0.5) * 1.5, // Full-screen top-to-bottom height coverage
+                (Math.random() - 0.5) * 16.0 - 0.5                                  // Doubled Z-depth from 8.0 to 16.0 for a spectacular parallax sway!
             ));
         }
     }
 
-    // Synapse edges: link each node to its 2–3 nearest neighbours (deduplicated).
+    // Synapse edges: link each node to its 3–5 nearest neighbours (deduplicated).
     const edgeSet = new Set();
     const neuralEdges = [];
     for (let i = 0; i < NEURAL_NODES; i++) {
@@ -729,7 +729,7 @@ function initThreeEngine() {
             if (i !== j) dists.push([nodeVecs[i].distanceTo(nodeVecs[j]), j]);
         }
         dists.sort((a, b) => a[0] - b[0]);
-        const links = 2 + (Math.random() < 0.4 ? 1 : 0);
+        const links = 3 + (Math.random() < 0.5 ? 2 : 0); // Increased connections from 2-3 to 3-5 for extremely rich, dense pathways!
         for (let k = 0; k < links; k++) {
             const j = dists[k][1];
             const key = i < j ? i + '_' + j : j + '_' + i;
@@ -804,9 +804,9 @@ function initThreeEngine() {
             aCoreArr[i] = 0.5; // Synapse path flow type
         } else {
             // AMBIENT: Faint dust spread wide for depth (10% of particles)
-            const ax = (Math.random() - 0.5) * 30.0;
-            const ay = (Math.random() - 0.5) * 17.0;
-            const az = (Math.random() - 0.5) * 9.0 - 1.0;
+            const ax = (Math.random() - 0.5) * 52.0; // Expanded to match full-screen horizontal boundaries
+            const ay = (Math.random() - 0.5) * 30.0; // Expanded to match full-screen vertical boundaries
+            const az = (Math.random() - 0.5) * 20.0 - 2.0; // Expanded depth from 9.0 to 20.0 for beautiful foreground/background floating bokeh circles
             
             aNodeArr[i * 3]     = ax;
             aNodeArr[i * 3 + 1] = ay;

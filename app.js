@@ -619,10 +619,10 @@ function initScrollSnapHandler() {
             // Shorter 100vh sections (Hero and Contact)
             if (scrollDirection === 'down' && currentSecIdx < sections.length - 1) {
                 e.preventDefault();
-                smoothScrollToSection(currentSecIdx + 1);
+                smoothScrollToSection(currentSecIdx + 1, 'down');
             } else if (scrollDirection === 'up' && currentSecIdx > 0) {
                 e.preventDefault();
-                smoothScrollToSection(currentSecIdx - 1);
+                smoothScrollToSection(currentSecIdx - 1, 'up');
             }
         } else {
             // Tall sections (Experience timeline and Projects coverflow)
@@ -631,21 +631,30 @@ function initScrollSnapHandler() {
 
             if (scrollDirection === 'up' && isAtTop && currentSecIdx > 0) {
                 e.preventDefault();
-                smoothScrollToSection(currentSecIdx - 1);
+                smoothScrollToSection(currentSecIdx - 1, 'up');
             } else if (scrollDirection === 'down' && isAtBottom && currentSecIdx < sections.length - 1) {
                 e.preventDefault();
-                smoothScrollToSection(currentSecIdx + 1);
+                smoothScrollToSection(currentSecIdx + 1, 'down');
             }
             // If in the middle of a tall section, do nothing (allow natural scrub scrolling)
         }
     }, { passive: false });
 
-    function smoothScrollToSection(index) {
+    function smoothScrollToSection(index, direction = 'down') {
         const sections = document.querySelectorAll('.section');
         if (index < 0 || index >= sections.length) return;
 
         const targetSec = sections[index];
-        const targetTop = getSectionScrollTop(targetSec);
+        let targetTop = getSectionScrollTop(targetSec);
+
+        // If we are moving UP (backwards) into a section, we want to land at its bottom
+        // so that the scroll transitions naturally and smoothly without huge EOL-jumps!
+        const containerHeight = scrollContainer.clientHeight;
+        const targetHeight = targetSec.offsetHeight;
+        
+        if (direction === 'up') {
+            targetTop = targetTop + targetHeight - containerHeight;
+        }
 
         // If we are already at the target scroll position (or extremely close), do nothing
         if (Math.abs(scrollContainer.scrollTop - targetTop) < 3) {
@@ -656,13 +665,14 @@ function initScrollSnapHandler() {
         isTransitioning = true;
 
         // Use custom object tweening to animate scrollTop directly: 
-        // 100% cross-browser compatible, ultra-smooth, bypasses Safari's native smooth-scroll bugs,
-        // and provides high-end easing physics!
+        // 100% cross-browser compatible, ultra-smooth, bypasses Safari's native smooth-scroll bugs.
+        // Uses "power2.inOut" to eliminate the abrupt start-jolt ("pularem") and make transitions
+        // feel exceptionally luxurious and fluid, matching high-end creative agency aesthetics!
         const scrollObj = { y: scrollContainer.scrollTop };
         gsap.to(scrollObj, {
             y: targetTop,
-            duration: 0.8,
-            ease: "power2.out",
+            duration: 1.0,
+            ease: "power2.inOut",
             overwrite: "auto",
             onUpdate: () => {
                 scrollContainer.scrollTop = scrollObj.y;
