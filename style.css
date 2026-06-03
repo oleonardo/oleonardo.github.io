@@ -103,7 +103,7 @@ input, textarea, button {
     justify-content: center;
     align-items: center;
     overflow: hidden;
-    transition: opacity 1.2s cubic-bezier(0.85, 0, 0.15, 1), visibility 1.2s;
+    transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1), visibility 0.5s;
 }
 
 .preloader.fade-out {
@@ -322,7 +322,7 @@ input, textarea, button {
 .glow-blob-1 {
     width: 500px;
     height: 500px;
-    background: radial-gradient(circle, rgba(0, 243, 255, 0.08) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(0, 243, 255, 0.08) 0%, rgba(0, 243, 255, 0) 70%);
     top: -150px;
     left: -100px;
     filter: blur(40px);
@@ -332,7 +332,7 @@ input, textarea, button {
 .glow-blob-2 {
     width: 600px;
     height: 600px;
-    background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, rgba(139, 92, 246, 0) 70%);
     bottom: -200px;
     right: -100px;
     filter: blur(50px);
@@ -765,7 +765,7 @@ input, textarea, button {
     left: 0;
     width: 100%;
     height: 100%;
-    background: radial-gradient(800px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(0, 243, 255, 0.08), transparent 40%);
+    background: radial-gradient(800px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(0, 243, 255, 0.08), rgba(0, 243, 255, 0) 40%);
     z-index: 0;
     pointer-events: none;
     opacity: 0;
@@ -1771,7 +1771,7 @@ input, textarea, button {
 
 .project-img-placeholder {
     height: 220px; /* Proportionately taller image area to fit the new card size */
-    background: radial-gradient(circle at center, rgba(139, 92, 246, 0.1), transparent);
+    background: radial-gradient(circle at center, rgba(139, 92, 246, 0.1), rgba(139, 92, 246, 0));
     position: relative;
     overflow: hidden;
     display: flex;
@@ -2323,5 +2323,562 @@ body.low-perf .timeline-card {
 
 body.low-perf .remnant {
     display: none !important; /* Turn off dynamic ambient particle remnants */
+}
+
+/* ==========================================================================
+   CINEMATIC PROJECT DETAILS SCENE OVERLAY
+   ========================================================================== */
+/* ==========================================================================
+   CINEMATIC PROJECT DETAILS SCENE OVERLAY
+   ========================================================================== */
+.project-detail-scene {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 90;
+    background: radial-gradient(circle at center, rgba(2, 4, 11, 0.15) 0%, rgba(2, 4, 11, 0.6) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden !important;
+    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), visibility 0.6s;
+    pointer-events: auto;
+    box-sizing: border-box;
+    padding: 20px;
+}
+
+.project-detail-scene.hidden {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+    transform: translateX(100vw) !important; /* Slide out to the right */
+}
+
+/* Base class for canvas z-index when detail is active: keep behind so it doesn't overlap text, 
+   but since background is transparent, particles are fully visible in the backdrop! */
+body.detail-active #webgl-canvas {
+    z-index: 2 !important; 
+}
+
+body.detail-active .main-header {
+    pointer-events: none;
+    opacity: 0.15; /* Dim header */
+    transition: opacity 0.6s ease;
+}
+
+/* Details Layout Container - Floating in 3D space */
+.detail-container {
+    width: 95%;
+    max-width: 1000px;
+    height: 540px;
+    margin: auto;
+    position: relative;
+    z-index: 10;
+    box-sizing: border-box;
+    transform: perspective(1200px) rotateX(4deg) rotateY(-4deg) translateZ(10px);
+    transform-style: preserve-3d;
+}
+
+/* Video Card (Default: Front & Center) */
+.detail-video-wrapper {
+    position: absolute;
+    left: 50%;
+    top: 20px;
+    width: 650px;
+    height: auto;
+    transform: translate(-50%, 0) translateZ(120px) rotateY(1.5deg);
+    opacity: 1;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    background: rgba(5, 9, 21, 0.88) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 32px; /* Improved padding from 24px */
+    border-radius: 16px;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.85),
+        0 0 40px rgba(0, 243, 255, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.8s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+/* Video Card (Behind & Shifted Left) */
+.detail-video-wrapper.video-behind {
+    transform: translate(-50%, 20px) translateZ(10px) scale(0.92) rotateY(4deg) translateX(-120px);
+    opacity: 0.32;
+    z-index: 5;
+    cursor: pointer;
+}
+
+/* Hover interaction for Video Card when Behind (lifts forward, highlights border, restores opacity) */
+.detail-video-wrapper.video-behind:hover {
+    opacity: 0.88 !important;
+    border-color: rgba(0, 243, 255, 0.75) !important;
+    transform: translate(-50%, 20px) translateZ(45px) scale(0.94) rotateY(4deg) translateX(-120px) !important;
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.9),
+        0 0 50px rgba(0, 243, 255, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Info Card (Default: Behind & Shifted Right) */
+.detail-info-wrapper {
+    position: absolute;
+    left: 50%;
+    top: 20px;
+    width: 500px;
+    height: auto;
+    transform: translate(-50%, 20px) translateZ(10px) rotateY(-3deg) translateX(120px);
+    opacity: 0.45;
+    z-index: 8;
+    display: flex;
+    flex-direction: column;
+    background: rgba(5, 9, 21, 0.88) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 40px; /* Improved padding for cleaner spacing */
+    border-radius: 16px;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.85),
+        0 0 40px rgba(0, 243, 255, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.8s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+    overflow: visible !important;
+}
+
+/* Pointer cursor when Info Card is behind */
+.detail-video-wrapper:not(.video-behind) ~ .detail-info-wrapper {
+    cursor: pointer;
+}
+
+/* Hover interaction for Info Card when Behind (lifts forward, highlights border, restores opacity) */
+.detail-video-wrapper:not(.video-behind) ~ .detail-info-wrapper:hover {
+    opacity: 0.88 !important;
+    border-color: rgba(0, 243, 255, 0.75) !important;
+    transform: translate(-50%, 20px) translateZ(45px) scale(0.94) rotateY(-3deg) translateX(120px) !important;
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.9),
+        0 0 50px rgba(0, 243, 255, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.detail-info-wrapper:hover .tech-tag {
+    border-color: rgba(0, 243, 255, 0.25);
+    background: rgba(0, 243, 255, 0.06);
+    color: var(--color-cyan);
+    box-shadow: 0 0 8px rgba(0, 243, 255, 0.15);
+}
+
+/* Info Card (Front & Center) - triggered when video-behind is active */
+.detail-video-wrapper.video-behind ~ .detail-info-wrapper {
+    transform: translate(-50%, 0) translateZ(120px) rotateY(-1.5deg);
+    opacity: 1;
+    z-index: 15;
+}
+
+.detail-video-wrapper:hover,
+.detail-info-wrapper:hover {
+    border-color: rgba(0, 243, 255, 0.5);
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.9),
+        0 0 50px rgba(0, 243, 255, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.video-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.video-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.video-scanlines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%);
+    background-size: 100% 4px;
+    pointer-events: none;
+    opacity: 0.35;
+}
+
+.video-hud-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    padding: 15px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-family: var(--font-hud);
+    font-size: 0.65rem;
+    color: rgba(0, 243, 255, 0.7);
+    text-shadow: 0 0 6px rgba(0, 243, 255, 0.4);
+}
+
+.hud-corner {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-color: rgba(0, 243, 255, 0.45);
+    border-style: solid;
+}
+
+.hud-corner.top-left { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
+.hud-corner.top-right { top: 10px; right: 10px; border-width: 2px 2px 0 0; }
+.hud-corner.bottom-left { bottom: 10px; left: 10px; border-width: 0 0 2px 2px; }
+.hud-corner.bottom-right { bottom: 10px; right: 10px; border-width: 0 2px 2px 0; }
+
+.hud-rec-indicator {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.rec-dot {
+    width: 6px;
+    height: 6px;
+    background: #ff2a2a;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #ff2a2a;
+    display: inline-block;
+    animation: recPulse 1.2s infinite alternate;
+}
+
+@keyframes recPulse {
+    0% { opacity: 0.25; }
+    100% { opacity: 1.0; }
+}
+
+.hud-telemetry {
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    font-size: 0.62rem;
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: 0.5px;
+}
+
+.video-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+}
+
+.control-btn {
+    background: rgba(0, 243, 255, 0.08);
+    border: 1px solid rgba(0, 243, 255, 0.25);
+    color: var(--color-cyan);
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-family: var(--font-hud);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.control-btn:hover {
+    background: rgba(0, 243, 255, 0.2);
+    box-shadow: 0 0 12px rgba(0, 243, 255, 0.25);
+    border-color: var(--color-cyan);
+}
+
+.video-time {
+    font-family: var(--font-hud);
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* Info Panel Elements */
+.detail-header-node {
+    margin-bottom: 16px;
+}
+
+.detail-tag {
+    font-family: var(--font-hud);
+    font-size: 0.75rem;
+    color: var(--color-purple);
+    text-shadow: 0 0 8px rgba(217, 70, 239, 0.35);
+    font-weight: 600;
+    letter-spacing: 2px;
+}
+
+.detail-title {
+    font-family: var(--font-heading);
+    font-size: 2.0rem;
+    font-weight: 800;
+    color: #fff;
+    margin-top: 6px;
+    letter-spacing: 1px;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.detail-desc {
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.85); /* Boost text contrast slightly */
+    margin-bottom: 24px;
+}
+
+.detail-specs {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-bottom: 24px;
+}
+
+.spec-group h4 {
+    font-family: var(--font-hud);
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.45);
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.detail-tech-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.detail-metrics {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.detail-metrics li {
+    font-size: 0.88rem;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 6px;
+    padding-left: 16px;
+    position: relative;
+    line-height: 1.4;
+}
+
+.detail-metrics li::before {
+    content: "//";
+    position: absolute;
+    left: 0;
+    color: var(--color-cyan);
+    font-weight: 700;
+}
+
+.detail-actions {
+    margin-top: 10px;
+}
+
+/* Scroll down to exit prompt */
+.scroll-exit-prompt {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.32);
+    font-family: var(--font-hud);
+    font-size: 0.62rem;
+    pointer-events: none;
+    animation: floatExitIndicator 2.2s infinite ease-in-out;
+}
+
+.scroll-exit-prompt .scroll-mouse .wheel {
+    animation: mouseWheelScrollUp 1.6s infinite ease-out;
+}
+
+@keyframes mouseWheelScrollUp {
+    0% { top: 20px; opacity: 0; }
+    30% { top: 20px; opacity: 1; }
+    100% { top: 6px; opacity: 0; }
+}
+
+@keyframes floatExitIndicator {
+    0%, 100% { transform: translate(-50%, 0); }
+    50% { transform: translate(-50%, -6px); }
+}
+
+/* Cinematic 3D Holographic Grid Background */
+.detail-holographic-grid {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.72;
+    background-image: 
+        linear-gradient(rgba(0, 243, 255, 0.08) 1px, transparent 1px), 
+        linear-gradient(90deg, rgba(0, 243, 255, 0.08) 1px, transparent 1px);
+    background-size: 60px 60px;
+    transform: perspective(600px) rotateX(65deg) translateZ(-100px);
+    transform-origin: center center;
+    animation: gridScrollUp 20s linear infinite;
+    mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+    -webkit-mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+}
+
+@keyframes gridScrollUp {
+    0% { background-position: 0 0; }
+    100% { background-position: 0 -800px; }
+}
+
+/* Ambient glow blobs - dimmed significantly to not interfere with grid and text */
+.detail-ambient-glow {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.detail-glow-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(160px);
+    opacity: 0.08; /* Dimmed heavily for maximum contrast */
+    mix-blend-mode: screen;
+    animation: slowDriftBlob 22s infinite alternate ease-in-out;
+}
+
+.detail-glow-blob.blob-1 {
+    width: 45vw;
+    height: 45vw;
+    background: var(--color-cyan);
+    top: -15%;
+    left: -10%;
+}
+
+.detail-glow-blob.blob-2 {
+    width: 55vw;
+    height: 55vw;
+    background: var(--color-purple);
+    bottom: -20%;
+    right: -10%;
+    animation-duration: 28s;
+    animation-delay: -5s;
+}
+
+@keyframes slowDriftBlob {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(6vw, 4vh) scale(1.15); }
+}
+
+/* Responsive adjustment */
+@media (max-width: 1024px) {
+    .project-detail-scene {
+        padding: 40px 16px;
+    }
+    
+    .detail-container {
+        flex-direction: column;
+        height: auto !important;
+        gap: 24px;
+        padding-bottom: 60px;
+        transform: none; /* Flatten in mobile for ease of touch */
+    }
+    
+    .detail-title {
+        font-size: 1.6rem;
+    }
+    
+    .detail-video-wrapper {
+        position: relative !important;
+        left: auto !important;
+        top: auto !important;
+        width: 100% !important;
+        height: auto !important;
+        transform: none !important;
+        opacity: 1 !important;
+        z-index: 10 !important;
+        padding: 20px;
+    }
+    
+    .detail-video-wrapper.video-behind {
+        transform: scale(0.95) !important;
+        opacity: 0.35 !important;
+        z-index: 5 !important;
+    }
+    
+    .detail-info-wrapper {
+        position: relative !important;
+        left: auto !important;
+        right: auto !important;
+        top: auto !important;
+        width: 100% !important;
+        height: auto !important;
+        transform: none !important;
+        z-index: 10 !important;
+        padding: 24px;
+    }
+
+    /* Disable sibling transforms on mobile stacked cards */
+    .detail-video-wrapper.video-behind ~ .detail-info-wrapper {
+        transform: none !important;
+        opacity: 1 !important;
+        z-index: 10 !important;
+    }
+
+    .detail-video-wrapper.video-behind:hover {
+        transform: scale(0.98) !important;
+        opacity: 0.8 !important;
+        border-color: rgba(0, 243, 255, 0.7) !important;
+        box-shadow: 0 0 30px rgba(0, 243, 255, 0.25) !important;
+    }
+}
+
+/* Particle X close button */
+.close-particle-btn {
+    position: absolute;
+    top: -16px;
+    right: -16px;
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+    z-index: 1000;
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+@media (max-width: 1024px) {
+    .close-particle-btn {
+        top: -8px;
+        right: -8px;
+    }
 }
 

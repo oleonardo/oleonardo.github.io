@@ -38,6 +38,7 @@ const vertexShader = `
     uniform float uPixelRatio;
     uniform float uLoader;    // 1.0 = loading core, 0.0 = regular field
     uniform float uLoadProgress; // 0.0 = dormant spark, 1.0 = fully charged core
+    uniform float uDetailGrid; // 0.0 = normal, 1.0 = holographic detail grid
 
     varying vec3  vColor;
     varying float vFade;
@@ -54,6 +55,11 @@ const vertexShader = `
     }
 
     void main() {
+        // detail grid shared variables
+        float gridX = 14.0;
+        float gridZ = 0.0;
+        float pulseGlow = 0.0;
+
         // ---- HERO STATE: deep sea volumetric floating field with currents ----
         vec3 heroPos = position;
         
@@ -214,6 +220,44 @@ const vertexShader = `
         );
         pos = mix(pos, neuralBase, uNeural);
 
+        // ---- CINEMATIC DETAIL GRID STATE ----
+        // 1. Upgraded High-Density Rectangular Grid (24x24 Lines)
+        float normCol = position.x / 30.0 + 0.5; // FIELD_W = 30.0, maps x to 0..1
+        float normRow = position.y / 17.0 + 0.5; // FIELD_H = 17.0, maps y to 0..1
+        
+        float isXLine = step(normCol, 0.5);
+        float numLines = 24.0;
+        
+        // Horizontal lines: continuous along X, snapped/spaced along Z
+        float tX = normCol * 2.0; // scale 0..0.5 to 0..1
+        float hzX = 14.0 + (tX - 0.5) * 36.0; // spans 36 units centered at X = 14.0
+        float rSnapHZ = floor(normRow * (numLines - 0.01)) / (numLines - 1.0);
+        float hzZ = (rSnapHZ - 0.5) * 24.0; // spans 24 units in Z
+        
+        // Vertical lines: snapped/spaced along X, continuous along Z
+        float tZ = (normCol - 0.5) * 2.0; // scale 0.5..1.0 to 0..1
+        float vtZ = (tZ - 0.5) * 24.0; // spans 24 units in Z
+        float rSnapVT = floor(normRow * (numLines - 0.01)) / (numLines - 1.0);
+        float vtX = 14.0 + (rSnapVT - 0.5) * 36.0; // spans 36 units in X
+        
+        // Morph coordinates (assign to shared outer variables gridX, gridZ)
+        gridX = mix(vtX, hzX, isXLine);
+        gridZ = mix(vtZ, hzZ, isXLine);
+        
+        // Slant the grid floor to rise towards the horizon in the distance (3D perspective tilt)
+        float gridY = -3.5 - gridZ * 0.12;
+        
+        // 2. Kinetic Streaming Data Pulse running along X and Z fibers
+        float pulseSpeed = 4.8;
+        float pulseCoord = mix(gridZ, gridX, isXLine);
+        float pulseVal = sin(pulseCoord * 0.25 - uTime * pulseSpeed + aRand * 3.1415) * 0.5 + 0.5;
+        pulseGlow = pow(pulseVal, 5.0) * 1.8; // sharp bright data packet pulses
+        
+        // Slight organic sine wave ripple on the floor grid
+        float waveRipple = sin(uTime * 2.5 + (gridX + gridZ) * 0.15) * 0.04;
+        vec3 detailGridPos = vec3(gridX, gridY + waveRipple, gridZ);
+        pos = mix(pos, detailGridPos, uDetailGrid);
+
         // Neural glow: idle synaptic breathing + transmission shockwave ring
         float nIdle = 0.55 + 0.45 * sin(uTime * (1.0 + aNodePhase * 2.0) + aNodePhase * 6.2831);
         float nDist = distance(edgePos, uPulseOrigin);
@@ -231,7 +275,13 @@ const vertexShader = `
         gl_Position = projectionMatrix * mvPosition;
         
         float dist = -mvPosition.z;
-        vFade = smoothstep(55.0, 4.0, dist);
+        // Cinematic Depth Fade-off:
+        // Far fade: Fades out nicely to black as it approaches the far clip bounds (dist >= 55.0)
+        // Near fade: Fades out smoothly as it approaches the camera lens (dist <= 3.5) to prevent
+        // colliding/clipping inside the camera and creating giant blurred blocks!
+        float farFade = smoothstep(55.0, 10.0, dist);
+        float nearFade = smoothstep(1.5, 3.5, dist);
+        vFade = farFade * nearFade;
         
         // Size factor: Fine, delicate cybernetic components for an elegant deep-sea spine
         float sizeFactor = 1.0;
@@ -289,6 +339,10 @@ const vertexShader = `
             neuralSizeFactor = 0.22 + nRing * 0.8;
         }
         gl_PointSize *= mix(1.0, neuralSizeFactor, uNeural);
+        gl_PointSize *= mix(1.0, 1.45 * (0.8 + aRand * 0.4) * (1.0 + pulseGlow * 0.65), uDetailGrid);
+
+        // CAP the maximum point size so particles extremely close to the camera do not blow up into giant squares!
+        gl_PointSize = clamp(gl_PointSize, 1.0, 75.0);
 
 
 
@@ -368,6 +422,20 @@ const vertexShader = `
         
         vColor = mix(vColor, nBaseCol, uNeural);
         vAlpha = mix(vAlpha, nAlphaFactor, uNeural);
+
+        // ---- CINEMATIC DETAIL GRID COLOR + ALPHA OVERRIDE ----
+        // 3. Radial Depth Fade-off (Circular holographic projection mask)
+        float distFromCenter = distance(vec2(gridX, gridZ), vec2(14.0, 0.0));
+        float radialFade = smoothstep(18.0, 6.0, distFromCenter); // fade out nicely to black at the edges of the grid
+        
+        // 4. Data Pulse Color and Alpha Boost
+        vec3 baseGridColor = mix(vec3(0.0, 0.88, 1.0), vec3(0.48, 0.18, 0.95), fract(aRand * 17.3));
+        vec3 pulseColorBoost = vec3(0.85, 0.95, 1.0); // white-cyan hot pulses
+        vec3 gridColor = mix(baseGridColor, pulseColorBoost, pulseGlow * 0.4);
+        
+        float gridAlpha = (0.28 + 0.38 * sin(uTime * 1.5 + aRand * 6.28) + pulseGlow * 0.42) * radialFade;
+        vColor = mix(vColor, gridColor, uDetailGrid);
+        vAlpha = mix(vAlpha, gridAlpha, uDetailGrid);
     }
 `;
 
@@ -601,6 +669,7 @@ function initThreeEngine() {
         uMorph:      { value: 0 },
         uMatrix:     { value: 0 },
         uNeural:     { value: 0 },
+        uDetailGrid: { value: 0 },
         uPulse:      { value: 0 },                       // transmission shockwave (1 -> 0 decay)
         uPulseOrigin:{ value: new THREE.Vector3(0, 0, 0) }, // terminal world point (neural-group local space)
         uSpineRot:   { value: 0 },
@@ -864,12 +933,16 @@ function initThreeEngine() {
     let scrollProgress = 0;
     let hoveredCardIndex = null;
     let cameraShakeIntensity = 0.0;
+    const customCamera = { x: 0, y: 0, z: 13 };
 
     function setMorph(value) {
         morphTarget = Math.max(0, Math.min(value, 1));
     }
     function setMatrix(value) {
         matrixTarget = Math.max(0, Math.min(value, 1));
+    }
+    function getMatrixTarget() {
+        return matrixTarget;
     }
     function setNeural(value) {
         neuralTarget = Math.max(0, Math.min(value, 1));
@@ -916,7 +989,74 @@ function initThreeEngine() {
             p.vy = Math.sin(ang) * Math.sin(theta) * speed + (1.2 + Math.random() * 2.2); // slight lift
             p.vz = Math.cos(theta) * speed + 4.0; // shoots directly towards camera!
             p.life = 1.0;
+            p.delay = 0;
+            p.exploded = true;
         }
+    }
+
+    // Fire a "project explosion": particles shoot out from the clicked card like a ray, then explode.
+    function fireProjectExplosion(cardRect, callback) {
+        let origin = new THREE.Vector3(0, 0, 0);
+        if (cardRect) {
+            const ndcX = ((cardRect.left + cardRect.width / 2) / window.innerWidth) * 2 - 1;
+            const ndcY = -((cardRect.top + cardRect.height / 2) / window.innerHeight) * 2 + 1;
+            
+            const v = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+            const dir = v.sub(camera.position).normalize();
+            
+            // Intersect with the Z = 0 plane
+            const t = (0.0 - camera.position.z) / dir.z;
+            origin = camera.position.clone().add(dir.multiplyScalar(t));
+        }
+        
+        // Shoot particles from origin towards a central, viewer-facing target
+        const beamTarget = new THREE.Vector3(0, 0, 6.0);
+        const rayDir = beamTarget.clone().sub(origin);
+        rayDir.normalize();
+        
+        for (let i = 0; i < PACKET_COUNT; i++) {
+            const p = packetData[i];
+            const ratio = i / PACKET_COUNT;
+            
+            p.x = origin.x;
+            p.y = origin.y;
+            p.z = origin.z;
+            
+            // Ray velocity: shoot quickly along rayDir
+            const speed = 16.0 + Math.random() * 4.0;
+            p.vx = rayDir.x * speed;
+            p.vy = rayDir.y * speed;
+            p.vz = rayDir.z * speed;
+            
+            p.life = 1.0;
+            p.delay = ratio * 0.25; // staggered spawn over 250ms
+            p.exploded = false;
+        }
+        
+        // Initial tiny camera shake when laser ray shoots
+        cameraShakeIntensity = 0.4;
+        
+        setTimeout(() => {
+            // Trigger explosion vectors!
+            for (let i = 0; i < PACKET_COUNT; i++) {
+                const p = packetData[i];
+                p.exploded = true;
+                
+                // Blast in random spherical direction with high velocity
+                const theta = Math.random() * Math.PI * 2.0;
+                const phi = Math.acos(2.0 * Math.random() - 1.0);
+                const speed = 10.0 + Math.random() * 12.0;
+                
+                p.vx = Math.sin(phi) * Math.cos(theta) * speed;
+                p.vy = Math.sin(phi) * Math.sin(theta) * speed;
+                p.vz = Math.cos(phi) * speed;
+            }
+            
+            // Dramatic camera shake on explosion impact
+            cameraShakeIntensity = 2.2;
+            
+            if (callback) callback();
+        }, 280); // explode after 280ms of laser ray flight
     }
     function setSpineRotation(radians) {
         spineRotTarget = radians;
@@ -957,8 +1097,12 @@ function initThreeEngine() {
         // Ease morph (field <-> spine) - increased from 0.08 to 0.28 for instant responsiveness
         uniforms.uMorph.value += (morphTarget - uniforms.uMorph.value) * 0.28;
 
-        // Ease matrix rain transition (field/spine <-> digital rain) - increased from 0.08 to 0.28 for instant responsiveness
-        uniforms.uMatrix.value += (matrixTarget - uniforms.uMatrix.value) * 0.28;
+        // Ease matrix rain and details grid transitions only when NOT in project detail view.
+        // When in details view, they are animated directly and linearly by GSAP inside app.js!
+        if (!(window.PortfolioApp && window.PortfolioApp.inProjectDetail)) {
+            uniforms.uMatrix.value += (matrixTarget - uniforms.uMatrix.value) * 0.28;
+            uniforms.uDetailGrid.value += (0.0 - uniforms.uDetailGrid.value) * 0.28;
+        }
 
         // Ease neural-net contact backdrop, and decay the transmission shockwave - increased from 0.08 to 0.28 for instant responsiveness
         uniforms.uNeural.value += (neuralTarget - uniforms.uNeural.value) * 0.28;
@@ -1166,32 +1310,70 @@ function initThreeEngine() {
         // ---- NEURAL CONSTELLATION: transmission packet ----
         // (No group sway: lines must stay locked to the particle clusters. The net
         //  stays alive via per-particle breathing, signal flow + camera parallax.)
-        if (uniforms.uPulse.value > 0.0 || packetData[0].life > 0.0) {
+        let hasActivePackets = false;
+        for (let i = 0; i < PACKET_COUNT; i++) {
+            if (packetData[i].life > 0.0) {
+                hasActivePackets = true;
+                break;
+            }
+        }
+        if (uniforms.uPulse.value > 0.0 || hasActivePackets) {
             const pPos = packetGeo.attributes.position.array;
             const pCol = packetGeo.attributes.color.array;
             for (let i = 0; i < PACKET_COUNT; i++) {
                 const p = packetData[i];
                 if (p.life > 0.0) {
-                    p.life -= deltaTime / 1.6; // slightly slower decay for full flight
-                    p.vx *= 0.992; p.vy *= 0.992; p.vz *= 0.988; // subtle drag
+                    if (p.delay > 0) {
+                        p.delay -= deltaTime;
+                        pPos[i * 3]     = -1000;
+                        pPos[i * 3 + 1] = -1000;
+                        pPos[i * 3 + 2] = -1000;
+                        pCol[i * 3]     = 0;
+                        pCol[i * 3 + 1] = 0;
+                        pCol[i * 3 + 2] = 0;
+                        continue;
+                    }
                     
-                    // Add beautiful volumetric swirl turbulence!
-                    p.vx += Math.sin(elapsedTime * 9.0 + i * 0.5) * 0.22;
-                    p.vy += Math.cos(elapsedTime * 7.5 + i * 0.5) * 0.22;
-                    
-                    p.x += p.vx * deltaTime;
-                    p.y += p.vy * deltaTime;
-                    p.z += p.vz * deltaTime;
+                    if (!p.exploded) {
+                        p.x += p.vx * deltaTime;
+                        p.y += p.vy * deltaTime;
+                        p.z += p.vz * deltaTime;
+                    } else {
+                        p.life -= deltaTime / 1.4; // decay life (explodes and fades over ~1.4 seconds)
+                        p.vx *= 0.95; p.vy *= 0.95; p.vz *= 0.95; // drag
+                        p.vx += Math.sin(elapsedTime * 10.0 + i * 0.5) * 0.3;
+                        p.vy += Math.cos(elapsedTime * 8.0 + i * 0.5) * 0.3;
+                        
+                        p.x += p.vx * deltaTime;
+                        p.y += p.vy * deltaTime;
+                        p.z += p.vz * deltaTime;
+                    }
                 }
                 const k = Math.max(0.0, p.life);
                 const age = 1.0 - k;
-                pPos[i * 3]     = p.x;
-                pPos[i * 3 + 1] = p.y;
-                pPos[i * 3 + 2] = p.z;
-                // Cyan (0.0, 0.9, 1.0) -> Neon Pink (1.0, 0.5, 0.85) over its age lifetime
-                pCol[i * 3]     = (0.0 + age * 1.0) * k;
-                pCol[i * 3 + 1] = (0.9 - age * 0.4) * k;
-                pCol[i * 3 + 2] = (1.0 - age * 0.15) * k;
+                
+                if (p.life <= 0.0) {
+                    pPos[i * 3]     = -1000;
+                    pPos[i * 3 + 1] = -1000;
+                    pPos[i * 3 + 2] = -1000;
+                    pCol[i * 3]     = 0;
+                    pCol[i * 3 + 1] = 0;
+                    pCol[i * 3 + 2] = 0;
+                } else {
+                    pPos[i * 3]     = p.x;
+                    pPos[i * 3 + 1] = p.y;
+                    pPos[i * 3 + 2] = p.z;
+                    
+                    if (!p.exploded) {
+                        pCol[i * 3]     = 0.1 * k;
+                        pCol[i * 3 + 1] = 0.95 * k;
+                        pCol[i * 3 + 2] = 1.0 * k;
+                    } else {
+                        pCol[i * 3]     = (0.0 + age * 1.0) * k;
+                        pCol[i * 3 + 1] = (0.9 - age * 0.6) * k;
+                        pCol[i * 3 + 2] = (1.0 - age * 0.2) * k;
+                    }
+                }
             }
             packetGeo.attributes.position.needsUpdate = true;
             packetGeo.attributes.color.needsUpdate = true;
@@ -1201,8 +1383,9 @@ function initThreeEngine() {
         const parallax = 1.0 - uniforms.uMorph.value;
         const camX = window.PortfolioApp.mouse.x * 0.6 * parallax;
         const camY = window.PortfolioApp.mouse.y * 0.4 * parallax;
-        camera.position.x += (camX - camera.position.x) * 0.04;
-        camera.position.y += (camY - camera.position.y) * 0.04;
+        camera.position.x += (customCamera.x + camX - camera.position.x) * 0.08;
+        camera.position.y += (customCamera.y + camY - camera.position.y) * 0.08;
+        camera.position.z += (customCamera.z - camera.position.z) * 0.08;
         
         // Dynamic camera shake energy kick decay!
         if (cameraShakeIntensity > 0.01) {
@@ -1212,7 +1395,7 @@ function initThreeEngine() {
             cameraShakeIntensity *= 0.90; // decay exponentially
         }
         
-        camera.lookAt(0, 0, 0);
+        camera.lookAt(customCamera.x * 0.5, 0, 0);
 
         // Drifting starfield
         starField.rotation.y = -elapsedTime * 0.005;
@@ -1260,12 +1443,15 @@ function initThreeEngine() {
         renderer,
         setMorph,
         setMatrix,
+        getMatrixTarget,
         setNeural,
         fireTransmission,
+        fireProjectExplosion,
         setSpineRotation,
         setScrollVelocity,
         updateCamera,
         setHoveredCard,
-        uniforms
+        uniforms,
+        customCamera
     };
 }

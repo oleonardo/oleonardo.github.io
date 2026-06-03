@@ -699,6 +699,73 @@
       </section>
     </main>
 
+    <!-- PROJECT DETAIL OVERLAY SCENE -->
+    <div id="project-detail-scene" class="project-detail-scene hidden" style="transform: translateX(100vw); opacity: 0; display: none; visibility: hidden;">
+
+
+      <!-- Main Layout Container -->
+      <div class="detail-container">
+        <!-- Left Column: Widescreen Video Player HUD -->
+        <div class="detail-video-wrapper glass-panel">
+          <div class="video-container">
+            <video id="detail-video" playsinline>
+              <source src="assets/ai-dlc.mp4" type="video/mp4">
+              Seu navegador não suporta o player de vídeo.
+            </video>
+            <!-- Scanline / Grid telemetries overlay -->
+            <div class="video-scanlines"></div>
+            <div class="video-hud-overlay">
+              <div class="hud-corner top-left"></div>
+              <div class="hud-corner top-right"></div>
+              <div class="hud-corner bottom-left"></div>
+              <div class="hud-corner bottom-right"></div>
+              <div class="hud-rec-indicator">
+                <span class="rec-dot"></span> REC [PLAYING]
+              </div>
+              <div class="hud-telemetry">SYS_FREQ: 60Hz // CORE_STREAM_OK // 1080P</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Specs, descriptions and background customizer -->
+        <div class="detail-info-wrapper glass-panel">
+          <canvas id="detail-back-btn" class="close-particle-btn" role="button" tabindex="0" aria-label="Fechar detalhes"></canvas>
+          <div class="detail-header-node">
+            <span class="detail-tag" id="detail-tags">AI-DLC // FRAMEWORK</span>
+            <h2 class="detail-title" id="detail-title">ADOÇÃO AI-DLC</h2>
+          </div>
+          
+          <p class="detail-desc" id="detail-desc">
+            Condução da iniciativa de adoção do AI Development Life Cycle na CWI, estruturando agentes de IA sob human oversight, spec-driven development e ciclos de entrega que aceleram o time sem tirar a decisão das pessoas.
+          </p>
+
+          <div class="detail-specs">
+            <div class="spec-group">
+              <h4>TECNOLOGIAS DE DESTAQUE</h4>
+              <div class="detail-tech-tags" id="detail-tech">
+                <span class="tech-tag">AI Agents</span>
+                <span class="tech-tag">Spec-Driven Dev</span>
+              </div>
+            </div>
+            
+            <div class="spec-group">
+              <h4>MÉTRICAS & RESULTADOS</h4>
+              <ul class="detail-metrics" id="detail-metrics">
+                <li>+40% de velocidade de desenvolvimento</li>
+                <li>Segurança garantida com Human Oversight</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scroll down to exit prompt -->
+      <div class="scroll-exit-prompt">
+        <span class="scroll-mouse"><span class="wheel"></span></span>
+        <span class="scroll-text">ROLE PARA CIMA PARA RETORNAR</span>
+      </div>
+    </div>
+
     <!-- App Logic Scripts -->
     <script src="animations.js"></script>
     <script src="timeline3d.js"></script>

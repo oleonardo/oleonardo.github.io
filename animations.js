@@ -138,38 +138,38 @@ function initAnimations() {
         const tl = gsap.timeline();
         
         tl.fromTo('.hero-cyber-tag', 
-            { opacity: 0, y: 20 }, 
-            { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }
+            { opacity: 0, y: 12 }, 
+            { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }
         )
         .fromTo('.hero-title', 
-            { opacity: 0, y: 30 }, 
-            { opacity: 1, y: 0, duration: 1.0, ease: "power3.out" }, 
-            "-=0.6"
+            { opacity: 0, y: 15 }, 
+            { opacity: 1, y: 0, duration: 0.6, ease: "power4.out" }, 
+            "-=0.4"
         )
         .fromTo('.hero-subtitle', 
-            { opacity: 0, y: 20 }, 
-            { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 
-            "-=0.6"
+            { opacity: 0, y: 12 }, 
+            { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 
+            "-=0.4"
         )
         .fromTo('.hero-actions', 
-            { opacity: 0, y: 15 }, 
-            { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 
-            "-=0.6"
+            { opacity: 0, y: 10 }, 
+            { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 
+            "-=0.4"
         )
         .fromTo('.main-header', 
-            { opacity: 0, y: -20 }, 
-            { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 
-            "-=1.0"
+            { opacity: 0, y: -12 }, 
+            { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 
+            "-=0.5"
         )
         .fromTo('.scroll-prompt', 
-            { opacity: 0, y: 15 }, 
-            { opacity: 0.7, y: 0, duration: 0.8, ease: "power2.out" }, 
-            "-=0.8"
+            { opacity: 0, y: 10 }, 
+            { opacity: 0.7, y: 0, duration: 0.5, ease: "power3.out" }, 
+            "-=0.4"
         )
         .fromTo('.hud-box', 
             { opacity: 0 }, 
-            { opacity: 1, duration: 1.2, stagger: 0.2, ease: "power2.out" }, 
-            "-=0.4"
+            { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, 
+            "-=0.3"
         );
     }
 
