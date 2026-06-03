@@ -174,12 +174,12 @@ function initAnimations() {
     }
 
     // 7. PRESET INTERACTION HUD INTEGRATION
-    // Clicking hero secondary button jumps smoothly to Contact section
-    const heroSecBtn = document.querySelector('.hero-actions .btn-secondary');
+    // Clicking hero secondary button jumps smoothly to Experience (timeline) section
+    const heroSecBtn = document.getElementById('hero-travel-btn');
     if (heroSecBtn) {
         heroSecBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            const targetSec = document.querySelector('#contact');
+            const targetSec = document.querySelector('#experience');
             const scrollContainer = document.getElementById('scroll-container');
             if (targetSec && scrollContainer) {
                 const targetTop = targetSec.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top + scrollContainer.scrollTop;

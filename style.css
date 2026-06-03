@@ -2331,6 +2331,71 @@ body.low-perf .remnant {
 /* ==========================================================================
    CINEMATIC PROJECT DETAILS SCENE OVERLAY
    ========================================================================== */
+/* ==========================================================================
+   CINEMATIC WELCOME VIDEO SCENE OVERLAY
+   ========================================================================== */
+.welcome-video-scene {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 90;
+    background: radial-gradient(circle at center, rgba(2, 4, 11, 0.15) 0%, rgba(2, 4, 11, 0.6) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden !important;
+    transition: opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1), visibility 0.6s;
+    pointer-events: auto;
+    box-sizing: border-box;
+    padding: 20px;
+}
+
+.welcome-video-scene.hidden {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+    transform: scale(0.9) translateY(40px) !important;
+}
+
+.welcome-container {
+    width: 95%;
+    max-width: 850px;
+    margin: auto;
+    position: relative;
+    z-index: 10;
+    box-sizing: border-box;
+    transform: perspective(1200px) rotateX(2deg) rotateY(-2deg) translateZ(10px);
+    transform-style: preserve-3d;
+}
+
+.welcome-card {
+    position: relative;
+    width: 100%;
+    background: rgba(5, 9, 21, 0.88) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 24px;
+    border-radius: 16px;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.85),
+        0 0 40px rgba(0, 243, 255, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.8s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+    overflow: visible !important;
+}
+
+.welcome-card:hover {
+    border-color: rgba(0, 243, 255, 0.5);
+    box-shadow: 
+        0 40px 100px rgba(0, 0, 0, 0.9),
+        0 0 50px rgba(0, 243, 255, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 .project-detail-scene {
     position: fixed;
     top: 0;
@@ -2798,8 +2863,19 @@ body.detail-active .main-header {
     100% { transform: translate(6vw, 4vh) scale(1.15); }
 }
 
-/* Responsive adjustment */
 @media (max-width: 1024px) {
+    .welcome-video-scene {
+        padding: 40px 16px;
+    }
+
+    .welcome-container {
+        transform: none !important;
+    }
+
+    .welcome-card {
+        padding: 16px !important;
+    }
+
     .project-detail-scene {
         padding: 40px 16px;
     }

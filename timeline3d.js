@@ -28,6 +28,7 @@ const vertexShader = `
     uniform float uMatrix;    // 0 = normal field/spine, 1 = matrix digital rain
     uniform float uNeural;    // 0 = off, 1 = neural constellation (particles morph into nodes)
     uniform float uPulse;     // transmission shockwave (1 -> 0)
+    uniform float uWelcomeOpen; // 0 = normal, 1 = welcome video vortex
     uniform vec3  uPulseOrigin; // shockwave origin (world space)
     uniform float uSpineRot;  // radians — rotation of the spine around its vertical (Y) axis
     uniform vec2  uCursor;    // normalized cursor (-1..1)
@@ -258,6 +259,14 @@ const vertexShader = `
         vec3 detailGridPos = vec3(gridX, gridY + waveRipple, gridZ);
         pos = mix(pos, detailGridPos, uDetailGrid);
 
+        // ---- WELCOME VIDEO VORTEX STATE ----
+        // Morph the particles into a swirling circular ring/vortex that orbits in 3D behind the welcome video.
+        float welcomeAngle = aRand * 6.283185 + uTime * 0.28 + aRand * 0.5; // slow circular orbit
+        float welcomeRadius = 4.2 + 2.8 * fract(aRand * 7.3); // ring radius with some thickness
+        float welcomeZ = -2.0 + sin(uTime * 1.5 + aRand * 6.28) * 0.4;
+        vec3 welcomePos = vec3(cos(welcomeAngle) * welcomeRadius, sin(welcomeAngle) * welcomeRadius * 0.58, welcomeZ);
+        pos = mix(pos, welcomePos, uWelcomeOpen);
+
         // Neural glow: idle synaptic breathing + transmission shockwave ring
         float nIdle = 0.55 + 0.45 * sin(uTime * (1.0 + aNodePhase * 2.0) + aNodePhase * 6.2831);
         float nDist = distance(edgePos, uPulseOrigin);
@@ -340,6 +349,9 @@ const vertexShader = `
         }
         gl_PointSize *= mix(1.0, neuralSizeFactor, uNeural);
         gl_PointSize *= mix(1.0, 1.45 * (0.8 + aRand * 0.4) * (1.0 + pulseGlow * 0.65), uDetailGrid);
+
+        // welcome state size scale
+        gl_PointSize *= mix(1.0, 1.35 * (0.8 + aRand * 0.4) * (1.0 + 0.35 * sin(uTime * 3.0 + aRand * 6.28)), uWelcomeOpen);
 
         // CAP the maximum point size so particles extremely close to the camera do not blow up into giant squares!
         gl_PointSize = clamp(gl_PointSize, 1.0, 75.0);
@@ -436,6 +448,14 @@ const vertexShader = `
         float gridAlpha = (0.28 + 0.38 * sin(uTime * 1.5 + aRand * 6.28) + pulseGlow * 0.42) * radialFade;
         vColor = mix(vColor, gridColor, uDetailGrid);
         vAlpha = mix(vAlpha, gridAlpha, uDetailGrid);
+
+        // ---- WELCOME VIDEO COLOR + ALPHA MIX ----
+        vec3 welcomeColor = mix(vec3(0.0, 0.90, 1.0), vec3(0.55, 0.35, 1.0), fract(aRand * 19.3));
+        welcomeColor *= (1.0 + 0.35 * sin(uTime * 2.0 + aRand * 6.28));
+        vColor = mix(vColor, welcomeColor, uWelcomeOpen);
+        
+        float welcomeAlpha = (0.28 + 0.48 * sin(uTime * 1.8 + aRand * 6.28)) * vFade; // respect distance fade
+        vAlpha = mix(vAlpha, welcomeAlpha, uWelcomeOpen);
     }
 `;
 
@@ -682,6 +702,7 @@ function initThreeEngine() {
         uLoader:     { value: 1.0 },
         uLoadProgress: { value: 0.0 },
         uReactorExpand: { value: 0.0 },
+        uWelcomeOpen: { value: 0.0 },
         uAtlas:      { value: createTechTextureAtlas() }
     };
 

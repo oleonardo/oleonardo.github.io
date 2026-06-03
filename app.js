@@ -11,6 +11,8 @@ window.PortfolioApp = {
   mouse: { x: 0, y: 0, targetX: 0, targetY: 0 },
   currentSection: 0,
   lowPerf: false, // Central flag for low-performance eco-mode
+  inProjectDetail: false,
+  inWelcomeVideo: false,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -158,6 +160,11 @@ function initSystem() {
   // 10. Initialize Project Detail scene handlers (exits, video, backdrop options)
   if (typeof initProjectDetailHandlers === "function") {
     initProjectDetailHandlers();
+  }
+
+  // 11. Initialize Welcome Video scene handlers
+  if (typeof initWelcomeVideoHandlers === "function") {
+    initWelcomeVideoHandlers();
   }
 }
 
@@ -1338,8 +1345,8 @@ function initProjectDetailVideoControls() {
   }
 }
 
-function initParticleCloseButton() {
-  const canvas = document.getElementById("detail-back-btn");
+function initParticleCloseButton(canvasId = "detail-back-btn") {
+  const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
 
@@ -1474,7 +1481,7 @@ function initProjectDetailHandlers() {
   initProjectDetailVideoControls();
 
   // Initialize particle close button
-  initParticleCloseButton();
+  initParticleCloseButton("detail-back-btn");
 
   const backBtn = document.getElementById("detail-back-btn");
   if (backBtn) {
@@ -1510,4 +1517,177 @@ function initProjectDetailHandlers() {
       }
     });
   }
+}
+
+/**
+ * WELCOME VIDEO SCREEN METHODS & HANDLERS
+ */
+function openWelcomeVideo() {
+  if (window.PortfolioApp.inWelcomeVideo) return;
+  window.PortfolioApp.inWelcomeVideo = true;
+
+  const overlay = document.getElementById("welcome-video-scene");
+  const video = document.getElementById("welcome-video");
+  const scrollContainer = document.getElementById("scroll-container");
+
+  if (scrollContainer) {
+    scrollContainer.classList.add("no-scroll");
+  }
+
+  if (video) {
+    video.currentTime = 0;
+    video.play().catch((err) => console.log("Welcome video play failed:", err));
+  }
+
+  if (overlay) {
+    overlay.classList.remove("hidden");
+    gsap.set(overlay, { display: "flex", visibility: "visible" });
+    gsap.fromTo(
+      overlay,
+      { scale: 0.9, y: 40, opacity: 0 },
+      { scale: 1.0, y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }
+    );
+  }
+
+  // Morph particles to welcome video vortex target!
+  if (
+    window.PortfolioApp.threeEngine &&
+    window.PortfolioApp.threeEngine.uniforms
+  ) {
+    gsap.to(window.PortfolioApp.threeEngine.uniforms.uWelcomeOpen, {
+      value: 1.0,
+      duration: 0.8,
+      ease: "power3.out",
+    });
+  }
+}
+
+function closeWelcomeVideo() {
+  if (!window.PortfolioApp.inWelcomeVideo) return;
+
+  const overlay = document.getElementById("welcome-video-scene");
+  const video = document.getElementById("welcome-video");
+  const scrollContainer = document.getElementById("scroll-container");
+
+  if (video) {
+    video.pause();
+  }
+
+  gsap.to(overlay, {
+    scale: 0.9,
+    y: 40,
+    opacity: 0,
+    duration: 0.4,
+    ease: "power3.in",
+    onComplete: () => {
+      if (overlay) {
+        overlay.classList.add("hidden");
+        gsap.set(overlay, { display: "none", visibility: "hidden" });
+      }
+      if (scrollContainer) {
+        scrollContainer.classList.remove("no-scroll");
+      }
+      window.PortfolioApp.inWelcomeVideo = false;
+    },
+  });
+
+  // Morph particles back to regular field layout!
+  if (
+    window.PortfolioApp.threeEngine &&
+    window.PortfolioApp.threeEngine.uniforms
+  ) {
+    gsap.to(window.PortfolioApp.threeEngine.uniforms.uWelcomeOpen, {
+      value: 0.0,
+      duration: 0.6,
+      ease: "power3.out",
+    });
+  }
+}
+
+function initWelcomeVideoScrollExit() {
+  const overlay = document.getElementById("welcome-video-scene");
+  if (!overlay) return;
+
+  let touchStartY = 0;
+
+  overlay.addEventListener(
+    "wheel",
+    (e) => {
+      if (!window.PortfolioApp.inWelcomeVideo) return;
+
+      // Scroll up check: deltaY < -5
+      if (e.deltaY < -5) {
+        e.preventDefault();
+        closeWelcomeVideo();
+      }
+    },
+    { passive: false }
+  );
+
+  overlay.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY;
+      }
+    },
+    { passive: true }
+  );
+
+  overlay.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!window.PortfolioApp.inWelcomeVideo) return;
+
+      if (e.touches.length === 1) {
+        const touchY = e.touches[0].clientY;
+        const diffY = touchY - touchStartY; // positive means swipe down
+
+        // Trigger return when swipe down is significant (> 60px)
+        if (diffY > 60) {
+          closeWelcomeVideo();
+        }
+      }
+    },
+    { passive: true }
+  );
+}
+
+function initWelcomeVideoHandlers() {
+  const openBtn = document.getElementById("hero-welcome-btn");
+  if (openBtn) {
+    openBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openWelcomeVideo();
+    });
+  }
+
+  // Initialize particle close button for welcome video
+  initParticleCloseButton("welcome-back-btn");
+
+  const backBtn = document.getElementById("welcome-back-btn");
+  if (backBtn) {
+    backBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeWelcomeVideo();
+    });
+    backBtn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeWelcomeVideo();
+      }
+    });
+  }
+
+  // Close welcome video if it ends
+  const video = document.getElementById("welcome-video");
+  if (video) {
+    video.addEventListener("ended", () => {
+      closeWelcomeVideo();
+    });
+  }
+
+  // Initialize scroll exit
+  initWelcomeVideoScrollExit();
 }

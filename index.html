@@ -190,13 +190,13 @@
               decisão sempre no centro.
             </p>
             <div class="hero-actions">
-              <a href="#experience" class="btn btn-primary btn-hover-effect">
-                <span class="btn-text">VIAJAR NO TEMPO</span>
+              <button id="hero-welcome-btn" class="btn btn-primary btn-hover-effect">
+                <span class="btn-text">QUEM SOU EU</span>
                 <span class="btn-glow"></span>
-              </a>
-              <a href="#contact" class="btn btn-secondary btn-hover-effect">
-                <span class="btn-text">ABRIR CONEXÃO</span>
-              </a>
+              </button>
+              <button id="hero-travel-btn" class="btn btn-secondary btn-hover-effect">
+                <span class="btn-text">VIAJAR NO TEMPO</span>
+              </button>
             </div>
           </div>
         </div>
@@ -698,6 +698,32 @@
         </footer>
       </section>
     </main>
+
+    <!-- WELCOME VIDEO OVERLAY SCENE -->
+    <div id="welcome-video-scene" class="welcome-video-scene hidden" style="transform: scale(0.9) translateY(40px); opacity: 0; display: none; visibility: hidden;">
+      <div class="welcome-container">
+        <div class="welcome-card glass-panel">
+          <canvas id="welcome-back-btn" class="close-particle-btn" role="button" tabindex="0" aria-label="Fechar vídeo"></canvas>
+          <div class="video-container">
+            <video id="welcome-video" playsinline>
+              <source src="assets/whoiam.mp4" type="video/mp4">
+              Seu navegador não suporta o player de vídeo.
+            </video>
+            <div class="video-scanlines"></div>
+            <div class="video-hud-overlay">
+              <div class="hud-corner top-left"></div>
+              <div class="hud-corner top-right"></div>
+              <div class="hud-corner bottom-left"></div>
+              <div class="hud-corner bottom-right"></div>
+              <div class="hud-rec-indicator">
+                <span class="rec-dot"></span> LIVE // INTRO
+              </div>
+              <div class="hud-telemetry">USER: L. DE OLIVEIRA // INTRUDER_WARN: OFF // STREAM: OK</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- PROJECT DETAIL OVERLAY SCENE -->
     <div id="project-detail-scene" class="project-detail-scene hidden" style="transform: translateX(100vw); opacity: 0; display: none; visibility: hidden;">
