@@ -204,11 +204,11 @@ html.is-locked .topbar {
   left: 0;
   right: 0;
   z-index: 20;
-  height: var(--topbar-h);
+  height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 0 var(--gutter);
+  padding: env(safe-area-inset-top, 0px) max(var(--gutter), env(safe-area-inset-right, 0px)) 0 max(var(--gutter), env(safe-area-inset-left, 0px));
   background: linear-gradient(to bottom, rgba(5, 8, 16, 0.88) 10%, rgba(5, 8, 16, 0));
 }
 
@@ -1295,7 +1295,7 @@ html.is-locked .topbar {
   max-width: none;
   max-height: none;
   margin: 0;
-  padding: clamp(20px, 4vw, 56px);
+  padding: calc(clamp(20px, 4vw, 56px) + env(safe-area-inset-top, 0px)) clamp(20px, 4vw, 56px) calc(clamp(20px, 4vw, 56px) + env(safe-area-inset-bottom, 0px));
   border: 0;
   background: transparent;
   color: var(--foam);
@@ -1442,7 +1442,7 @@ html.is-locked .topbar {
 .scene-hint {
   position: fixed;
   right: 0;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   left: 0;
   color: var(--mist);
   font-size: 10.5px;
@@ -1667,7 +1667,7 @@ html.is-locked .topbar {
   }
 
   .scene {
-    padding: 64px 14px 40px;
+    padding: calc(64px + env(safe-area-inset-top, 0px)) 14px calc(40px + env(safe-area-inset-bottom, 0px));
   }
 
   .close-btn {
