@@ -2033,123 +2033,102 @@ html.is-locked .topbar {
 
 /* ==========================================================================
    SECTION MOTION
-   Native scroll-driven animations: they run on the compositor, need no JS and
-   simply do nothing where unsupported. Everything starts from a visible state.
+   One-shot entrances: app.js adds .is-in the first time an element shows up
+   and a transition plays it, so nothing keeps running once it has arrived
+   (scroll-linked versions cost ~12% more main-thread work on every frame
+   while the particles move). Start states keep text legible, and without JS,
+   IntersectionObserver or with reduced motion everything is simply there.
    ========================================================================== */
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    /* labels type themselves in, titles surface */
-    .story-head .kicker,
-    .work-head .kicker,
-    .contact-info .kicker {
-      animation: type-on steps(18, end) both;
-      animation-timeline: view();
-      animation-range: entry 20% cover 30%;
-    }
-
-    .story-title,
-    .work-title,
-    .contact-title {
-      animation: surface linear both;
-      animation-timeline: view();
-      animation-range: entry 10% cover 35%;
-    }
-
-    /* stacked story capsules rise out of the dark, their span draws itself */
-    .tl-item {
-      animation: capsule-in linear both;
-      animation-timeline: view();
-      animation-range: entry 0% cover 30%;
-    }
-
-    .tl-span-bar {
-      animation: span-grow linear both;
-      animation-timeline: view();
-      animation-range: entry 70% cover 45%;
-    }
-
-    .terminal,
-    .social li {
-      animation: capsule-in linear both;
-      animation-timeline: view();
-      animation-range: entry 0% cover 25%;
-    }
-
-    /* the desktop orbit is placed by app.js: leave it alone */
-    @media (min-width: 1025px) {
-      .js .tl-item,
-      .js .tl-span-bar {
-        animation: none;
-      }
-    }
-
-    /* phones: the channel in the middle of the deck is the one on air */
-    @media (max-width: 1024px) {
-      .project {
-        animation: deck-focus linear both;
-        animation-timeline: view(inline);
-      }
-
-      .project-media img {
-        animation: deck-color linear both;
-        animation-timeline: view(inline);
-      }
-    }
+@media (prefers-reduced-motion: no-preference) {
+  /* labels type themselves in */
+  .reveals :is(.story-head, .work-head, .contact-info) .kicker {
+    transition: clip-path 0.7s steps(18, end) 0.1s;
   }
-}
 
-@keyframes type-on {
-  from {
+  .reveals :is(.story-head, .work-head, .contact-info) .kicker:not(.is-in) {
     clip-path: inset(0 100% 0 0);
   }
-  to {
-    clip-path: inset(0 0 0 0);
-  }
-}
 
-/* Entrances keep text legible even mid-way (and for audits that read the page
-   before it scrolls): titles come into focus, capsules rise; neither fades
-   below a readable contrast. */
-@keyframes surface {
-  from {
+  /* titles come up into focus */
+  .reveals :is(.story-title, .work-title, .contact-title) {
+    transition:
+      opacity 0.9s var(--ease-out),
+      transform 0.9s var(--ease-out),
+      filter 0.9s var(--ease-out);
+  }
+
+  .reveals :is(.story-title, .work-title, .contact-title):not(.is-in) {
     opacity: 0.45;
     transform: translateY(28px);
     filter: blur(6px);
   }
-}
 
-@keyframes capsule-in {
-  from {
+  /* contact: the terminal and the links dock in */
+  .reveals .terminal {
+    transition:
+      --lit 0.5s ease,
+      border-color 0.5s ease,
+      box-shadow 0.5s ease,
+      opacity 0.8s var(--ease-out),
+      transform 0.9s var(--ease-out);
+  }
+
+  .reveals .social li {
+    transition:
+      opacity 0.8s var(--ease-out),
+      transform 0.9s var(--ease-out);
+  }
+
+  .reveals .social li:nth-child(2) {
+    transition-delay: 0.08s;
+  }
+
+  .reveals .social li:nth-child(3) {
+    transition-delay: 0.16s;
+  }
+
+  .reveals :is(.terminal, .social li):not(.is-in) {
     opacity: 0.8;
-    transform: translateY(56px) scale(0.95);
+    transform: translateY(48px) scale(0.96);
+  }
+
+  /* stacked story capsules rise out of the dark and their span draws itself
+     (on desktop the orbit is placed by app.js instead) */
+  @media (max-width: 1024px) {
+    .reveals .tl-item {
+      transition:
+        opacity 0.8s var(--ease-out),
+        transform 0.9s var(--ease-out);
+    }
+
+    .reveals .tl-item:not(.is-in) {
+      opacity: 0.8;
+      transform: translateY(56px) scale(0.95);
+    }
+
+    .reveals .tl-item:not(.is-in) .tl-span-bar {
+      transform: scaleX(0);
+    }
   }
 }
 
-@keyframes span-grow {
-  from {
-    transform: scaleX(0);
+/* Phones and tablets: the channel in the middle of the deck is on air and the
+   others idle. app.js marks it as the deck scrolls; the change is a transition,
+   so nothing runs while the deck is still. */
+@media (max-width: 1024px) {
+  .js .project {
+    transition:
+      opacity 0.45s ease,
+      transform 0.6s var(--ease-out);
   }
-}
 
-@keyframes deck-focus {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: scale(0.9);
+  .js .project:not(.is-active) {
+    opacity: 0.55;
+    transform: scale(0.92);
   }
-  50% {
-    opacity: 1;
-    transform: none;
-  }
-}
 
-@keyframes deck-color {
-  0%,
-  100% {
+  .js .project:not(.is-active) .project-media img {
     filter: saturate(0.25) brightness(0.72);
-  }
-  50% {
-    filter: none;
   }
 }
 

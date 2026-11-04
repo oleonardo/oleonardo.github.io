@@ -146,6 +146,7 @@
       node.style.pointerEvents = '';
       node.style.zIndex = '';
     });
+    markActiveProject();
   }
 
   // -------------------------------------------------------------------------
@@ -402,8 +403,14 @@
       activeProject = index;
       el.deckIndex.textContent = String(index + 1).padStart(2, '0');
       el.deckName.textContent = projectNames[index] || '';
+      if (!layout.desktop) markActiveProject();
     }
     el.deckFill.style.transform = `scaleX(${progress.toFixed(4)})`;
+  }
+
+  // Phones and tablets: the channel in the middle of the deck is on air.
+  function markActiveProject() {
+    el.projects.forEach((node, i) => node.classList.toggle('is-active', i === activeProject));
   }
 
   // -------------------------------------------------------------------------
@@ -455,6 +462,8 @@
 
   // Active section in the nav (no scroll math needed for this one).
   const LOOP_HOSTS = '.scroll-cue, .tl-card.is-now, .project-card, .terminal';
+  const REVEALS =
+    '.story-head .kicker, .work-head .kicker, .contact-info .kicker, .story-title, .work-title, .contact-title, .tl-item, .terminal, .social li';
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver(
       (entries) => {
@@ -476,6 +485,28 @@
       entries.forEach((entry) => entry.target.classList.toggle('is-onscreen', entry.isIntersecting));
     });
     $$(LOOP_HOSTS).forEach((node) => onscreen.observe(node));
+
+    // One-shot entrances: an element gets .is-in the first time it shows up
+    // and its CSS transition plays once. What is already in view (or above it,
+    // after a reload mid-page) starts arrived, so nothing flickers.
+    if (!reduced) {
+      const revealer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            entry.target.classList.add('is-in');
+            revealer.unobserve(entry.target);
+          });
+        },
+        { rootMargin: '0px 0px -12% 0px' }
+      );
+      const vh = window.innerHeight;
+      $$(REVEALS).forEach((node) => {
+        if (node.getBoundingClientRect().top < vh * 0.88) node.classList.add('is-in');
+        else revealer.observe(node);
+      });
+      doc.classList.add('reveals');
+    }
   } else {
     $$(LOOP_HOSTS).forEach((node) => node.classList.add('is-onscreen'));
   }
