@@ -2021,6 +2021,16 @@ html.is-locked .topbar {
   box-shadow: 0 0 8px rgba(255, 179, 92, 0.6);
 }
 
+/* A running CSS animation costs a style pass on every frame, even off screen.
+   With JS, app.js marks which hosts are in view and the decorative loops
+   (scroll cue, beacons, sonar) rest everywhere else. Without JS they run. */
+.js .scroll-cue:not(.is-onscreen) .scroll-cue-line,
+.js .tl-card.is-now:not(.is-onscreen) .tl-span-bar::after,
+.js .project-card:not(.is-onscreen) .play-badge::before,
+.js .terminal:not(.is-onscreen) .terminal-link i {
+  animation: none;
+}
+
 /* ==========================================================================
    SECTION MOTION
    Native scroll-driven animations: they run on the compositor, need no JS and
@@ -2097,16 +2107,20 @@ html.is-locked .topbar {
   }
 }
 
+/* Entrances keep text legible even mid-way (and for audits that read the page
+   before it scrolls): titles come into focus, capsules rise; neither fades
+   below a readable contrast. */
 @keyframes surface {
   from {
-    opacity: 0.2;
+    opacity: 0.45;
     transform: translateY(28px);
+    filter: blur(6px);
   }
 }
 
 @keyframes capsule-in {
   from {
-    opacity: 0.25;
+    opacity: 0.8;
     transform: translateY(56px) scale(0.95);
   }
 }

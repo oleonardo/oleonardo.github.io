@@ -454,6 +454,7 @@
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
 
   // Active section in the nav (no scroll math needed for this one).
+  const LOOP_HOSTS = '.scroll-cue, .tl-card.is-now, .project-card, .terminal';
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver(
       (entries) => {
@@ -469,6 +470,14 @@
       { rootMargin: '-45% 0px -55% 0px' }
     );
     $$('main > section').forEach((sec) => io.observe(sec));
+
+    // Hosts of decorative loops in view: the CSS rests the loops everywhere else.
+    const onscreen = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => entry.target.classList.toggle('is-onscreen', entry.isIntersecting));
+    });
+    $$(LOOP_HOSTS).forEach((node) => onscreen.observe(node));
+  } else {
+    $$(LOOP_HOSTS).forEach((node) => node.classList.add('is-onscreen'));
   }
 
   // Hover tide: motes leave the spine and halo the focused story card.
