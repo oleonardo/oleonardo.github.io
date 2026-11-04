@@ -98,6 +98,8 @@
     items: $$('.tl-item'),
     cards: $$('.tl-card'),
     rail: $$('.rail-year'),
+    railBox: $('#story-rail'),
+    depth: $('#depth-line'),
     deck: $('#deck'),
     projects: $$('.project'),
     deckIndex: $('#deck-index'),
@@ -125,7 +127,13 @@
     layout.story = box(el.story);
     layout.work = box(el.work);
     layout.contact = box(el.contact);
-    painted.story = painted.deck = -1;
+    painted.story = painted.deck = painted.year = -1;
+    if (el.depth) {
+      const max = Math.max(1, doc.scrollHeight - layout.vh);
+      el.depth.style.setProperty('--t1', (layout.story.top / max).toFixed(4));
+      el.depth.style.setProperty('--t2', (layout.work.top / max).toFixed(4));
+      el.depth.style.setProperty('--t3', (layout.contact.top / max).toFixed(4));
+    }
     if (!layout.desktop) clearInlineStyles();
     wake();
   }
@@ -153,7 +161,7 @@
     hover: null,
     lastInput: performance.now(),
   };
-  const painted = { story: -1, gate: -1, deck: -1 };
+  const painted = { story: -1, gate: -1, deck: -1, year: -1 };
 
   // -------------------------------------------------------------------------
   // The sea
@@ -353,8 +361,16 @@
       el.items[i].classList.toggle('is-focus', on);
       if (!on && s.hover === el.cards[i]) setHover(null);
     }
+    if (el.railBox) el.railBox.style.setProperty('--p', p.toFixed(4));
     const year = Math.round(p * (N - 1));
-    el.rail.forEach((r, i) => r.classList.toggle('is-active', i === year));
+    if (year !== painted.year) {
+      painted.year = year;
+      el.rail.forEach((r, i) => {
+        r.classList.toggle('is-active', i === year);
+        if (i === year) r.setAttribute('aria-current', 'step');
+        else r.removeAttribute('aria-current');
+      });
+    }
   }
 
   // Projects coverflow: the card nearest the centre is the active one.
@@ -471,6 +487,57 @@
     });
   });
 
+  // Capsules: the edge lights up where the cursor is and the card leans in.
+  // One rAF per pointer move at most, and only over the card being touched.
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+  const lit = { node: null, x: 0, y: 0, raf: 0 };
+  function paintLit() {
+    lit.raf = 0;
+    const node = lit.node;
+    if (!node) return;
+    const r = node.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const px = clamp01((lit.x - r.left) / r.width);
+    const py = clamp01((lit.y - r.top) / r.height);
+    node.style.setProperty('--mx', (px * 100).toFixed(1) + '%');
+    node.style.setProperty('--my', (py * 100).toFixed(1) + '%');
+    if (!reduced) {
+      node.style.setProperty('--rx', ((0.5 - py) * 5).toFixed(2) + 'deg');
+      node.style.setProperty('--ry', ((px - 0.5) * 7).toFixed(2) + 'deg');
+    }
+  }
+  $$('.capsule').forEach((node) => {
+    node.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse' && finePointer.matches) node.classList.add('is-lit');
+    });
+    node.addEventListener(
+      'pointermove',
+      (e) => {
+        if (e.pointerType !== 'mouse' || !finePointer.matches) return;
+        lit.node = node;
+        lit.x = e.clientX;
+        lit.y = e.clientY;
+        if (!lit.raf) lit.raf = requestAnimationFrame(paintLit);
+      },
+      { passive: true }
+    );
+    node.addEventListener('pointerleave', () => {
+      node.classList.remove('is-lit');
+      node.style.removeProperty('--rx');
+      node.style.removeProperty('--ry');
+      if (lit.node === node) lit.node = null;
+    });
+  });
+
+  // Year rail: travel straight to a year of the story.
+  function scrollToStory(i) {
+    const L = layout;
+    const n = el.items.length;
+    const top = L.story.top + (n > 1 ? i / (n - 1) : 0) * (L.story.h - L.vh);
+    window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
+  }
+  el.rail.forEach((btn, i) => btn.addEventListener('click', () => scrollToStory(i)));
+
   // Projects: centre a side card first, open the active one.
   function scrollToProject(i) {
     const L = layout;
@@ -485,11 +552,21 @@
         scrollToProject(i);
         return;
       }
-      openProject(node.dataset.project, btn);
+      openProject(node.dataset.project, node);
     });
     btn.addEventListener('focus', () => {
       if (layout.desktop && !node.classList.contains('is-active')) scrollToProject(i);
     });
+  });
+
+  // Desktop deck: arrow keys move between channels.
+  el.deck.addEventListener('keydown', (e) => {
+    if (!layout.desktop || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+    const next = Math.max(0, Math.min(M - 1, activeProject + (e.key === 'ArrowRight' ? 1 : -1)));
+    if (next === activeProject) return;
+    e.preventDefault();
+    scrollToProject(next);
+    $('.project-open', el.projects[next]).focus({ preventScroll: true });
   });
 
   // Phones: the deck is a native horizontal scroller; keep the HUD in sync.
@@ -510,7 +587,43 @@
 
   // -------------------------------------------------------------------------
   // Video scenes
+  // The clicked poster (or the hero button) grows into the video frame through
+  // a View Transition, and shrinks back into place on close. Without View
+  // Transitions, or with reduced motion, the panel simply fades in and out.
   // -------------------------------------------------------------------------
+  const canPortal = typeof document.startViewTransition === 'function' && !reduced;
+  let portalBusy = false;
+  let openNode = null;
+
+  function portal(from, to, change, closing) {
+    if (!canPortal || portalBusy || !from || !to || !from.getClientRects().length) return false;
+    portalBusy = true;
+    doc.classList.add('vt');
+    doc.classList.toggle('vt-close', !!closing);
+    from.style.viewTransitionName = 'portal';
+    const cleanup = () => {
+      from.style.viewTransitionName = '';
+      to.style.viewTransitionName = '';
+      doc.classList.remove('vt', 'vt-close');
+      portalBusy = false;
+      wake();
+    };
+    let t;
+    try {
+      t = document.startViewTransition(() => {
+        from.style.viewTransitionName = '';
+        change();
+        to.style.viewTransitionName = 'portal';
+      });
+    } catch (err) {
+      cleanup();
+      return false;
+    }
+    t.ready.catch(() => {});
+    t.finished.catch(() => {}).then(cleanup);
+    return true;
+  }
+
   function openScene(dialog) {
     if (dialog.open) return;
     dialog.classList.remove('is-closing');
@@ -520,20 +633,43 @@
     wake();
   }
 
+  function sceneTarget(dialog) {
+    if (dialog === el.welcome) return $('#hero-welcome-btn');
+    return openNode ? $('.project-media', openNode) : null;
+  }
+
+  const closing = new Set();
   function closeScene(dialog) {
-    if (!dialog.open || dialog.classList.contains('is-closing')) return;
+    if (!dialog.open || closing.has(dialog)) return;
+    closing.add(dialog);
     const video = $('video', dialog);
     if (video) video.pause();
-    sceneClosed(dialog);
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      dialog.classList.remove('is-closing');
+      closing.delete(dialog);
+      dialog.classList.remove('is-closing', 'via-portal');
+      if (!dialog.open) return;
       if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
+      else {
+        dialog.removeAttribute('open');
+        sceneClosed(dialog);
+      }
     };
+    const viaPortal = portal(
+      $('.video-frame', dialog),
+      sceneTarget(dialog),
+      () => {
+        sceneClosed(dialog);
+        finish();
+      },
+      true
+    );
+    if (viaPortal) return;
+    sceneClosed(dialog);
     if (reduced) return finish();
+    dialog.classList.remove('via-portal');
     dialog.classList.add('is-closing');
     $('.scene-panel', dialog).addEventListener('animationend', finish, { once: true });
     setTimeout(finish, 450);
@@ -596,11 +732,15 @@
   });
 
   function openWelcome() {
-    s.welcome = true;
-    openScene(el.welcome);
     const v = el.welcomeVideo;
     if (!v.getAttribute('poster')) v.poster = v.dataset.poster; // fetched on first open, not at page load
     try { v.currentTime = 0; } catch (e) { /* not loaded yet */ }
+    const show = () => {
+      s.welcome = true;
+      openScene(el.welcome);
+    };
+    if (portal($('#hero-welcome-btn'), $('.video-frame', el.welcome), show)) el.welcome.classList.add('via-portal');
+    else show();
     const p = v.play();
     if (p && p.catch) p.catch(() => {});
   }
@@ -608,7 +748,7 @@
   $('#hero-welcome-btn').addEventListener('click', openWelcome);
   el.welcomeVideo.addEventListener('ended', () => closeScene(el.welcome));
 
-  function openProject(key) {
+  function openProject(key, node) {
     const data = PROJECTS[key];
     if (!data) return;
     $('#detail-tags').textContent = data.tag;
@@ -622,9 +762,14 @@
     const v = el.detailVideo;
     v.poster = data.poster;
     v.src = data.video;
-    s.detail = true;
-    doc.classList.add('is-detail');
-    openScene(el.detail);
+    openNode = node || null;
+    const show = () => {
+      s.detail = true;
+      doc.classList.add('is-detail');
+      openScene(el.detail);
+    };
+    if (portal(node ? $('.project-media', node) : null, $('.video-frame', el.detail), show)) el.detail.classList.add('via-portal');
+    else show();
     const p = v.play();
     if (p && p.catch) p.catch(() => {});
   }

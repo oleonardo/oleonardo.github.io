@@ -53,7 +53,8 @@
         <a href="#projetos" class="nav-link" data-nav="projetos">Projetos</a>
         <a href="#contato" class="nav-link" data-nav="contato">Contato</a>
       </nav>
-      <p class="status mono"><span class="status-dot" aria-hidden="true"></span>SYS_ONLINE: AI_AGENT_v2.6</p>
+      <p class="status mono"><span class="status-dot" aria-hidden="true"></span>SYS_ONLINE: AI_AGENT_v2.6<span class="depth" aria-hidden="true"><span class="depth-num"></span> m</span></p>
+      <span class="depth-line" id="depth-line" aria-hidden="true"><i class="depth-fill"></i><i class="depth-tick t1"></i><i class="depth-tick t2"></i><i class="depth-tick t3"></i></span>
     </header>
 
     <main id="conteudo">
@@ -90,16 +91,17 @@
             <p class="kicker mono">Linha do tempo</p>
             <h2 id="historia-title" class="story-title">2013 → hoje</h2>
           </header>
-          <ol class="story-rail mono" aria-hidden="true">
-            <li class="rail-year is-active">2013</li>
-            <li class="rail-year">2015</li>
-            <li class="rail-year">2016</li>
-            <li class="rail-year">Presente</li>
+          <ol class="story-rail mono" id="story-rail" aria-label="Ir para um ano da linha do tempo">
+            <li><button class="rail-year is-active" type="button" aria-current="step">2013</button></li>
+            <li><button class="rail-year" type="button">2015</button></li>
+            <li><button class="rail-year" type="button">2016</button></li>
+            <li><button class="rail-year" type="button">Presente</button></li>
           </ol>
           <ol class="story-orbit">
             <li class="tl-item" id="card-2013">
-              <article class="tl-card">
-                <p class="tl-meta mono"><span class="tl-when">2013 – 2015</span><span class="tl-role">Technical Team Lead</span></p>
+              <article class="tl-card capsule" style="--from: 0; --to: 2">
+                <p class="tl-meta mono"><span class="tl-index" aria-hidden="true">01</span><span class="tl-when">2013 – 2015</span><span class="tl-role">Technical Team Lead</span></p>
+                <div class="tl-span mono" aria-hidden="true"><span>2013</span><span class="tl-span-track"><i class="tl-span-bar"></i></span><span class="tl-span-len">2 anos</span></div>
                 <h3 class="tl-title">Liderança Técnica &amp; Governança</h3>
                 <p class="tl-desc">
                   Atuação na Capemisa Seguradora liderando equipes multidisciplinares no desenvolvimento de sistemas
@@ -111,8 +113,9 @@
               </article>
             </li>
             <li class="tl-item" id="card-2015">
-              <article class="tl-card">
-                <p class="tl-meta mono"><span class="tl-when">2015 – 2016</span><span class="tl-role">Entrepreneur</span></p>
+              <article class="tl-card capsule" style="--from: 2; --to: 3">
+                <p class="tl-meta mono"><span class="tl-index" aria-hidden="true">02</span><span class="tl-when">2015 – 2016</span><span class="tl-role">Entrepreneur</span></p>
+                <div class="tl-span mono" aria-hidden="true"><span>2013</span><span class="tl-span-track"><i class="tl-span-bar"></i></span><span class="tl-span-len">1 ano</span></div>
                 <h3 class="tl-title">Empreendedorismo &amp; Soluções</h3>
                 <p class="tl-desc">
                   Como um dos fundadores da Tatios Soluções em Informática, liderei a concepção, arquitetura e entrega de
@@ -124,8 +127,9 @@
               </article>
             </li>
             <li class="tl-item" id="card-2016">
-              <article class="tl-card">
-                <p class="tl-meta mono"><span class="tl-when">2016 – 2025</span><span class="tl-role">Solutions Engineer</span></p>
+              <article class="tl-card capsule" style="--from: 3; --to: 12">
+                <p class="tl-meta mono"><span class="tl-index" aria-hidden="true">03</span><span class="tl-when">2016 – 2025</span><span class="tl-role">Solutions Engineer</span></p>
+                <div class="tl-span mono" aria-hidden="true"><span>2013</span><span class="tl-span-track"><i class="tl-span-bar"></i></span><span class="tl-span-len">9 anos</span></div>
                 <h3 class="tl-title">Arquitetura de Larga Escala</h3>
                 <p class="tl-desc">
                   Engenharia de Soluções na CWI Software atendendo a grandes contas. Cases: liderança da migração para
@@ -138,8 +142,9 @@
               </article>
             </li>
             <li class="tl-item" id="card-present">
-              <article class="tl-card">
-                <p class="tl-meta mono"><span class="tl-when">2025 – Presente</span><span class="tl-role">AI &amp; Solutions Architect</span></p>
+              <article class="tl-card capsule is-now" style="--from: 12; --to: 13">
+                <p class="tl-meta mono"><span class="tl-index" aria-hidden="true">04</span><span class="tl-when">2025 – Presente</span><span class="tl-role">AI &amp; Solutions Architect</span></p>
+                <div class="tl-span mono" aria-hidden="true"><span>2013</span><span class="tl-span-track"><i class="tl-span-bar"></i></span><span class="tl-span-len">em curso</span></div>
                 <h3 class="tl-title">Orquestração Corporativa &amp; Agentes</h3>
                 <p class="tl-desc">
                   Liderança técnica em arquitetura corporativa e engenharia de IA na CWI. Mentoria de Staffs, evangelização
@@ -164,10 +169,12 @@
           </header>
           <ul class="deck" id="deck">
             <li class="project" data-project="ai-dlc">
-              <article class="project-card">
+              <article class="project-card capsule">
                 <figure class="project-media">
                   <img src="assets/posters/ai-dlc-640.webp" srcset="assets/posters/ai-dlc-640.webp 640w, assets/posters/ai-dlc-960.webp 960w" sizes="(min-width: 1025px) 380px, 82vw" width="640" height="360" alt="" loading="lazy" decoding="async" />
                   <svg class="project-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2A2 2 0 0 1 14 4C14 4.74 13.6 5.39 13 5.73V7H14A7 7 0 0 1 21 14H22A1 1 0 0 1 23 15V18A1 1 0 0 1 22 19H21V20A2 2 0 0 1 19 22H5A2 2 0 0 1 3 20V19H2A1 1 0 0 1 1 18V15A1 1 0 0 1 2 14H3A7 7 0 0 1 10 7H11V5.73C10.4 5.39 10 4.74 10 4A2 2 0 0 1 12 2M7.5 13A2.5 2.5 0 0 0 5 15.5A2.5 2.5 0 0 0 7.5 18A2.5 2.5 0 0 0 10 15.5A2.5 2.5 0 0 0 7.5 13M16.5 13A2.5 2.5 0 0 0 14 15.5A2.5 2.5 0 0 0 16.5 18A2.5 2.5 0 0 0 19 15.5A2.5 2.5 0 0 0 16.5 13z" /></svg>
+                  <span class="media-scan" aria-hidden="true"></span>
+                  <span class="media-hud mono" aria-hidden="true"><span class="media-ch"><i></i>CH 01</span><span class="media-dur">00:07</span></span>
                   <span class="play-badge" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg></span>
                 </figure>
                 <div class="project-body">
@@ -178,15 +185,17 @@
                     human oversight, spec-driven development e ciclos de entrega que aceleram o time sem tirar a decisão
                     das pessoas.
                   </p>
-                  <button class="project-open mono" type="button" aria-haspopup="dialog">Visão da iniciativa<span class="sr-only">: abrir vídeo de Adoção AI-DLC</span></button>
+                  <button class="project-open mono" type="button" aria-haspopup="dialog"><span class="cta">Visão da iniciativa</span><span class="sr-only">: abrir vídeo de Adoção AI-DLC</span></button>
                 </div>
               </article>
             </li>
             <li class="project" data-project="banco-abc">
-              <article class="project-card">
+              <article class="project-card capsule">
                 <figure class="project-media">
                   <img src="assets/posters/abc-640.webp" srcset="assets/posters/abc-640.webp 640w, assets/posters/abc-960.webp 960w" sizes="(min-width: 1025px) 380px, 82vw" width="640" height="360" alt="" loading="lazy" decoding="async" />
                   <svg class="project-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2A10 10 0 0 0 2 12a9.9 9.9 0 0 0 2.25 6.35l-.07.07L12 22l7.82-3.58a10 10 0 0 0-7.82-16.42m0 2a8 8 0 0 1 7.15 4.39l-4.15 4.15L12 9.5l-3 3L6.85 10.3A8 8 0 0 1 12 4m0 14a6 6 0 1 1 6-6a6 6 0 0 1-6 6z" /></svg>
+                  <span class="media-scan" aria-hidden="true"></span>
+                  <span class="media-hud mono" aria-hidden="true"><span class="media-ch"><i></i>CH 02</span><span class="media-dur">00:08</span></span>
                   <span class="play-badge" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg></span>
                 </figure>
                 <div class="project-body">
@@ -196,15 +205,17 @@
                     Liderança técnica na transição da plataforma corporativa de Internet Banking para uma arquitetura
                     baseada em Microfrontends com Angular, promovendo alta autonomia entre equipes e baixo acoplamento.
                   </p>
-                  <button class="project-open mono" type="button" aria-haspopup="dialog">Arquitetura de referência<span class="sr-only">: abrir vídeo de Modularização Banco ABC</span></button>
+                  <button class="project-open mono" type="button" aria-haspopup="dialog"><span class="cta">Arquitetura de referência</span><span class="sr-only">: abrir vídeo de Modularização Banco ABC</span></button>
                 </div>
               </article>
             </li>
             <li class="project" data-project="ciee">
-              <article class="project-card">
+              <article class="project-card capsule">
                 <figure class="project-media">
                   <img src="assets/posters/ciee-640.webp" srcset="assets/posters/ciee-640.webp 640w, assets/posters/ciee-960.webp 960w" sizes="(min-width: 1025px) 380px, 82vw" width="640" height="360" alt="" loading="lazy" decoding="async" />
                   <svg class="project-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3c-4.97 0-9 4.03-9 9c0 2.12.74 4.07 1.97 5.61L4.35 19.4c3.9 3.9 10.23 3.9 14.13 0c3.9-3.9 3.9-10.23 0-14.13c-.39-.39-.81-.74-1.25-1.06c.46-.22.95-.4 1.46-.53L18 3c-1.63 0-3.15.52-4.4 1.4c-.52-.25-1.09-.4-1.6-.4m0 2c3.87 0 7 3.13 7 7s-3.13 7-7 7s-7-3.13-7-7s3.13-7 7-7m0 2a5 5 0 0 0-5 5a5 5 0 0 0 5 5a5 5 0 0 0 5-5a5 5 0 0 0-5-5m0 2a3 3 0 0 1 3 3a3 3 0 0 1-3 3a3 3 0 0 1-3-3a3 3 0 0 1 3-3z" /></svg>
+                  <span class="media-scan" aria-hidden="true"></span>
+                  <span class="media-hud mono" aria-hidden="true"><span class="media-ch"><i></i>CH 03</span><span class="media-dur">00:10</span></span>
                   <span class="play-badge" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg></span>
                 </figure>
                 <div class="project-body">
@@ -214,15 +225,17 @@
                     Projeto e desenvolvimento de uma solução de faturamento e conciliação financeira de alta resiliência,
                     elevando substancialmente a eficiência operacional e automatizando fluxos bancários complexos.
                   </p>
-                  <button class="project-open mono" type="button" aria-haspopup="dialog">Arquitetura de integração<span class="sr-only">: abrir vídeo de Cobrança CIEE</span></button>
+                  <button class="project-open mono" type="button" aria-haspopup="dialog"><span class="cta">Arquitetura de integração</span><span class="sr-only">: abrir vídeo de Cobrança CIEE</span></button>
                 </div>
               </article>
             </li>
             <li class="project" data-project="app-ouze">
-              <article class="project-card">
+              <article class="project-card capsule">
                 <figure class="project-media">
                   <img src="assets/posters/ouze-640.webp" srcset="assets/posters/ouze-640.webp 640w, assets/posters/ouze-960.webp 960w" sizes="(min-width: 1025px) 380px, 82vw" width="640" height="360" alt="" loading="lazy" decoding="async" />
                   <svg class="project-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 2a8 8 0 0 1 8 8a8 8 0 0 1-8 8a8 8 0 0 1-8-8a8 8 0 0 1 8-8m-1 3v2H9v2h2v5h2V11h2V9h-2V7h-2z" /></svg>
+                  <span class="media-scan" aria-hidden="true"></span>
+                  <span class="media-hud mono" aria-hidden="true"><span class="media-ch"><i></i>CH 04</span><span class="media-dur">00:08</span></span>
                   <span class="play-badge" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg></span>
                 </figure>
                 <div class="project-body">
@@ -232,7 +245,7 @@
                     Reengenharia e reescrita de ponta a ponta do aplicativo móvel corporativo utilizando Flutter,
                     resultando em uma experiência de alta performance, responsividade fluida e arquitetura modular.
                   </p>
-                  <button class="project-open mono" type="button" aria-haspopup="dialog">Arquitetura mobile<span class="sr-only">: abrir vídeo de Reescrita App Ouze</span></button>
+                  <button class="project-open mono" type="button" aria-haspopup="dialog"><span class="cta">Arquitetura mobile</span><span class="sr-only">: abrir vídeo de Reescrita App Ouze</span></button>
                 </div>
               </article>
             </li>
@@ -264,10 +277,11 @@
             </ul>
           </div>
 
-          <div class="terminal" id="terminal">
+          <div class="terminal capsule" id="terminal">
             <div class="terminal-bar mono" aria-hidden="true">
               <span class="terminal-dots"><i></i><i></i><i></i></span>
               <span>bash</span>
+              <span class="terminal-link"><i></i>online</span>
             </div>
             <div class="terminal-body mono">
               <p class="log-line is-teal">SYSTEM: CONEXÃO INICIADA A PARTIR DE 127.0.0.1</p>
@@ -328,7 +342,7 @@
           <p class="hud-rec mono" aria-hidden="true"><i></i>REC [PLAYING]</p>
           <p class="hud-telemetry mono" aria-hidden="true">SYS_FREQ: 60Hz // CORE_STREAM_OK // 1080P</p>
         </div>
-        <div class="detail-info">
+        <div class="detail-info capsule">
           <button class="close-btn" type="button" data-close aria-label="Fechar detalhes">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
