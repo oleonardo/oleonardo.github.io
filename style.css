@@ -587,25 +587,31 @@ html.is-locked .topbar {
   pointer-events: none;
 }
 
+/* HUD corners: the corners of a thin rounded frame, concentric with the card
+   (radius = card radius - border - inset), so the brackets follow its curve. */
 .capsule::after {
-  --b: rgba(99, 230, 210, 0.75);
+  --ci: 7px;
   content: "";
   position: absolute;
-  inset: 9px;
+  inset: var(--ci);
   z-index: -1;
-  background:
-    linear-gradient(var(--b), var(--b)) left top / 12px 1px,
-    linear-gradient(var(--b), var(--b)) left top / 1px 12px,
-    linear-gradient(var(--b), var(--b)) right top / 12px 1px,
-    linear-gradient(var(--b), var(--b)) right top / 1px 12px,
-    linear-gradient(var(--b), var(--b)) left bottom / 12px 1px,
-    linear-gradient(var(--b), var(--b)) left bottom / 1px 12px,
-    linear-gradient(var(--b), var(--b)) right bottom / 12px 1px,
-    linear-gradient(var(--b), var(--b)) right bottom / 1px 12px;
-  background-repeat: no-repeat;
+  border: 1px solid rgba(99, 230, 210, 0.75);
+  border-radius: max(2px, calc(var(--radius) - 1px - var(--ci)));
+  -webkit-mask:
+    linear-gradient(#000 0 0) left top / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) right top / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) left bottom / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) right bottom / 16px 16px no-repeat;
+  mask:
+    linear-gradient(#000 0 0) left top / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) right top / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) left bottom / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) right bottom / 16px 16px no-repeat;
   opacity: calc(0.28 + var(--lit) * 0.72);
   pointer-events: none;
-  transition: inset 0.6s var(--ease-out);
+  transition:
+    inset 0.6s var(--ease-out),
+    border-radius 0.6s var(--ease-out);
 }
 
 /* powered on: the focused story card and the active project */
@@ -618,7 +624,8 @@ html.is-locked .topbar {
 }
 
 :where(.tl-item.is-focus, .project.is-active) > .capsule::after {
-  inset: 5px;
+  inset: 4px;
+  border-radius: calc(var(--radius) - 5px);
 }
 
 .capsule.is-lit,
@@ -628,7 +635,8 @@ html.is-locked .topbar {
 }
 
 .capsule.is-lit::after {
-  inset: 5px;
+  inset: 4px;
+  border-radius: calc(var(--radius) - 5px);
 }
 
 .tl-card.is-lit,
