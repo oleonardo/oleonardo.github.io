@@ -1,1693 +1,928 @@
 /**
- * Leonardo Oliveira - 3D Neural Timeline Portfolio
- * Core Orchestrator (app.js)
+ * Leonardo de Oliveira · Abissal
+ * app.js: one requestAnimationFrame loop drives everything that moves.
+ *
+ * - The loop runs only while the tab is visible, and in reduced-motion mode only
+ *   while something is still settling.
+ * - Scroll and pointer handlers just store numbers; all DOM writes happen in the loop.
+ * - Quality adapts: if frames get slow, the sea drops resolution and density.
  */
-
-// Global App State
-window.PortfolioApp = {
-  initialized: false,
-  threeEngine: null,
-  animations: null,
-  mouse: { x: 0, y: 0, targetX: 0, targetY: 0 },
-  currentSection: 0,
-  lowPerf: false, // Central flag for low-performance eco-mode
-  inProjectDetail: false,
-  inWelcomeVideo: false,
-};
-
-document.addEventListener("DOMContentLoaded", () => {
-  // 0. Detect device computational capabilities immediately
-  detectDeviceCapability();
-
-  // 1. Initialize interactive custom cursor mapping immediately
-  initCursor();
-
-  // 2. Initialize Three.js WebGL Engine immediately so the loading core starts swirling instantly
-  if (typeof initThreeEngine === "function") {
-    window.PortfolioApp.threeEngine = initThreeEngine();
-  }
-
-  // 3. Start preloader simulation
-  initPreloader();
-});
-
-/**
- * PRELOADER & INITIALIZATION SEQUENCE
- */
-function initPreloader() {
-  const loaderPercent = document.getElementById("loader-percent");
-  const preloader = document.getElementById("preloader");
-  const scrollContainer = document.getElementById("scroll-container");
-
-  // Lock scrolling on startup so the user cannot scroll during loading or cinematic entry
-  if (scrollContainer) {
-    scrollContainer.classList.add("no-scroll");
-  }
-
-  let progress = 0;
-  const duration = 600; // Snappy 600ms linear loader simulation for an ultra-fast loading experience
-  const intervalTime = 20;
-  const step = 100 / (duration / intervalTime);
-
-  const loadingInterval = setInterval(() => {
-    progress += step; // Perfectly linear accumulation for a constant, smooth loading rate
-
-    // Feed the linear loading progress to the WebGL particle reactor (makes it grow dynamically!)
-    if (
-      window.PortfolioApp.threeEngine &&
-      window.PortfolioApp.threeEngine.uniforms
-    ) {
-      window.PortfolioApp.threeEngine.uniforms.uLoadProgress.value = Math.min(
-        progress / 100,
-        1.0,
-      );
-    }
-
-    if (progress >= 100) {
-      progress = 100;
-      clearInterval(loadingInterval);
-
-      // Trigger remaining core system initializations (ScrollTrigger, tilts, etc.)
-      initSystem();
-
-      // Orchestrate the direct and clean cinematic WebGL explosion!
-      if (
-        window.PortfolioApp.threeEngine &&
-        window.PortfolioApp.threeEngine.uniforms
-      ) {
-        const tlExplode = gsap.timeline();
-
-        // Direct explosion dispersion (sprays particles out to base field layout over 0.8s)
-        tlExplode.to(window.PortfolioApp.threeEngine.uniforms.uLoader, {
-          value: 0.0,
-          duration: 0.8,
-          ease: "power3.out",
-        });
-
-        // Immediately hide preloader overlay exactly when the explosion begins!
-        tlExplode.add(() => {
-          preloader.classList.add("fade-out");
-        }, 0);
-
-        // Trigger entry animations (reveal headers, titles, actions, scroll indicators) immediately as the explosion bursts!
-        tlExplode.add(() => {
-          if (window.PortfolioApp.animations) {
-            window.PortfolioApp.animations.triggerHeroEntry();
-          }
-
-          // Start monitoring real-time frame rates to protect low-end devices
-          startFPSMonitor();
-
-          // Unlock scrolling 500ms later (when the hero text entry animation is complete!)
-          setTimeout(() => {
-            if (scrollContainer) {
-              scrollContainer.classList.remove("no-scroll");
-            }
-          }, 500);
-        }, 0.1);
-      } else {
-        // Fallback fade out if Three.js is not active
-        preloader.classList.add("fade-out");
-        if (window.PortfolioApp.animations) {
-          window.PortfolioApp.animations.triggerHeroEntry();
-        }
-        startFPSMonitor();
-        if (scrollContainer) {
-          scrollContainer.classList.remove("no-scroll");
-        }
-      }
-    }
-
-    const displayPercent = Math.min(Math.floor(progress), 100);
-    if (loaderPercent) {
-      loaderPercent.textContent = `${displayPercent.toString().padStart(2, "0")}%`;
-    }
-  }, intervalTime);
-}
-
-/**
- * CORE INITIALIZATION
- */
-function initSystem() {
-  // Guard against double initialization (e.g. loader completing more than once),
-  // which would create duplicate engines and conflicting ScrollTriggers.
-  if (window.PortfolioApp.initialized) return;
-  window.PortfolioApp.initialized = true;
-
-  // 3. Initialize GSAP Timelines and scroll trigger interactions (animations.js)
-  if (typeof initAnimations === "function") {
-    window.PortfolioApp.animations = initAnimations();
-  }
-
-  // 4. Initialize Diagnostic HUD updates
-  initDiagnostics();
-
-  // 5. Initialize 3D kinetic card tilt effects (Active Theory style)
-  init3DCardTilt();
-
-  // 6. Initialize bioluminescent particle stream effect on hover (DNA-to-Card experiences flow)
-  initTimelineCardBioluminescence();
-
-  // 7. Initialize interactive cybernetic decrypt text scramble on hero
-  initInteractiveHeroText();
-
-  // 8. Initialize the immersive 3D coverflow carousel for the Projects section
-  initProjects3DCarousel();
-
-  // 9. Initialize custom scroll snapping & section transitions helper for physical mouse wheels
-  initScrollSnapHandler();
-
-  // 10. Initialize Project Detail scene handlers (exits, video, backdrop options)
-  if (typeof initProjectDetailHandlers === "function") {
-    initProjectDetailHandlers();
-  }
-
-  // 11. Initialize Welcome Video scene handlers
-  if (typeof initWelcomeVideoHandlers === "function") {
-    initWelcomeVideoHandlers();
-  }
-}
-
-/**
- * CUSTOM INTERACTIVE CURSOR
- */
-function initCursor() {
-  const cursor = document.getElementById("custom-cursor");
-  const cursorDot = document.getElementById("custom-cursor-dot");
-
-  // Position interpolation using requestAnimationFrame
-  let currentX = 0,
-    currentY = 0;
-
-  window.addEventListener("mousemove", (e) => {
-    window.PortfolioApp.mouse.targetX = e.clientX;
-    window.PortfolioApp.mouse.targetY = e.clientY;
-
-    // Map mouse coordinates to normalized device coordinates (-1 to +1) for WebGL Shaders
-    window.PortfolioApp.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    window.PortfolioApp.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  });
-
-  function updateCursor() {
-    // Smoothly interpolate the outer cursor ring (elastic follow)
-    currentX += (window.PortfolioApp.mouse.targetX - currentX) * 0.15;
-    currentY += (window.PortfolioApp.mouse.targetY - currentY) * 0.15;
-
-    cursor.style.left = `${currentX}px`;
-    cursor.style.top = `${currentY}px`;
-
-    // The inner dot follows instantly
-    cursorDot.style.left = `${window.PortfolioApp.mouse.targetX}px`;
-    cursorDot.style.top = `${window.PortfolioApp.mouse.targetY}px`;
-
-    requestAnimationFrame(updateCursor);
-  }
-
-  requestAnimationFrame(updateCursor);
-
-  // Highlight hover states for all interactive nodes
-  const hoverElements = document.querySelectorAll(
-    "a, button, .timeline-card, .project-card, textarea",
-  );
-  hoverElements.forEach((elem) => {
-    elem.addEventListener("mouseenter", () => {
-      if (elem.disabled) return;
-      cursor.classList.add("hover");
-      cursorDot.classList.add("hover");
-    });
-
-    elem.addEventListener("mouseleave", () => {
-      cursor.classList.remove("hover");
-      cursorDot.classList.remove("hover");
-    });
-  });
-}
-
-/**
- * DIAGNOSTIC HUD LAYER
- */
-function initDiagnostics() {
-  const hudLatency = document.getElementById("hud-latency");
-  const hudCoords = document.getElementById("hud-coords");
-
-  // 1. Simulate active network node latency updates
-  if (hudLatency) {
-    setInterval(() => {
-      const latency = Math.floor(Math.random() * 8) + 10; // 10ms to 18ms
-      hudLatency.textContent = `${latency}ms`;
-    }, 3000);
-  }
-
-  // 2. Track mouse coordinate updates on HUD
-  if (hudCoords) {
-    window.addEventListener("mousemove", () => {
-      if (window.PortfolioApp && window.PortfolioApp.mouse) {
-        hudCoords.textContent = `X: ${window.PortfolioApp.mouse.x.toFixed(2)} Y: ${window.PortfolioApp.mouse.y.toFixed(2)}`;
-      }
-    });
-  }
-}
-
-/**
- * TERMINAL FORM SUBMISSION SIMULATION (TACTILE HUD FEEDBACK)
- */
-const terminalForm = document.getElementById("terminal-form");
-if (terminalForm) {
-  terminalForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-
-    const submitBtn = document.getElementById("terminal-submit-btn");
-    const submitBtnText = submitBtn.querySelector("span");
-    const output = document.getElementById("terminal-output");
-
-    // 1. Rate Limiting Check (Thematic Quantum Cooldown)
-    const COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown
-    const lastSubmit = localStorage.getItem("quantum_transmission_cooldown");
-    if (lastSubmit) {
-      const timePassed = Date.now() - parseInt(lastSubmit, 10);
-      if (timePassed < COOLDOWN_MS) {
-        const remainingSecs = Math.ceil((COOLDOWN_MS - timePassed) / 1000);
-        output.innerHTML = `<span class="text-pink">SYSTEM ERROR: TRANSCEPTOR NEURAL SUPERAQUECIDO!</span><br><span class="text-muted">Aguarde o resfriamento dos servidores quânticos (${remainingSecs}s) para evitar sobrecarga de coordenadas.</span>`;
-        return;
-      }
-    }
-
-    const nameVal = document.getElementById("form-name").value;
-    const emailVal = document.getElementById("form-email").value;
-    const messageVal = document.getElementById("form-message").value;
-    const honeyVal = document.getElementById("form-honey").value;
-
-    submitBtn.disabled = true;
-    if (submitBtnText) submitBtnText.textContent = "TRANSMITINDO DADOS...";
-    const cursor = document.getElementById("custom-cursor");
-    const cursorDot = document.getElementById("custom-cursor-dot");
-    if (cursor) cursor.classList.remove("hover"); // remove active hover since button is disabled
-    if (cursorDot) cursorDot.classList.remove("hover");
-
-    // 2. Honeypot check (traps spam bots filling invisible fields)
-    if (honeyVal) {
-      console.warn("SYSTEM: Spam bot detected and neutralized.");
-      output.innerHTML = `<span class="text-pink">SYSTEM: COMPILANDO PACOTE DE TRANSMISSÃO...</span>`;
-      setTimeout(() => {
-        output.innerHTML += `<br><span class="text-purple">SYSTEM: APLICANDO CRIPTOGRAFIA NEURAL QUANTICA...</span>`;
-        setTimeout(() => {
-          output.innerHTML += `<br><span class="text-cyan">SYSTEM: DISPARANDO PACOTE DE DADOS PARA LEONARDO DE OLIVEIRA!</span>`;
-          setTimeout(() => {
-            output.innerHTML = `<span class="text-cyan">TRANSMISSÃO CONCLUÍDA COM SUCESSO!</span><br><span class="text-muted">Obrigado, ${nameVal}. Sua mensagem foi enviada ao terminal do Léo.</span>`;
-            terminalForm.reset();
-            submitBtn.disabled = false;
-            if (submitBtnText)
-              submitBtnText.textContent = "EXECUTAR TRANSMISSÃO";
-          }, 1000);
-        }, 1000);
-      }, 1000);
-      return;
-    }
-
-    output.innerHTML = `<span class="text-pink">SYSTEM: COMPILANDO PACOTE DE TRANSMISSÃO...</span>`;
-
-    // Simulates connection handshake, packaging, and digital dispatch
-    setTimeout(() => {
-      output.innerHTML += `<br><span class="text-purple">SYSTEM: APLICANDO CRIPTOGRAFIA NEURAL QUANTICA...</span>`;
-
-      setTimeout(() => {
-        output.innerHTML += `<br><span class="text-cyan">SYSTEM: DISPARANDO PACOTE DE DADOS PARA LEONARDO DE OLIVEIRA!</span>`;
-
-        // Fire the neural transmission: shockwave across the net + packet flying out
-        if (
-          window.PortfolioApp.threeEngine &&
-          typeof window.PortfolioApp.threeEngine.fireTransmission === "function"
-        ) {
-          window.PortfolioApp.threeEngine.fireTransmission();
-        }
-
-        // Dispatch the real email using FormSubmit AJAX API
-        fetch("https://formsubmit.co/ajax/leonardooliveira.sl@gmail.com", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            Nome: nameVal,
-            Email: emailVal,
-            Mensagem: messageVal,
-            _captcha: "false", // prevents AJAX flow breakage with captcha redirects
-            _honey: "", // FormSubmit native honeypot confirmation
-          }),
-        })
-          .then((response) => {
-            if (!response.ok) throw new Error("Falha no servidor FormSubmit");
-            return response.json();
-          })
-          .then((data) => {
-            // Set cooldown timestamp inside localStorage
-            localStorage.setItem(
-              "quantum_transmission_cooldown",
-              Date.now().toString(),
-            );
-
-            setTimeout(() => {
-              output.innerHTML = `<span class="text-cyan">TRANSMISSÃO CONCLUÍDA COM SUCESSO!</span><br><span class="text-muted">Obrigado, ${nameVal}. Sua mensagem foi enviada ao terminal do Léo.</span>`;
-              terminalForm.reset();
-              submitBtn.disabled = false;
-              if (submitBtnText)
-                submitBtnText.textContent = "EXECUTAR TRANSMISSÃO";
-            }, 1000);
-          })
-          .catch((error) => {
-            console.error("Erro no envio:", error);
-            setTimeout(() => {
-              output.innerHTML = `<span class="text-pink">FALHA NA TRANSMISSÃO QUANTICA!</span><br><span class="text-muted">Erro ao rotear pacote de dados. Por favor, verifique sua conexão e tente novamente.</span>`;
-              submitBtn.disabled = false;
-              if (submitBtnText)
-                submitBtnText.textContent = "EXECUTAR TRANSMISSÃO";
-            }, 1000);
-          });
-      }, 1000);
-    }, 1000);
-  });
-}
-
-/**
- * 3D KINETIC TILT EFFECT ON CARDS (ACTIVE THEORY STYLE)
- * The project cards now live inside a 3D coverflow; tilt is restricted to the
- * active (centered) card so the side cards keep their coverflow rotation intact.
- */
-function init3DCardTilt() {
-  const cards = document.querySelectorAll(".timeline-card, .project-card");
-
-  cards.forEach((card) => {
-    const projectContainer = card.closest(".project-card-container");
-
-    card.addEventListener("mousemove", (e) => {
-      const rect = card.getBoundingClientRect();
-
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      const xc = rect.width / 2;
-      const yc = rect.height / 2;
-      const dx = (x - xc) / xc;
-      const dy = (y - yc) / yc;
-
-      const angleY = dx * 12;
-      const angleX = -dy * 12;
-
-      card.style.transform = `perspective(1000px) rotateX(${angleX}deg) rotateY(${angleY}deg) translateZ(10px)`;
-    });
-
-    card.addEventListener("mouseleave", () => {
-      card.style.transform =
-        "perspective(1000px) rotateX(0deg) rotateY(0deg) translateZ(0px)";
-    });
-  });
-}
-
-/**
- * 3D COVERFLOW PROJECT CAROUSEL
- * Wraps the four project cards in an interactive 3D stage:
- * - The active card sits centered, frontal and crisp.
- * - Neighbors tilt back in perspective, fading & shrinking with distance.
- * - Navigable by arrows, dots, click-on-side-card, keyboard ←/→, drag & swipe.
- */
-function initProjects3DCarousel() {
-  const stage = document.getElementById("projects-stage");
-  const track = document.getElementById("projects-carousel");
-  const section = document.getElementById("projects");
-  if (!stage || !track || !section) return;
-
-  const cards = Array.from(track.querySelectorAll(".project-card-container"));
-  if (cards.length === 0) return;
-
-  const n = cards.length;
-  const labels = cards.map(
-    (c) =>
-      c.querySelector(".project-title")?.textContent.trim().toUpperCase() || "",
-  );
-
-  // HUD elements
-  const fillEl = document.getElementById("projects-scroll-fill");
-  const indexEl = document.getElementById("projects-scroll-index");
-  const nameEl = document.getElementById("projects-scroll-name");
-
-  // Bail out on mobile — CSS flattens the stage into a plain vertical column.
-  const isDesktop = () => window.matchMedia("(min-width: 1025px)").matches;
-
-  // Continuous coverflow placement for a signed, fractional distance-from-center.
-  // rel = 0 → centered/frontal; |rel| grows → pushed sideways, back in Z, rotated
-  // toward the camera, shrunk, dimmed & blurred. Everything is a smooth function
-  // of rel so the whole wheel scrubs fluidly with scroll (no snapping).
-  function place(rel) {
-    const abs = Math.abs(rel);
-    const sign = rel < 0 ? -1 : rel > 0 ? 1 : 0;
-
-    // Increased lateral spacing (280px) and depth separation (250px) combined with
-    // a premium, gentle tilt (22deg) to completely prevent 3D clipping/intersection.
-    const x = sign * Math.min(abs, 2.4) * 280; // lateral fan-out
-    const z = -Math.min(abs, 3) * 250 + 460; // depth shift
-    const ry = -sign * Math.min(abs, 1.5) * 22; // coverflow tilt
-    const scale = Math.max(0.48, 1 - Math.min(abs, 2.5) * 0.17);
-    const brightness = Math.max(0.35, 1.0 - abs * 0.28); // slightly darken side cards
-    const blur = Math.min(3.5, abs * 0.9);
-    return {
-      x,
-      z,
-      ry,
-      scale,
-      brightness,
-      blur,
-      zi: Math.round(1000 - abs * 100),
-    };
-  }
-
-  // Map a scroll progress (0→1) to the carousel state and paint it.
-  function render(progress) {
-    const activeFloat = progress * (n - 1); // 0 = AI-DLC … (n-1) = last card
-
-    cards.forEach((card, i) => {
-      const rel = i - activeFloat;
-      const p = place(rel);
-      card.style.transform = `translate3d(${p.x.toFixed(1)}px, 0, ${p.z.toFixed(1)}px) rotateY(${p.ry.toFixed(1)}deg) scale(${p.scale.toFixed(3)})`;
-      card.style.opacity = "1"; // Fully opaque cards to completely block background particles
-
-      // Build dynamic high-performance GPU filter combining brightness and blur
-      let filterStr = `brightness(${p.brightness.toFixed(3)})`;
-      if (p.blur > 0.05) {
-        filterStr += ` blur(${p.blur.toFixed(2)}px)`;
-      }
-      card.style.filter = filterStr;
-      card.style.zIndex = String(p.zi);
-
-      // The card nearest the center gets the active glow + clickable link.
-      const isActive = Math.abs(rel) < 0.5;
-      card.classList.toggle("is-active", isActive);
-      card.setAttribute("aria-hidden", isActive ? "false" : "true");
-    });
-    // HUD: progress fill, current index, current project name.
-    const activeIdx = Math.round(activeFloat);
-    if (fillEl) fillEl.style.width = (progress * 100).toFixed(1) + "%";
-    if (indexEl) indexEl.textContent = String(activeIdx + 1).padStart(2, "0");
-    if (nameEl && labels[activeIdx]) nameEl.textContent = labels[activeIdx];
-  }
-
-  const scroller = document.getElementById("scroll-container");
-
-  const st = ScrollTrigger.create({
-    trigger: section,
-    start: "top top",
-    end: "bottom bottom",
-    scrub: 0.1, // Near-instant tracking (reduced to 0.1s for ultimate responsiveness)
-    onUpdate: (self) => {
-      if (!isDesktop()) return;
-      render(self.progress);
-
-      // Transmit signed scroll velocity to the background particles for wind-sway stretch.
-      const engine = window.PortfolioApp.threeEngine;
-      if (engine && typeof engine.setScrollVelocity === "function") {
-        const v = self.getVelocity();
-        engine.setScrollVelocity(v / 1000); // signed → direction (+/-)
-      }
+(function () {
+  'use strict';
+
+  const doc = document.documentElement;
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const TAU = Math.PI * 2;
+
+  const mqReduce = matchMedia('(prefers-reduced-motion: reduce)');
+  const mqDesktop = matchMedia('(min-width: 1025px)');
+  const reduced = mqReduce.matches;
+
+  const store = {
+    get(key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
     },
-  });
-
-  // The exact scrollTop that parks card `idx` dead-center.
-  const scrollTopForIndex = (idx) => {
-    const frac = n > 1 ? idx / (n - 1) : 0;
-    return st.start + frac * (st.end - st.start);
+    set(key, value) {
+      try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+    },
   };
 
-  // Click a card: on desktop, if active, open detail scene. If side card, snap/scroll to center.
-  // On mobile, clicking any card opens its detail scene immediately.
-  cards.forEach((card, i) => {
-    card.addEventListener("click", (e) => {
-      if (isDesktop()) {
-        if (card.classList.contains("is-active")) {
-          e.preventDefault();
-          e.stopPropagation();
-          const projectKey = card.getAttribute("data-project");
-          openProjectDetail(projectKey, card);
-          return;
-        }
-        e.preventDefault();
-        const targetTop = scrollTopForIndex(i);
-        scroller.scrollTo({
-          top: targetTop,
-          behavior: "smooth",
-        });
-      } else {
-        e.preventDefault();
-        e.stopPropagation();
-        const projectKey = card.getAttribute("data-project");
-        openProjectDetail(projectKey, card);
-      }
-    });
-  });
-
-  // Initial paint, and recompute trigger positions now that the section is tall.
-  render(st.progress || 0);
-  ScrollTrigger.refresh();
-  window.addEventListener("resize", () => {
-    if (isDesktop()) render(st.progress || 0);
-  });
-}
-
-/**
- * BIOLUMINESCENT HOVER TIDE
- * On hover, fine motes drift off the rotating DNA spine and gather into a soft,
- * slowly-breathing halo around the card (and ebb back to the spine on leave).
- * The motion lives entirely in the WebGL engine; here we just notify it which
- * card is active so the tide knows where to pool.
- */
-function initTimelineCardBioluminescence() {
-  const timelineCards = document.querySelectorAll(
-    ".timeline-card-wrapper .timeline-card",
-  );
-
-  timelineCards.forEach((card, index) => {
-    card.addEventListener("mouseenter", () => {
-      // 1. Notify the WebGL shader system
-      if (
-        window.PortfolioApp.threeEngine &&
-        typeof window.PortfolioApp.threeEngine.setHoveredCard === "function"
-      ) {
-        window.PortfolioApp.threeEngine.setHoveredCard(index);
-      }
-    });
-
-    card.addEventListener("mouseleave", () => {
-      // 1. Notify the WebGL shader system
-      if (
-        window.PortfolioApp.threeEngine &&
-        typeof window.PortfolioApp.threeEngine.setHoveredCard === "function"
-      ) {
-        window.PortfolioApp.threeEngine.setHoveredCard(null);
-      }
-    });
-  });
-}
-
-/**
- * CUSTOM SCROLL SNAPPING & SECTION TRANSITIONS
- * Specifically addresses physical mouse wheel scrolls to prevent "stucking"
- * between sections, while keeping trackpad smooth inertia native scroll.
- */
-function initScrollSnapHandler() {
-  const scrollContainer = document.getElementById("scroll-container");
-  if (!scrollContainer) return;
-
-  let isTransitioning = false;
-
-  // Cross-browser helper to get absolute scroll top of a section relative to the container
-  function getSectionScrollTop(sec) {
-    return (
-      sec.getBoundingClientRect().top -
-      scrollContainer.getBoundingClientRect().top +
-      scrollContainer.scrollTop
-    );
-  }
-
-  const isDesktop = () => window.matchMedia("(min-width: 1025px)").matches;
-
-  scrollContainer.addEventListener(
-    "wheel",
-    (e) => {
-      if (!isDesktop()) return;
-
-      // If we are currently transitioning, block any further wheel inputs to prevent jitter
-      if (isTransitioning) {
-        e.preventDefault();
-        return;
-      }
-
-      // Heuristic to detect a physical mouse wheel notch:
-      // Safari and Chrome might emit lower deltaY for gentle mouse scrolls, so we use a lower threshold of >= 10
-      const isPhysicalWheel = Math.abs(e.deltaY) >= 10 || e.deltaMode !== 0;
-      if (!isPhysicalWheel) return; // Keep trackpad scrolling 100% native
-
-      const scrollTop = scrollContainer.scrollTop;
-      const containerHeight = scrollContainer.clientHeight;
-      const maxScroll = scrollContainer.scrollHeight - containerHeight;
-
-      // Clamp scrollTop to prevent Safari rubber-banding (negative or beyond maxScroll values) from breaking calculations
-      const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScroll));
-
-      const sections = Array.from(document.querySelectorAll(".section"));
-      if (sections.length === 0) return;
-
-      // Detect current section index using getBoundingClientRect positions with clamped scroll top
-      let currentSecIdx = 0;
-      for (let i = 0; i < sections.length; i++) {
-        const sec = sections[i];
-        const secTop = getSectionScrollTop(sec);
-        const secHeight = sec.offsetHeight;
-
-        if (
-          clampedScrollTop >= secTop - 10 &&
-          clampedScrollTop < secTop + secHeight - 10
-        ) {
-          currentSecIdx = i;
-          break;
-        }
-      }
-
-      const currentSec = sections[currentSecIdx];
-      const secTop = getSectionScrollTop(currentSec);
-      const secHeight = currentSec.offsetHeight;
-      const isTall = secHeight > containerHeight + 50;
-      const scrollDirection = e.deltaY > 0 ? "down" : "up";
-
-      if (!isTall) {
-        // Shorter 100vh sections (Hero and Contact)
-        if (scrollDirection === "down" && currentSecIdx < sections.length - 1) {
-          e.preventDefault();
-          smoothScrollToSection(currentSecIdx + 1, "down");
-        } else if (scrollDirection === "up" && currentSecIdx > 0) {
-          e.preventDefault();
-          smoothScrollToSection(currentSecIdx - 1, "up");
-        }
-      } else {
-        // Tall sections (Experience timeline and Projects coverflow)
-        const isAtTop = clampedScrollTop <= secTop + 5;
-        const isAtBottom =
-          clampedScrollTop >= secTop + secHeight - containerHeight - 5;
-
-        if (scrollDirection === "up" && isAtTop && currentSecIdx > 0) {
-          e.preventDefault();
-          smoothScrollToSection(currentSecIdx - 1, "up");
-        } else if (
-          scrollDirection === "down" &&
-          isAtBottom &&
-          currentSecIdx < sections.length - 1
-        ) {
-          e.preventDefault();
-          smoothScrollToSection(currentSecIdx + 1, "down");
-        }
-        // If in the middle of a tall section, do nothing (allow natural scrub scrolling)
-      }
+  // -------------------------------------------------------------------------
+  // Content for the project scenes
+  // -------------------------------------------------------------------------
+  const PROJECTS = {
+    'ai-dlc': {
+      title: 'Adoção AI-DLC',
+      tag: 'AI-DLC // FRAMEWORK',
+      desc: 'Condução da iniciativa de adoção do AI Development Life Cycle na CWI, estruturando agentes de IA sob human oversight, spec-driven development e ciclos de entrega que aceleram o time de desenvolvimento sem remover a decisão e o senso crítico humano.',
+      tech: ['AI Agents', 'Spec-Driven Dev', 'ADRs', 'LLMs', 'Mentoring'],
+      metrics: [
+        'Aumento de até 40% na velocidade de especificação e desenvolvimento',
+        'Criação de esteiras e pipelines com validação semiautônoma',
+        'Adoção de padrões de documentação contínua baseados em spec',
+      ],
+      video: 'assets/ai-dlc.mp4',
+      poster: 'assets/posters/ai-dlc-960.webp',
     },
-    { passive: false },
-  );
+    'banco-abc': {
+      title: 'Modularização Banco ABC',
+      tag: 'MICROFRONTENDS // ANGULAR',
+      desc: 'Liderança técnica na transição da plataforma corporativa de Internet Banking para uma arquitetura baseada em Microfrontends com Angular. Foco em modularização, independência de deploy e alta performance.',
+      tech: ['Angular', 'Webpack Module Federation', 'Microfrontends', 'RxJS', 'TypeScript'],
+      metrics: [
+        'Independência completa de deploy para mais de 8 sub-times',
+        'Redução do tempo de carregamento inicial (LCP) em 35%',
+        'Implementação de Design System unificado e automatizado',
+      ],
+      video: 'assets/abc.mp4',
+      poster: 'assets/posters/abc-960.webp',
+    },
+    ciee: {
+      title: 'Cobrança CIEE',
+      tag: 'FINANCIAL ENGINES // SPRING',
+      desc: 'Desenvolvimento e projeto de uma engine financeira de alta resiliência e processamento em lote para conciliação bancária, faturamento e emissão de cobranças automáticas para o CIEE.',
+      tech: ['Java', 'Spring Boot', 'Spring Batch', 'React', 'Docker'],
+      metrics: [
+        'Processamento resiliente de mais de 500 mil registros diários',
+        'Redução de falhas de integração com bancos para menos de 0.01%',
+        'Interface de administração em tempo real desenvolvida em React',
+      ],
+      video: 'assets/ciee.mp4',
+      poster: 'assets/posters/ciee-960.webp',
+    },
+    'app-ouze': {
+      title: 'Reescrita App Ouze',
+      tag: 'MOBILE ARCHITECTURE // FLUTTER',
+      desc: 'Reengenharia completa do aplicativo de serviços financeiros Ouze utilizando Flutter, substituindo a versão legada e entregando uma interface fluida com animações premium e arquitetura modular de alta testabilidade.',
+      tech: ['Flutter', 'Dart', 'Clean Architecture', 'CI/CD Mobile'],
+      metrics: [
+        'Aumento da nota do aplicativo nas lojas (App Store e Play Store)',
+        'Base de código unificada reduzindo custos de manutenção em 45%',
+        'Implementação de criptografia local ponta a ponta',
+      ],
+      video: 'assets/ouze.mp4',
+      poster: 'assets/posters/ouze-960.webp',
+    },
+  };
 
-  function smoothScrollToSection(index, direction = "down") {
-    const sections = document.querySelectorAll(".section");
-    if (index < 0 || index >= sections.length) return;
+  // -------------------------------------------------------------------------
+  // Elements and layout cache (measured on resize only, never per frame)
+  // -------------------------------------------------------------------------
+  const el = {
+    canvas: $('#abyss'),
+    story: $('#historia'),
+    work: $('#projetos'),
+    contact: $('#contato'),
+    items: $$('.tl-item'),
+    cards: $$('.tl-card'),
+    rail: $$('.rail-year'),
+    railBox: $('#story-rail'),
+    depth: $('#depth-line'),
+    deck: $('#deck'),
+    projects: $$('.project'),
+    deckIndex: $('#deck-index'),
+    deckName: $('#deck-name'),
+    deckFill: $('#deck-fill'),
+    navLinks: $$('.nav-link'),
+    welcome: $('#welcome-dialog'),
+    welcomeVideo: $('#welcome-video'),
+    detail: $('#project-dialog'),
+    detailVideo: $('#detail-video'),
+  };
+  const projectNames = el.projects.map((p) => $('.project-title', p).textContent.trim());
 
-    const targetSec = sections[index];
-    let targetTop = getSectionScrollTop(targetSec);
+  const layout = { vw: 0, vh: 0, desktop: true, story: { top: 0, h: 1 }, work: { top: 0, h: 1 }, contact: { top: 0, h: 1 } };
 
-    // If we are moving UP (backwards) into a section, we want to land at its bottom
-    // so that the scroll transitions naturally and smoothly without huge EOL-jumps!
-    const containerHeight = scrollContainer.clientHeight;
-    const targetHeight = targetSec.offsetHeight;
-
-    if (direction === "up") {
-      targetTop = targetTop + targetHeight - containerHeight;
+  function measure() {
+    const sy = window.scrollY;
+    const box = (node) => {
+      const r = node.getBoundingClientRect();
+      return { top: r.top + sy, h: r.height };
+    };
+    layout.vw = window.innerWidth;
+    layout.vh = window.innerHeight;
+    layout.desktop = mqDesktop.matches;
+    layout.story = box(el.story);
+    layout.work = box(el.work);
+    layout.contact = box(el.contact);
+    painted.story = painted.deck = painted.year = -1;
+    if (el.depth) {
+      const max = Math.max(1, doc.scrollHeight - layout.vh);
+      el.depth.style.setProperty('--t1', (layout.story.top / max).toFixed(4));
+      el.depth.style.setProperty('--t2', (layout.work.top / max).toFixed(4));
+      el.depth.style.setProperty('--t3', (layout.contact.top / max).toFixed(4));
     }
+    if (!layout.desktop) clearInlineStyles();
+    wake();
+  }
 
-    // If we are already at the target scroll position (or extremely close), do nothing
-    if (Math.abs(scrollContainer.scrollTop - targetTop) < 3) {
-      isTransitioning = false;
-      return;
-    }
-
-    isTransitioning = true;
-
-    // Use custom object tweening to animate scrollTop directly:
-    // 100% cross-browser compatible, ultra-smooth, bypasses Safari's native smooth-scroll bugs.
-    // Uses "power2.inOut" to eliminate the abrupt start-jolt ("pularem") and make transitions
-    // feel exceptionally luxurious and fluid, matching high-end creative agency aesthetics!
-    const scrollObj = { y: scrollContainer.scrollTop };
-    gsap.to(scrollObj, {
-      y: targetTop,
-      duration: 1.0,
-      ease: "power2.inOut",
-      overwrite: "auto",
-      onUpdate: () => {
-        scrollContainer.scrollTop = scrollObj.y;
-      },
-      onComplete: () => {
-        isTransitioning = false;
-      },
+  function clearInlineStyles() {
+    el.items.concat(el.projects).forEach((node) => {
+      node.style.transform = '';
+      node.style.opacity = '';
+      node.style.visibility = '';
+      node.style.pointerEvents = '';
+      node.style.zIndex = '';
     });
-  }
-}
-
-/**
- * TEXT SHUFFLE / SCRAMBLER CLASS FOR CYBERNETIC INTEGRITY
- */
-class TextScrambler {
-  constructor(el) {
-    this.el = el;
-    this.chars = "!<>-_\\/[]{}—=+*^?#________";
-    this.update = this.update.bind(this);
-  }
-  setText(newText) {
-    const oldText = this.el.innerText;
-    const length = Math.max(oldText.length, newText.length);
-    const promise = new Promise((resolve) => (this.resolve = resolve));
-    this.queue = [];
-    for (let i = 0; i < length; i++) {
-      const from = oldText[i] || "";
-      const to = newText[i] || "";
-      const start = Math.floor(Math.random() * 20);
-      const end = start + Math.floor(Math.random() * 25);
-      this.queue.push({ from, to, start, end });
-    }
-    cancelAnimationFrame(this.frameId);
-    this.frame = 0;
-    this.update();
-    return promise;
-  }
-  update() {
-    let output = "";
-    let complete = 0;
-    for (let i = 0, n = this.queue.length; i < n; i++) {
-      let { from, to, start, end, char } = this.queue[i];
-      if (this.frame >= end) {
-        complete++;
-        output += to;
-      } else if (this.frame >= start) {
-        if (!char || Math.random() < 0.28) {
-          char = this.randomChar();
-          this.queue[i].char = char;
-        }
-        output += `<span class="scramble-char text-cyan">${char}</span>`;
-      } else {
-        output += from;
-      }
-    }
-    this.el.innerHTML = output;
-    if (complete === this.queue.length) {
-      this.resolve();
-    } else {
-      this.frameId = requestAnimationFrame(this.update);
-      this.frame++;
-    }
-  }
-  randomChar() {
-    return this.chars[Math.floor(Math.random() * this.chars.length)];
-  }
-}
-
-function initInteractiveHeroText() {
-  const revealTexts = document.querySelectorAll(".hero-title .reveal-text");
-  revealTexts.forEach((el) => {
-    const scrambler = new TextScrambler(el);
-    const originalText = el.getAttribute("data-text") || el.innerText;
-
-    // Initial decrypt animation on page load
-    setTimeout(
-      () => {
-        scrambler.setText(originalText);
-      },
-      1200 + Math.random() * 400,
-    );
-
-    // Interactive decryption on mouse hover!
-    el.addEventListener("mouseenter", () => {
-      scrambler.setText(originalText);
-    });
-  });
-}
-
-/**
- * PERFORMANCE SCALING ENGINE (ECO / LOW-PERFORMANCE MODE)
- * Dynamically adjusts styling and WebGL settings to match the user's hardware.
- */
-function detectDeviceCapability() {
-  let reason = "";
-
-  // 1. Check logical CPU cores (e.g. dual-core processors are flagged as low-perf)
-  if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) {
-    reason = `CPU_CORES_${navigator.hardwareConcurrency}`;
+    markActiveProject();
   }
 
-  // 2. Check system RAM (e.g. less than 4GB RAM)
-  if (navigator.deviceMemory && navigator.deviceMemory < 4) {
-    reason = `RAM_${navigator.deviceMemory}GB`;
-  }
+  // -------------------------------------------------------------------------
+  // State
+  // -------------------------------------------------------------------------
+  const s = {
+    scrollY: window.scrollY,
+    storyP: 0,
+    workP: 0,
+    morph: 0,
+    detail: false,
+    welcome: false,
+    hover: null,
+    lastInput: performance.now(),
+  };
+  const painted = { story: -1, gate: -1, deck: -1, year: -1 };
 
-  // 3. WebGL GPU vendor/renderer inspection (identifies weak integrated or software GPUs)
-  if (!reason) {
+  // -------------------------------------------------------------------------
+  // The sea
+  // -------------------------------------------------------------------------
+  let engine = null;
+  let ladder = [];
+  let level = 0;
+
+  function startEngine() {
+    if (!window.Abyss || !el.canvas) return;
+    const dprMax = window.devicePixelRatio || 1;
+    const phone = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+    const weak = (navigator.hardwareConcurrency || 8) < 4 || (navigator.deviceMemory || 8) < 4;
+    let base = phone ? { count: 3600, dpr: Math.min(dprMax, 1.5) } : weak ? { count: 4200, dpr: Math.min(dprMax, 1.25) } : { count: 6000, dpr: Math.min(dprMax, 1.5) };
+
     try {
-      const canvas = document.createElement("canvas");
-      const gl =
-        canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
-      if (gl) {
-        const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
-        if (debugInfo) {
-          const renderer =
-            gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "";
-          // Identify weak / basic integrated graphics or virtual software rasterizers
-          const isWeakGPU =
-            /Intel|HD Graphics|Iris|UHD|Microsoft Basic Render Driver|SwiftShader|llvmpipe/i.test(
-              renderer,
-            );
-          if (isWeakGPU) {
-            reason = "INTEGRATED_GPU";
-          }
-        }
-      } else {
-        reason = "NO_WEBGL";
-      }
-    } catch (e) {
-      reason = "WEBGL_ERR";
+      engine = window.Abyss.create(el.canvas, { reducedMotion: reduced, count: base.count, dpr: base.dpr });
+    } catch (err) {
+      console.error(err);
+      engine = null;
     }
-  }
-
-  // If a bottleneck is detected, bootstrap the site in Eco / Low-Performance Mode
-  if (reason) {
-    enableLowPerfMode(reason);
-  }
-}
-
-function enableLowPerfMode(reason) {
-  if (window.PortfolioApp.lowPerf) return; // already active
-
-  window.PortfolioApp.lowPerf = true;
-  document.body.classList.add("low-perf");
-
-  // Update WebGL renderer pixel ratio dynamically if already initialized
-  const engine = window.PortfolioApp.threeEngine;
-  if (engine && engine.renderer) {
-    engine.renderer.setPixelRatio(1.0);
-    if (engine.uniforms && engine.uniforms.uPixelRatio) {
-      engine.uniforms.uPixelRatio.value = 1.0;
-    }
-    console.log(
-      "[Performance Engine] Dynamic WebGL pixel ratio downgraded to 1.0x.",
-    );
-  }
-
-  // Update the glowing status text on the header to match the cybernetic diagnostic theme
-  const statusText = document.querySelector(".status-text");
-  if (statusText) {
-    statusText.innerHTML = `SYS_ONLINE: ECO_MODE_ACTIVE <span style="font-size:0.55rem;color:var(--color-cyan);opacity:0.75;letter-spacing:0.5px;">[${reason}]</span>`;
-  }
-
-  // Add CSS transition smoothing to prevent layout snap
-  document.body.style.transition =
-    "background-color 0.8s ease, backdrop-filter 0.8s ease";
-
-  console.warn(
-    `[Performance Engine] Eco / Low-Performance Mode enabled. Reason: ${reason}`,
-  );
-}
-
-function startFPSMonitor() {
-  if (window.PortfolioApp.lowPerf) return; // already in eco mode
-
-  let frameCount = 0;
-  let startTime = performance.now();
-  const monitorStartTime = performance.now();
-  const MONITOR_DURATION = 6500; // monitor during first 6.5s of intense visuals
-  let lastTime = performance.now();
-
-  function loop() {
-    frameCount++;
-    const now = performance.now();
-    lastTime = now;
-
-    // Stop the monitor loop once the window is past target duration
-    if (now - monitorStartTime > MONITOR_DURATION) {
-      const totalDuration = (now - monitorStartTime) / 1000;
-      const avgFPS = frameCount / totalDuration;
-      console.log(
-        `[Performance Engine] Finished FPS monitoring. Avg FPS: ${avgFPS.toFixed(1)}`,
-      );
+    if (!engine) {
+      doc.classList.add('no-webgl');
+      el.canvas.hidden = true;
       return;
     }
 
-    // Check frame rate every 1.5 seconds
-    if (now - startTime >= 1500) {
-      const elapsed = (now - startTime) / 1000;
-      const fps = frameCount / elapsed;
+    // Software renderers (no GPU) start at the bottom of the ladder.
+    try {
+      const info = engine.gl.getExtension('WEBGL_debug_renderer_info');
+      const name = info ? String(engine.gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+      if (/swiftshader|llvmpipe|softpipe|basic render/i.test(name)) base = { count: 3000, dpr: Math.min(dprMax, 0.75) };
+    } catch (e) { /* ignore */ }
 
-      console.log(`[Performance Engine] Current FPS: ${fps.toFixed(1)}`);
+    ladder = [
+      base,
+      { count: base.count, dpr: Math.min(base.dpr, 1.25) },
+      { count: Math.round(base.count * 0.8), dpr: Math.min(base.dpr, 1) },
+      { count: Math.round(base.count * 0.65), dpr: Math.min(base.dpr, 0.85) },
+      { count: Math.round(base.count * 0.5), dpr: Math.min(base.dpr, 0.75) },
+    ];
+    level = 0;
+    engine.setQuality(ladder[0]);
+    sizeCanvas();
+    if ('ResizeObserver' in window) new ResizeObserver(sizeCanvas).observe(el.canvas);
+    doc.classList.add('has-webgl');
+    wake();
+  }
 
-      // If the PC drops below 36 FPS, immediately downgrade the visual quality to keep interactions buttery smooth
-      if (fps < 36) {
-        enableLowPerfMode("LOW_FPS");
-        return;
-      }
+  function sizeCanvas() {
+    if (!engine) return;
+    engine.resize(el.canvas.clientWidth || window.innerWidth, el.canvas.clientHeight || window.innerHeight);
+    wake();
+  }
 
-      frameCount = 0;
-      startTime = now;
+  // Frame-time watchdog: step down one rung when frames average slower than ~42 fps.
+  const perf = { sum: 0, n: 0, since: 0, cooldown: 0 };
+  function watchQuality(ms, now) {
+    if (!engine || level >= ladder.length - 1) return;
+    if (ms > 120 || now < perf.cooldown) { perf.sum = perf.n = 0; perf.since = now; return; }
+    perf.sum += ms;
+    perf.n++;
+    if (now - perf.since < 1500) return;
+    const avg = perf.sum / perf.n;
+    perf.sum = perf.n = 0;
+    perf.since = now;
+    if (avg > 24) {
+      level++;
+      engine.setQuality(ladder[level]);
+      perf.cooldown = now + 2000;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // The loop
+  // -------------------------------------------------------------------------
+  let raf = 0;
+  let running = false;
+  let last = 0;
+  let carry = 0;
+  let tick = 0;
+
+  function wake() {
+    if (running || document.hidden) return;
+    running = true;
+    last = 0;
+    raf = requestAnimationFrame(frame);
+  }
+
+  function sleep() {
+    running = false;
+    cancelAnimationFrame(raf);
+  }
+
+  function frame(now) {
+    const ms = last ? now - last : 16.7;
+    last = now;
+    let dt = ms / 1000 + carry;
+    carry = 0;
+
+    // After 20 s without any input the sea drifts at half the frame rate.
+    if (!reduced && now - s.lastInput > 20000 && (tick++ & 1)) {
+      carry = dt;
+      raf = requestAnimationFrame(frame);
+      return;
     }
 
-    requestAnimationFrame(loop);
+    const settling = update(dt);
+    if (engine) {
+      engine.render(dt);
+      watchQuality(ms, now);
+    }
+
+    const keepGoing = engine ? !reduced || engine.busy || settling : settling;
+    if (keepGoing && !document.hidden) {
+      raf = requestAnimationFrame(frame);
+    } else {
+      running = false;
+    }
   }
 
-  requestAnimationFrame(loop);
-}
+  // Everything scroll-driven, computed from cached layout numbers.
+  function update(dt) {
+    const L = layout;
+    const y = s.scrollY;
+    const vh = L.vh;
 
-/**
- * ==========================================================================
- * CINEMATIC PROJECT DETAILS OVERLAY HANDLERS & TRANSITIONS
- * ==========================================================================
- */
+    const storyIn = clamp01((y + vh - L.story.top) / vh);
+    const workIn = clamp01((y + vh - L.work.top) / (vh * 0.5));
+    const contactIn = clamp01((y + vh - L.contact.top) / (vh * 0.5));
+    s.morph = storyIn * (1 - workIn);
+    const matrix = workIn * (1 - contactIn);
 
-const PROJECT_DATA = {
-  "ai-dlc": {
-    title: "Adoção AI-DLC",
-    tag: "AI-DLC // FRAMEWORK",
-    desc: "Condução da iniciativa de adoção do AI Development Life Cycle na CWI, estruturando agentes de IA sob human oversight, spec-driven development e ciclos de entrega que aceleram o time de desenvolvimento sem remover a decisão e o senso crítico humano.",
-    tech: ["AI Agents", "Spec-Driven Dev", "ADRs", "LLMs", "Mentoring"],
-    metrics: [
-      "Aumento de até 40% na velocidade de especificação e desenvolvimento",
-      "Criação de esteiras e pipelines com validação semiautônoma",
-      "Adoção de padrões de documentação contínua baseados em spec",
-    ],
-    video: "assets/ai-dlc.mp4",
-  },
-  "banco-abc": {
-    title: "Modularização Banco ABC",
-    tag: "MICROFRONTENDS // ANGULAR",
-    desc: "Liderança técnica na transição da plataforma corporativa de Internet Banking para uma arquitetura baseada em Microfrontends com Angular. Foco em modularização, independência de deploy e alta performance.",
-    tech: [
-      "Angular",
-      "Webpack Module Federation",
-      "Microfrontends",
-      "RxJS",
-      "TypeScript",
-    ],
-    metrics: [
-      "Independência completa de deploy para mais de 8 sub-times",
-      "Redução do tempo de carregamento inicial (LCP) em 35%",
-      "Implementação de Design System unificado e automatizado",
-    ],
-    video: "assets/abc.mp4",
-  },
-  ciee: {
-    title: "Cobrança CIEE",
-    tag: "FINANCIAL ENGINES // SPRING",
-    desc: "Desenvolvimento e projeto de uma engine financeira de alta resiliência e processamento em lote para conciliação bancária, faturamento e emissão de cobranças automáticas para o CIEE.",
-    tech: ["Java", "Spring Boot", "Spring Batch", "React", "Docker"],
-    metrics: [
-      "Processamento resiliente de mais de 500 mil registros diários",
-      "Redução de falhas de integração com bancos para menos de 0.01%",
-      "Interface de administração em tempo real desenvolvida em React",
-    ],
-    video: "assets/ciee.mp4",
-  },
-  "app-ouze": {
-    title: "Reescrita App Ouze",
-    tag: "MOBILE ARCHITECTURE // FLUTTER",
-    desc: "Reengenharia completa do aplicativo de serviços financeiros Ouze utilizando Flutter, substituindo a versão legada e entregando uma interface fluida com animações premium e arquitetura modular de alta testabilidade.",
-    tech: ["Flutter", "Dart", "Clean Architecture", "CI/CD Mobile"],
-    metrics: [
-      "Aumento da nota do aplicativo nas lojas (App Store e Play Store)",
-      "Base de código unificada reduzindo custos de manutenção em 45%",
-      "Implementação de criptografia local ponta a ponta",
-    ],
-    video: "assets/ouze.mp4",
-  },
-};
-
-function formatTime(secs) {
-  if (isNaN(secs)) return "0:00";
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function openProjectDetail(key, cardElement) {
-  const data = PROJECT_DATA[key];
-  if (!data) return;
-
-  // 1. Lock scrolling on the main page
-  const scroller = document.getElementById("scroll-container");
-  if (scroller) scroller.classList.add("no-scroll");
-
-  // 2. Populate detail overlay elements
-  document.getElementById("detail-title").textContent = data.title;
-  document.getElementById("detail-tags").textContent = data.tag;
-  document.getElementById("detail-desc").textContent = data.desc;
-
-  // Tech tags
-  const techContainer = document.getElementById("detail-tech");
-  techContainer.innerHTML = "";
-  data.tech.forEach((t) => {
-    const span = document.createElement("span");
-    span.className = "tech-tag";
-    span.textContent = t;
-    techContainer.appendChild(span);
-  });
-
-  // Metrics
-  const metricsContainer = document.getElementById("detail-metrics");
-  metricsContainer.innerHTML = "";
-  data.metrics.forEach((m) => {
-    const li = document.createElement("li");
-    li.textContent = m;
-    metricsContainer.appendChild(li);
-  });
-
-  // Video player setup
-  const videoWrapper = document.querySelector(".detail-video-wrapper");
-  if (videoWrapper) {
-    videoWrapper.classList.remove("video-behind");
-  }
-  const video = document.getElementById("detail-video");
-  if (video) {
-    video.pause();
-    video.muted = false; // explicitly unmute so sound plays
-    video.volume = 1.0;
-    video.loop = false; // play once, then stack behind
-    const source = video.querySelector("source");
-    if (source) source.src = data.video;
-    video.load();
-
-    video.ontimeupdate = () => {
-      const timeEl = document.getElementById("video-time");
-      if (timeEl) {
-        const current = formatTime(video.currentTime);
-        const duration = formatTime(video.duration || 0);
-        timeEl.textContent = `${current} / ${duration}`;
-      }
-    };
-
-    video.onended = () => {
-      const vw = document.querySelector(".detail-video-wrapper");
-      if (vw) {
-        vw.classList.add("video-behind");
-      }
-    };
-  }
-
-  // 3. Mark state active in app global state
-  window.PortfolioApp.inProjectDetail = true;
-  document.body.classList.add("detail-active");
-
-  // Local function to perform the visual GSAP transition
-  const revealTimeline = () => {
-    const engine = window.PortfolioApp.threeEngine;
-
-    // GSAP Overlay reveal animation
-    const overlay = document.getElementById("project-detail-scene");
-    overlay.classList.remove("hidden");
-    gsap.set(overlay, { display: "flex", visibility: "visible" });
-
-    const tl = gsap.timeline({
-      onComplete: () => {
-        if (video) {
-          video.play().catch((e) => console.log("Auto-play blocked:", e));
-        }
-      },
-    });
-
-    // Slide carousel container out to the left
-    tl.to(
-      ".projects-container",
-      {
-        x: "-100vw",
-        opacity: 0,
-        duration: 0.48,
-        ease: "none",
-      },
-      0,
-    );
-
-    // Slide overlay details scene in from right (100vw to 0)
-    tl.fromTo(
-      "#project-detail-scene",
-      {
-        x: "100vw",
-        opacity: 0,
-      },
-      {
-        x: "0vw",
-        opacity: 1,
-        duration: 0.48,
-        ease: "none",
-      },
-      0,
-    );
+    const storyT = clamp01((y - L.story.top) / Math.max(1, L.story.h - vh));
+    const workT = clamp01((y - L.work.top) / Math.max(1, L.work.h - vh));
+    const k1 = reduced ? 1 : 1 - Math.exp(-dt * 7);
+    const k2 = reduced ? 1 : 1 - Math.exp(-dt * 16);
+    s.storyP += (storyT - s.storyP) * k1;
+    s.workP += (workT - s.workP) * k2;
+    if (Math.abs(storyT - s.storyP) < 1e-4) s.storyP = storyT;
+    if (Math.abs(workT - s.workP) < 1e-4) s.workP = workT;
 
     if (engine) {
-      // Boost particle stretch warp effect on click (negative value for leftwards sweep)
-      engine.setScrollVelocity(-4.2);
-
-      // WebGL Camera Transition (panning right, matching cards exactly)
-      tl.to(
-        engine.customCamera,
-        {
-          x: 14,
-          z: 8,
-          duration: 0.48,
-          ease: "none",
-        },
-        0,
-      );
-
-      // WebGL Particle Matrix rain fade-out
-      tl.to(
-        engine.uniforms.uMatrix,
-        {
-          value: 0.0,
-          duration: 0.48,
-          ease: "none",
-        },
-        0,
-      );
-
-      // WebGL Particle Detail Grid fade-in
-      tl.to(
-        engine.uniforms.uDetailGrid,
-        {
-          value: 1.0,
-          duration: 0.48,
-          ease: "none",
-        },
-        0,
-      );
+      const t = engine.target;
+      t.morph = s.morph;
+      t.matrix = s.detail ? 0 : matrix;
+      t.neural = contactIn;
+      t.grid = s.detail ? 1 : 0;
+      t.welcome = s.welcome ? 1 : 0;
+      engine.setSpin(s.storyP * 2 * TAU);
+      engine.setCamera(s.detail ? 14 : 0, s.detail ? 8 : 13);
     }
-  };
 
-  // Trigger transition immediately for maximum responsiveness
-  revealTimeline();
-}
-
-function closeProjectDetail() {
-  if (!window.PortfolioApp.inProjectDetail) return;
-
-  const overlay = document.getElementById("project-detail-scene");
-  const video = document.getElementById("detail-video");
-  if (video) video.pause();
-
-  const engine = window.PortfolioApp.threeEngine;
-  if (engine) {
-    engine.setScrollVelocity(4.2); // positive scroll velocity to sweep particles rightwards
+    if (L.desktop) {
+      placeStory(s.storyP, s.morph);
+      placeDeck(s.workP);
+    }
+    return s.storyP !== storyT || s.workP !== workT;
   }
 
-  const tl = gsap.timeline({
-    onComplete: () => {
-      // Update global app state only when transition finishes
-      window.PortfolioApp.inProjectDetail = false;
-      document.body.classList.remove("detail-active");
+  // Story cards ride a ring around the spine and descend one by one.
+  const N = el.items.length;
+  const STEP = 360 / N;
+  function placeStory(p, morph) {
+    const gate = clamp01((morph - 0.6) / 0.4);
+    if (Math.abs(p - painted.story) < 1e-5 && Math.abs(gate - painted.gate) < 1e-4) return;
+    painted.story = p;
+    painted.gate = gate;
 
-      overlay.classList.add("hidden");
-      gsap.set(overlay, { display: "none", visibility: "hidden" });
-      const scroller = document.getElementById("scroll-container");
-      if (scroller) scroller.classList.remove("no-scroll");
+    const spin = -p * (N - 1) * STEP;
+    let front = 0;
+    let frontDepth = -1;
+    for (let i = 0; i < N; i++) {
+      const node = el.items[i];
+      const deg = i * STEP + spin;
+      const rad = (deg * Math.PI) / 180;
+      const x = Math.sin(rad) * 360;
+      const z = Math.cos(rad) * 360;
+      const depth = (z / 360 + 1) / 2;
+      const y = (i - p * (N - 1)) * 220;
+      let dn = deg % 360;
+      if (dn > 180) dn -= 360;
+      if (dn < -180) dn += 360;
+      const near = clamp01(2.8 - Math.abs(i - p * (N - 1)) * 1.2);
+      const opacity = (0.22 + depth * 0.78) * gate * near;
+      node.style.transform = `translate(-50%, -50%) translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, ${z.toFixed(1)}px) rotateY(${(dn * 0.3).toFixed(1)}deg)`;
+      node.style.opacity = opacity.toFixed(3);
+      node.style.visibility = opacity < 0.01 ? 'hidden' : '';
+      node.style.pointerEvents = gate > 0.5 && depth > 0.9 ? 'auto' : 'none';
+      if (depth > frontDepth) {
+        frontDepth = depth;
+        front = i;
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      const on = gate > 0.5 && i === front && frontDepth > 0.92;
+      el.items[i].classList.toggle('is-focus', on);
+      if (!on && s.hover === el.cards[i]) setHover(null);
+    }
+    if (el.railBox) el.railBox.style.setProperty('--p', p.toFixed(4));
+    const year = Math.round(p * (N - 1));
+    if (year !== painted.year) {
+      painted.year = year;
+      el.rail.forEach((r, i) => {
+        r.classList.toggle('is-active', i === year);
+        if (i === year) r.setAttribute('aria-current', 'step');
+        else r.removeAttribute('aria-current');
+      });
+    }
+  }
+
+  // Projects coverflow: the card nearest the centre is the active one.
+  const M = el.projects.length;
+  let activeProject = 0;
+  function placeDeck(p) {
+    if (Math.abs(p - painted.deck) < 1e-5) return;
+    painted.deck = p;
+    const f = p * (M - 1);
+    for (let i = 0; i < M; i++) {
+      const node = el.projects[i];
+      const rel = i - f;
+      const abs = Math.abs(rel);
+      const sign = rel < 0 ? -1 : rel > 0 ? 1 : 0;
+      const x = sign * Math.min(abs, 2.4) * 280;
+      const z = -Math.min(abs, 3) * 250;
+      const ry = -sign * Math.min(abs, 1.5) * 22;
+      const scale = Math.max(0.48, 1 - Math.min(abs, 2.5) * 0.17);
+      node.style.transform = `translate(-50%, -50%) translate3d(${x.toFixed(1)}px, 0, ${z.toFixed(1)}px) rotateY(${ry.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
+      node.style.opacity = Math.max(0, 1 - abs * 0.3).toFixed(3);
+      node.style.zIndex = String(1000 - Math.round(abs * 100));
+      node.classList.toggle('is-active', abs < 0.5);
+    }
+    setDeckHud(Math.round(f), p);
+  }
+
+  function setDeckHud(index, progress) {
+    if (index !== activeProject || progress === 0) {
+      activeProject = index;
+      el.deckIndex.textContent = String(index + 1).padStart(2, '0');
+      el.deckName.textContent = projectNames[index] || '';
+      if (!layout.desktop) markActiveProject();
+    }
+    el.deckFill.style.transform = `scaleX(${progress.toFixed(4)})`;
+  }
+
+  // Phones and tablets: the channel in the middle of the deck is on air.
+  function markActiveProject() {
+    el.projects.forEach((node, i) => node.classList.toggle('is-active', i === activeProject));
+  }
+
+  // -------------------------------------------------------------------------
+  // Input
+  // -------------------------------------------------------------------------
+  function markInput() {
+    s.lastInput = performance.now();
+  }
+
+  window.addEventListener(
+    'scroll',
+    () => {
+      s.scrollY = window.scrollY;
+      markInput();
+      wake();
     },
+    { passive: true }
+  );
+
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (e.pointerType === 'touch') return;
+      markInput();
+      if (!engine) return;
+      engine.setPointer((e.clientX / layout.vw) * 2 - 1, 1 - (e.clientY / layout.vh) * 2);
+      wake();
+    },
+    { passive: true }
+  );
+
+  window.addEventListener('keydown', markInput, { passive: true });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) sleep();
+    else {
+      markInput();
+      wake();
+    }
   });
 
-  // Slide projects list back to center from left
-  tl.to(
-    ".projects-container",
-    {
-      x: "0vw",
-      opacity: 1,
-      duration: 0.48,
-      ease: "none",
-    },
-    0,
-  );
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(measure, 120);
+  });
+  if ('ResizeObserver' in window) new ResizeObserver(() => measure()).observe($('main'));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
 
-  // Slide detail overlay out to the right
-  tl.to(
-    "#project-detail-scene",
-    {
-      x: "100vw",
-      opacity: 0,
-      duration: 0.48,
-      ease: "none",
-    },
-    0,
-  );
-
-  if (engine) {
-    // WebGL Camera Transition Back
-    tl.to(
-      engine.customCamera,
-      {
-        x: 0,
-        z: 13,
-        duration: 0.48,
-        ease: "none",
+  // Active section in the nav (no scroll math needed for this one).
+  const LOOP_HOSTS = '.scroll-cue, .tl-card.is-now, .project-card, .terminal';
+  const REVEALS =
+    '.story-head .kicker, .work-head .kicker, .contact-info .kicker, .story-title, .work-title, .contact-title, .tl-item, .terminal, .social li';
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const id = entry.target.id;
+          el.navLinks.forEach((a) => {
+            if (a.dataset.nav === id) a.setAttribute('aria-current', 'true');
+            else a.removeAttribute('aria-current');
+          });
+        });
       },
-      0,
+      { rootMargin: '-45% 0px -55% 0px' }
     );
+    $$('main > section').forEach((sec) => io.observe(sec));
 
-    // WebGL Particle Matrix rain fade-in (return to current projects scroll target)
-    const targetMatrix =
-      typeof engine.getMatrixTarget === "function"
-        ? engine.getMatrixTarget()
-        : 1.0;
-    tl.to(
-      engine.uniforms.uMatrix,
-      {
-        value: targetMatrix,
-        duration: 0.48,
-        ease: "none",
-      },
-      0,
-    );
+    // Hosts of decorative loops in view: the CSS rests the loops everywhere else.
+    const onscreen = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => entry.target.classList.toggle('is-onscreen', entry.isIntersecting));
+    });
+    $$(LOOP_HOSTS).forEach((node) => onscreen.observe(node));
 
-    // WebGL Particle Detail Grid fade-out
-    tl.to(
-      engine.uniforms.uDetailGrid,
-      {
-        value: 0.0,
-        duration: 0.48,
-        ease: "none",
-      },
-      0,
-    );
-  }
-}
-
-function initProjectDetailScrollExit() {
-  const overlay = document.getElementById("project-detail-scene");
-  if (!overlay) return;
-
-  let touchStartY = 0;
-
-  overlay.addEventListener(
-    "wheel",
-    (e) => {
-      if (!window.PortfolioApp.inProjectDetail) return;
-
-      // Scroll up checks: deltaY < 0. Threshold check to avoid jittery trigger
-      if (e.deltaY < -5) {
-        e.preventDefault();
-        closeProjectDetail();
-      }
-    },
-    { passive: false },
-  );
-
-  overlay.addEventListener(
-    "touchstart",
-    (e) => {
-      if (e.touches.length === 1) {
-        touchStartY = e.touches[0].clientY;
-      }
-    },
-    { passive: true },
-  );
-
-  overlay.addEventListener(
-    "touchmove",
-    (e) => {
-      if (!window.PortfolioApp.inProjectDetail) return;
-
-      if (e.touches.length === 1) {
-        const touchY = e.touches[0].clientY;
-        const diffY = touchY - touchStartY; // positive means swipe down (pull down)
-
-        // Trigger return when swipe down is significant (> 60px)
-        if (diffY > 60) {
-          closeProjectDetail();
-        }
-      }
-    },
-    { passive: true },
-  );
-}
-
-function initProjectDetailVideoControls() {
-  const videoWrapper = document.querySelector(".detail-video-wrapper");
-  const video = document.getElementById("detail-video");
-  if (!videoWrapper || !video) return;
-
-  const triggerReplay = (e) => {
-    if (videoWrapper.classList.contains("video-behind")) {
-      e.preventDefault();
-      e.stopPropagation();
-      videoWrapper.classList.remove("video-behind");
-      video.currentTime = 0;
-      video.play().catch((err) => console.log("Video play failed:", err));
+    // One-shot entrances: an element gets .is-in the first time it shows up
+    // and its CSS transition plays once. What is already in view (or above it,
+    // after a reload mid-page) starts arrived, so nothing flickers.
+    if (!reduced) {
+      const revealer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            entry.target.classList.add('is-in');
+            revealer.unobserve(entry.target);
+          });
+        },
+        { rootMargin: '0px 0px -12% 0px' }
+      );
+      const vh = window.innerHeight;
+      $$(REVEALS).forEach((node) => {
+        if (node.getBoundingClientRect().top < vh * 0.88) node.classList.add('is-in');
+        else revealer.observe(node);
+      });
+      doc.classList.add('reveals');
     }
-  };
+  } else {
+    $$(LOOP_HOSTS).forEach((node) => node.classList.add('is-onscreen'));
+  }
 
-  // Bind to both the wrapper card and the video element directly to ensure click triggers without fail
-  videoWrapper.addEventListener("click", triggerReplay);
-  video.addEventListener("click", triggerReplay);
+  // Hover tide: motes leave the spine and halo the focused story card.
+  function setHover(card) {
+    if (s.hover === card) return;
+    s.hover = card;
+    if (engine) engine.setHalo(card);
+    wake();
+  }
+  el.cards.forEach((card) => {
+    card.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse' && layout.desktop && card.parentElement.classList.contains('is-focus')) setHover(card);
+    });
+    card.addEventListener('pointerleave', () => {
+      if (s.hover === card) setHover(null);
+    });
+  });
 
-  // Make project card clickable when it is behind
-  const infoWrapper = document.querySelector(".detail-info-wrapper");
-  if (infoWrapper) {
-    infoWrapper.addEventListener(
-      "click",
+  // Capsules: the edge lights up where the cursor is and the card leans in.
+  // One rAF per pointer move at most, and only over the card being touched.
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+  const lit = { node: null, x: 0, y: 0, raf: 0 };
+  function paintLit() {
+    lit.raf = 0;
+    const node = lit.node;
+    if (!node) return;
+    const r = node.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const px = clamp01((lit.x - r.left) / r.width);
+    const py = clamp01((lit.y - r.top) / r.height);
+    node.style.setProperty('--mx', (px * 100).toFixed(1) + '%');
+    node.style.setProperty('--my', (py * 100).toFixed(1) + '%');
+    if (!reduced) {
+      node.style.setProperty('--rx', ((0.5 - py) * 5).toFixed(2) + 'deg');
+      node.style.setProperty('--ry', ((px - 0.5) * 7).toFixed(2) + 'deg');
+    }
+  }
+  $$('.capsule').forEach((node) => {
+    node.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse' && finePointer.matches) node.classList.add('is-lit');
+    });
+    node.addEventListener(
+      'pointermove',
       (e) => {
-        if (!videoWrapper.classList.contains("video-behind")) {
-          e.preventDefault();
-          e.stopPropagation();
-          video.pause();
-          videoWrapper.classList.add("video-behind");
-        }
+        if (e.pointerType !== 'mouse' || !finePointer.matches) return;
+        lit.node = node;
+        lit.x = e.clientX;
+        lit.y = e.clientY;
+        if (!lit.raf) lit.raf = requestAnimationFrame(paintLit);
       },
-      { capture: true },
+      { passive: true }
     );
-  }
-}
-
-function initParticleCloseButton(canvasId = "detail-back-btn") {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-
-  const size = 40; // logical dimensions (discrete)
-
-  function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
-  }
-  resize();
-  window.addEventListener("resize", resize);
-
-  const particles = [];
-  const numParticles = 60;
-  const halfNum = numParticles / 2;
-
-  // Distribute particles along the diagonal lines of 'X'
-  // Center is 20, 20. Bounds for X are 12 to 28 (span of 16px)
-  for (let i = 0; i < halfNum; i++) {
-    const t = i / (halfNum - 1);
-
-    // Line 1: top-left (12, 12) to bottom-right (28, 28)
-    particles.push({
-      x: 20 + (Math.random() - 0.5) * 30,
-      y: 20 + (Math.random() - 0.5) * 30,
-      vx: 0,
-      vy: 0,
-      ax: 12 + t * 16,
-      ay: 12 + t * 16,
-      size: 0.7 + Math.random() * 0.9,
-      color:
-        Math.random() > 0.45
-          ? "rgba(0, 243, 255, 0.95)"
-          : "rgba(189, 0, 255, 0.95)",
+    node.addEventListener('pointerleave', () => {
+      node.classList.remove('is-lit');
+      node.style.removeProperty('--rx');
+      node.style.removeProperty('--ry');
+      if (lit.node === node) lit.node = null;
     });
+  });
 
-    // Line 2: top-right (28, 12) to bottom-left (12, 28)
-    particles.push({
-      x: 20 + (Math.random() - 0.5) * 30,
-      y: 20 + (Math.random() - 0.5) * 30,
-      vx: 0,
-      vy: 0,
-      ax: 28 - t * 16,
-      ay: 12 + t * 16,
-      size: 0.7 + Math.random() * 0.9,
-      color:
-        Math.random() > 0.45
-          ? "rgba(0, 243, 255, 0.95)"
-          : "rgba(189, 0, 255, 0.95)",
-    });
+  // Year rail: travel straight to a year of the story.
+  function scrollToStory(i) {
+    const L = layout;
+    const n = el.items.length;
+    const top = L.story.top + (n > 1 ? i / (n - 1) : 0) * (L.story.h - L.vh);
+    window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
+  }
+  el.rail.forEach((btn, i) => btn.addEventListener('click', () => scrollToStory(i)));
+
+  // Projects: centre a side card first, open the active one.
+  function scrollToProject(i) {
+    const L = layout;
+    const top = L.work.top + (M > 1 ? i / (M - 1) : 0) * (L.work.h - L.vh);
+    window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
   }
 
-  const mouse = { x: -1000, y: -1000, active: false };
-
-  canvas.addEventListener("mousemove", (e) => {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - rect.left;
-    mouse.y = e.clientY - rect.top;
-    mouse.active = true;
-  });
-
-  canvas.addEventListener("mouseleave", () => {
-    mouse.active = false;
-    mouse.x = -1000;
-    mouse.y = -1000;
-  });
-
-  canvas.addEventListener("mouseenter", () => {
-    mouse.active = true;
-  });
-
-  function tick() {
-    ctx.clearRect(0, 0, size, size);
-    ctx.shadowBlur = 4;
-
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i];
-
-      // Mouse interaction (repelling)
-      let repelX = 0;
-      let repelY = 0;
-      if (mouse.active) {
-        const dx = p.x - mouse.x;
-        const dy = p.y - mouse.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const repelRadius = 15;
-        if (dist < repelRadius) {
-          const strength = (repelRadius - dist) / repelRadius;
-          repelX = (dx / (dist || 1)) * strength * 4.0;
-          repelY = (dy / (dist || 1)) * strength * 4.0;
-
-          // Add hover vibration noise
-          repelX += (Math.random() - 0.5) * 1.2;
-          repelY += (Math.random() - 0.5) * 1.2;
-        }
-      }
-
-      // Pull to anchor
-      const springForceX = (p.ax - p.x) * 0.08;
-      const springForceY = (p.ay - p.y) * 0.08;
-
-      // Update velocity and position
-      p.vx += springForceX + repelX;
-      p.vy += springForceY + repelY;
-      p.vx *= 0.82;
-      p.vy *= 0.82;
-      p.x += p.vx;
-      p.y += p.vy;
-
-      // Tiny ambient oscillation
-      p.x += (Math.random() - 0.5) * 0.15;
-      p.y += (Math.random() - 0.5) * 0.15;
-
-      // Render particle
-      ctx.shadowColor = p.color;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    requestAnimationFrame(tick);
-  }
-
-  tick();
-}
-
-function initProjectDetailHandlers() {
-  initProjectDetailScrollExit();
-  initProjectDetailVideoControls();
-
-  // Initialize particle close button
-  initParticleCloseButton("detail-back-btn");
-
-  const backBtn = document.getElementById("detail-back-btn");
-  if (backBtn) {
-    backBtn.addEventListener("click", (e) => {
-      const videoWrapper = document.querySelector(".detail-video-wrapper");
-      if (videoWrapper && !videoWrapper.classList.contains("video-behind")) {
-        // If info card is behind, click should bring it forward instead of closing
-        e.preventDefault();
-        e.stopPropagation();
-        const video = document.getElementById("detail-video");
-        if (video) video.pause();
-        videoWrapper.classList.add("video-behind");
+  el.projects.forEach((node, i) => {
+    const btn = $('.project-open', node);
+    btn.addEventListener('click', () => {
+      if (layout.desktop && !node.classList.contains('is-active')) {
+        scrollToProject(i);
         return;
       }
-      e.stopPropagation();
-      closeProjectDetail();
+      openProject(node.dataset.project, node);
     });
-    backBtn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        const videoWrapper = document.querySelector(".detail-video-wrapper");
-        if (videoWrapper && !videoWrapper.classList.contains("video-behind")) {
-          // If info card is behind, keypress should bring it forward instead of closing
-          e.preventDefault();
-          e.stopPropagation();
-          const video = document.getElementById("detail-video");
-          if (video) video.pause();
-          videoWrapper.classList.add("video-behind");
-          return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        closeProjectDetail();
-      }
+    btn.addEventListener('focus', () => {
+      if (layout.desktop && !node.classList.contains('is-active')) scrollToProject(i);
     });
-  }
-}
-
-/**
- * WELCOME VIDEO SCREEN METHODS & HANDLERS
- */
-function openWelcomeVideo() {
-  if (window.PortfolioApp.inWelcomeVideo) return;
-  window.PortfolioApp.inWelcomeVideo = true;
-
-  const overlay = document.getElementById("welcome-video-scene");
-  const video = document.getElementById("welcome-video");
-  const scrollContainer = document.getElementById("scroll-container");
-
-  if (scrollContainer) {
-    scrollContainer.classList.add("no-scroll");
-  }
-
-  if (video) {
-    video.currentTime = 0;
-    video.play().catch((err) => console.log("Welcome video play failed:", err));
-  }
-
-  if (overlay) {
-    overlay.classList.remove("hidden");
-    gsap.set(overlay, { display: "flex", visibility: "visible" });
-    gsap.fromTo(
-      overlay,
-      { scale: 0.9, y: 40, opacity: 0 },
-      { scale: 1.0, y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }
-    );
-  }
-
-  // Morph particles to welcome video vortex target!
-  if (
-    window.PortfolioApp.threeEngine &&
-    window.PortfolioApp.threeEngine.uniforms
-  ) {
-    gsap.to(window.PortfolioApp.threeEngine.uniforms.uWelcomeOpen, {
-      value: 1.0,
-      duration: 0.8,
-      ease: "power3.out",
-    });
-  }
-}
-
-function closeWelcomeVideo() {
-  if (!window.PortfolioApp.inWelcomeVideo) return;
-
-  const overlay = document.getElementById("welcome-video-scene");
-  const video = document.getElementById("welcome-video");
-  const scrollContainer = document.getElementById("scroll-container");
-
-  if (video) {
-    video.pause();
-  }
-
-  gsap.to(overlay, {
-    scale: 0.9,
-    y: 40,
-    opacity: 0,
-    duration: 0.4,
-    ease: "power3.in",
-    onComplete: () => {
-      if (overlay) {
-        overlay.classList.add("hidden");
-        gsap.set(overlay, { display: "none", visibility: "hidden" });
-      }
-      if (scrollContainer) {
-        scrollContainer.classList.remove("no-scroll");
-      }
-      window.PortfolioApp.inWelcomeVideo = false;
-    },
   });
 
-  // Morph particles back to regular field layout!
-  if (
-    window.PortfolioApp.threeEngine &&
-    window.PortfolioApp.threeEngine.uniforms
-  ) {
-    gsap.to(window.PortfolioApp.threeEngine.uniforms.uWelcomeOpen, {
-      value: 0.0,
-      duration: 0.6,
-      ease: "power3.out",
-    });
+  // Desktop deck: arrow keys move between channels.
+  el.deck.addEventListener('keydown', (e) => {
+    if (!layout.desktop || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
+    const next = Math.max(0, Math.min(M - 1, activeProject + (e.key === 'ArrowRight' ? 1 : -1)));
+    if (next === activeProject) return;
+    e.preventDefault();
+    scrollToProject(next);
+    $('.project-open', el.projects[next]).focus({ preventScroll: true });
+  });
+
+  // Phones: the deck is a native horizontal scroller; keep the HUD in sync.
+  let deckRaf = 0;
+  el.deck.addEventListener(
+    'scroll',
+    () => {
+      if (layout.desktop || deckRaf) return;
+      deckRaf = requestAnimationFrame(() => {
+        deckRaf = 0;
+        const max = el.deck.scrollWidth - el.deck.clientWidth;
+        const p = max > 0 ? clamp01(el.deck.scrollLeft / max) : 0;
+        setDeckHud(Math.round(p * (M - 1)), p);
+      });
+    },
+    { passive: true }
+  );
+
+  // -------------------------------------------------------------------------
+  // Video scenes
+  // The clicked poster (or the hero button) grows into the video frame through
+  // a View Transition, and shrinks back into place on close. Without View
+  // Transitions, or with reduced motion, the panel simply fades in and out.
+  // -------------------------------------------------------------------------
+  const canPortal = typeof document.startViewTransition === 'function' && !reduced;
+  let portalBusy = false;
+  let openNode = null;
+
+  function portal(from, to, change, closing) {
+    if (!canPortal || portalBusy || !from || !to || !from.getClientRects().length) return false;
+    portalBusy = true;
+    doc.classList.add('vt');
+    doc.classList.toggle('vt-close', !!closing);
+    from.style.viewTransitionName = 'portal';
+    const cleanup = () => {
+      from.style.viewTransitionName = '';
+      to.style.viewTransitionName = '';
+      doc.classList.remove('vt', 'vt-close');
+      portalBusy = false;
+      wake();
+    };
+    let t;
+    try {
+      t = document.startViewTransition(() => {
+        from.style.viewTransitionName = '';
+        change();
+        to.style.viewTransitionName = 'portal';
+      });
+    } catch (err) {
+      cleanup();
+      return false;
+    }
+    t.ready.catch(() => {});
+    t.finished.catch(() => {}).then(cleanup);
+    return true;
   }
-}
 
-function initWelcomeVideoScrollExit() {
-  const overlay = document.getElementById("welcome-video-scene");
-  if (!overlay) return;
+  function openScene(dialog) {
+    if (dialog.open) return;
+    dialog.classList.remove('is-closing');
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    doc.classList.add('is-locked');
+    wake();
+  }
 
-  let touchStartY = 0;
+  function sceneTarget(dialog) {
+    if (dialog === el.welcome) return $('#hero-welcome-btn');
+    return openNode ? $('.project-media', openNode) : null;
+  }
 
-  overlay.addEventListener(
-    "wheel",
-    (e) => {
-      if (!window.PortfolioApp.inWelcomeVideo) return;
-
-      // Scroll up check: deltaY < -5
-      if (e.deltaY < -5) {
-        e.preventDefault();
-        closeWelcomeVideo();
+  const closing = new Set();
+  function closeScene(dialog) {
+    if (!dialog.open || closing.has(dialog)) return;
+    closing.add(dialog);
+    const video = $('video', dialog);
+    if (video) video.pause();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      closing.delete(dialog);
+      dialog.classList.remove('is-closing', 'via-portal');
+      if (!dialog.open) return;
+      if (typeof dialog.close === 'function') dialog.close();
+      else {
+        dialog.removeAttribute('open');
+        sceneClosed(dialog);
       }
-    },
-    { passive: false }
-  );
+    };
+    const viaPortal = portal(
+      $('.video-frame', dialog),
+      sceneTarget(dialog),
+      () => {
+        sceneClosed(dialog);
+        finish();
+      },
+      true
+    );
+    if (viaPortal) return;
+    sceneClosed(dialog);
+    if (reduced) return finish();
+    dialog.classList.remove('via-portal');
+    dialog.classList.add('is-closing');
+    $('.scene-panel', dialog).addEventListener('animationend', finish, { once: true });
+    setTimeout(finish, 450);
+  }
 
-  overlay.addEventListener(
-    "touchstart",
-    (e) => {
-      if (e.touches.length === 1) {
-        touchStartY = e.touches[0].clientY;
-      }
-    },
-    { passive: true }
-  );
+  // State follows the dialog, whichever way it was closed.
+  function sceneClosed(dialog) {
+    if (dialog === el.welcome) s.welcome = false;
+    if (dialog === el.detail) {
+      s.detail = false;
+      doc.classList.remove('is-detail');
+    }
+    const other = dialog === el.welcome ? el.detail : el.welcome;
+    if (!other.open) doc.classList.remove('is-locked');
+    wake();
+  }
 
-  overlay.addEventListener(
-    "touchmove",
-    (e) => {
-      if (!window.PortfolioApp.inWelcomeVideo) return;
-
-      if (e.touches.length === 1) {
-        const touchY = e.touches[0].clientY;
-        const diffY = touchY - touchStartY; // positive means swipe down
-
-        // Trigger return when swipe down is significant (> 60px)
-        if (diffY > 60) {
-          closeWelcomeVideo();
-        }
-      }
-    },
-    { passive: true }
-  );
-}
-
-function initWelcomeVideoHandlers() {
-  const openBtn = document.getElementById("hero-welcome-btn");
-  if (openBtn) {
-    openBtn.addEventListener("click", (e) => {
+  [el.welcome, el.detail].forEach((dialog) => {
+    dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
-      openWelcomeVideo();
+      closeScene(dialog);
     });
-  }
-
-  // Initialize particle close button for welcome video
-  initParticleCloseButton("welcome-back-btn");
-
-  const backBtn = document.getElementById("welcome-back-btn");
-  if (backBtn) {
-    backBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeWelcomeVideo();
-    });
-    backBtn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeWelcomeVideo();
+    dialog.addEventListener('close', () => {
+      const video = $('video', dialog);
+      if (video) video.pause();
+      sceneClosed(dialog);
+      if (dialog === el.detail) {
+        el.detailVideo.removeAttribute('src');
+        el.detailVideo.load();
       }
     });
-  }
-
-  // Close welcome video if it ends
-  const video = document.getElementById("welcome-video");
-  if (video) {
-    video.addEventListener("ended", () => {
-      closeWelcomeVideo();
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog || e.target.closest('[data-close]')) closeScene(dialog);
     });
+    // Scroll up (or pull down on touch) to go back, as before.
+    dialog.addEventListener(
+      'wheel',
+      (e) => {
+        if (e.deltaY < -5 && dialog.scrollTop <= 0) closeScene(dialog);
+      },
+      { passive: true }
+    );
+    let startY = 0;
+    let startTop = 0;
+    dialog.addEventListener(
+      'touchstart',
+      (e) => {
+        startY = e.touches[0].clientY;
+        startTop = dialog.scrollTop;
+      },
+      { passive: true }
+    );
+    dialog.addEventListener(
+      'touchmove',
+      (e) => {
+        if (startTop <= 0 && dialog.scrollTop <= 0 && e.touches[0].clientY - startY > 70) closeScene(dialog);
+      },
+      { passive: true }
+    );
+  });
+
+  function openWelcome() {
+    const v = el.welcomeVideo;
+    if (!v.getAttribute('poster')) v.poster = v.dataset.poster; // fetched on first open, not at page load
+    try { v.currentTime = 0; } catch (e) { /* not loaded yet */ }
+    const show = () => {
+      s.welcome = true;
+      openScene(el.welcome);
+    };
+    if (portal($('#hero-welcome-btn'), $('.video-frame', el.welcome), show)) el.welcome.classList.add('via-portal');
+    else show();
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
   }
 
-  // Initialize scroll exit
-  initWelcomeVideoScrollExit();
-}
+  $('#hero-welcome-btn').addEventListener('click', openWelcome);
+  el.welcomeVideo.addEventListener('ended', () => closeScene(el.welcome));
+
+  function openProject(key, node) {
+    const data = PROJECTS[key];
+    if (!data) return;
+    $('#detail-tags').textContent = data.tag;
+    $('#detail-title').textContent = data.title;
+    $('#detail-desc').textContent = data.desc;
+    const tech = $('#detail-tech');
+    tech.replaceChildren(...data.tech.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
+    const metrics = $('#detail-metrics');
+    metrics.replaceChildren(...data.metrics.map((m) => Object.assign(document.createElement('li'), { textContent: m })));
+
+    const v = el.detailVideo;
+    v.poster = data.poster;
+    v.src = data.video;
+    openNode = node || null;
+    const show = () => {
+      s.detail = true;
+      doc.classList.add('is-detail');
+      openScene(el.detail);
+    };
+    if (portal(node ? $('.project-media', node) : null, $('.video-frame', el.detail), show)) el.detail.classList.add('via-portal');
+    else show();
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  // -------------------------------------------------------------------------
+  // Contact terminal
+  // -------------------------------------------------------------------------
+  const form = $('#terminal-form');
+  const out = $('#terminal-output');
+  const submit = $('#terminal-submit-btn');
+  const submitLabel = $('span', submit);
+  const COOLDOWN = 60 * 1000;
+  const wait = (ms) => new Promise((r) => setTimeout(r, reduced ? 0 : ms));
+
+  function line(text, tone, append) {
+    const p = document.createElement('p');
+    p.className = tone ? 'out-' + tone : '';
+    p.textContent = text;
+    if (append) out.append(p);
+    else out.replaceChildren(p);
+  }
+
+  function invalid(field, bad) {
+    if (bad) field.setAttribute('aria-invalid', 'true');
+    else field.removeAttribute('aria-invalid');
+    return bad;
+  }
+
+  form.addEventListener('input', (e) => {
+    if (e.target.hasAttribute('aria-invalid')) invalid(e.target, !e.target.checkValidity());
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#form-name');
+    const email = $('#form-email');
+    const message = $('#form-message');
+    const honey = $('#form-honey');
+
+    const bad = [name, email, message].filter((f) => invalid(f, !f.value.trim() || !f.checkValidity()));
+    if (bad.length) {
+      line('SYSTEM ERROR: PARÂMETROS INCOMPLETOS.', 'error');
+      line(bad[0] === email && email.value.trim() ? 'Confira o formato do email de contato.' : 'Preencha nome, email e mensagem para transmitir.', 'muted', true);
+      bad[0].focus();
+      return;
+    }
+
+    const lastSent = parseInt(store.get('quantum_transmission_cooldown') || '0', 10);
+    if (lastSent && Date.now() - lastSent < COOLDOWN) {
+      const secs = Math.ceil((COOLDOWN - (Date.now() - lastSent)) / 1000);
+      line('SYSTEM ERROR: TRANSCEPTOR NEURAL SUPERAQUECIDO!', 'error');
+      line(`Aguarde o resfriamento dos servidores quânticos (${secs}s) para evitar sobrecarga de coordenadas.`, 'muted', true);
+      return;
+    }
+
+    const who = name.value.trim();
+    submit.disabled = true;
+    submitLabel.textContent = 'Transmitindo dados...';
+
+    line('SYSTEM: COMPILANDO PACOTE DE TRANSMISSÃO...', 'amber');
+    await wait(700);
+    line('SYSTEM: APLICANDO CRIPTOGRAFIA NEURAL QUANTICA...', 'muted', true);
+    await wait(700);
+    line('SYSTEM: DISPARANDO PACOTE DE DADOS PARA LEONARDO DE OLIVEIRA!', 'teal', true);
+
+    const done = (ok) => {
+      if (ok) {
+        line('TRANSMISSÃO CONCLUÍDA COM SUCESSO!', 'teal');
+        line(`Obrigado, ${who}. Sua mensagem foi enviada ao terminal do Léo.`, 'muted', true);
+        form.reset();
+      } else {
+        line('FALHA NA TRANSMISSÃO QUANTICA!', 'error');
+        line('Erro ao rotear pacote de dados. Por favor, verifique sua conexão e tente novamente.', 'muted', true);
+      }
+      submit.disabled = false;
+      submitLabel.textContent = 'Executar transmissão';
+    };
+
+    // Bots fill the invisible field: pretend it worked, send nothing.
+    if (honey.value) {
+      await wait(900);
+      done(true);
+      return;
+    }
+
+    if (engine) {
+      engine.transmit($('#terminal').getBoundingClientRect());
+      wake();
+    }
+
+    try {
+      const res = await fetch('https://formsubmit.co/ajax/leonardooliveira.sl@gmail.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ Nome: who, Email: email.value.trim(), Mensagem: message.value, _captcha: 'false', _honey: '' }),
+      });
+      if (!res.ok) throw new Error('FormSubmit ' + res.status);
+      await res.json();
+      store.set('quantum_transmission_cooldown', String(Date.now()));
+      await wait(600);
+      done(true);
+    } catch (err) {
+      console.error('Erro no envio:', err);
+      await wait(600);
+      done(false);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Boot: paint first, then light the sea.
+  // -------------------------------------------------------------------------
+  measure();
+  const boot = () => setTimeout(startEngine, 0);
+  if (document.readyState === 'complete') requestAnimationFrame(boot);
+  else requestAnimationFrame(() => requestAnimationFrame(boot));
+})();
