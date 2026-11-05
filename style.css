@@ -50,7 +50,7 @@
   --font-sans: "Bricolage", "Bricolage Fallback", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
-  --gutter: clamp(16px, 4vw, 48px);
+  --gutter: max(clamp(16px, 4vw, 48px), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
   --topbar-h: 68px;
   --radius: 14px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
