@@ -842,8 +842,10 @@
     if (e.target.hasAttribute('aria-invalid')) invalid(e.target, !e.target.checkValidity());
   });
 
+  let sending = false;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (sending) return;
     const name = $('#form-name');
     const email = $('#form-email');
     const message = $('#form-message');
@@ -866,6 +868,13 @@
     }
 
     const who = name.value.trim();
+    sending = true;
+
+    // The 3D guide (if it's around) turns to mist first; the transmission then
+    // comes out of it. Never wait on it for long.
+    const guide = window.avatarGuide;
+    if (guide) await Promise.race([guide.beginSend(), wait(1800)]);
+
     submit.disabled = true;
     submitLabel.textContent = 'Transmitindo dados...';
 
@@ -874,6 +883,7 @@
     line('SYSTEM: APLICANDO CRIPTOGRAFIA NEURAL QUANTICA...', 'muted', true);
     await wait(700);
     line('SYSTEM: DISPARANDO PACOTE DE DADOS PARA LEONARDO DE OLIVEIRA!', 'teal', true);
+    const origin = guide ? guide.fire() : null;
 
     const done = (ok) => {
       if (ok) {
@@ -886,6 +896,8 @@
       }
       submit.disabled = false;
       submitLabel.textContent = 'Executar transmissão';
+      sending = false;
+      if (guide) guide.result(ok);
     };
 
     // Bots fill the invisible field: pretend it worked, send nothing.
@@ -896,7 +908,7 @@
     }
 
     if (engine) {
-      engine.transmit($('#terminal').getBoundingClientRect());
+      engine.transmit(origin || $('#terminal').getBoundingClientRect());
       wake();
     }
 
