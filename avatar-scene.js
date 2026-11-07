@@ -29,6 +29,8 @@ const MODEL = {
   shins: ['LowerLeg.L', 'LowerLeg.R'],
   // Arm chains (upper arm, forearm, hand) used to hold the contact card
   arms: [['UpperArm.L', 'LowerArm.L', 'Palm2.L'], ['UpperArm.R', 'LowerArm.R', 'Palm2.R']],
+  // Meshes of the left arm: while holding the card, that hand reaches behind it
+  behindCard: ['Hand.L', 'Arm.L'],
 };
 
 const CLIPS = {
@@ -141,6 +143,8 @@ export async function start({ reduced = false } = {}) {
     uInvRoot: { value: new THREE.Matrix4() },
     uRim: { value: TEAL.clone() },
     uEdge: { value: new THREE.Color(0x9ff3e6) }, // soft sea-glow on the dissolving edge
+    uCardRect: { value: new THREE.Vector4() }, // the contact card, in drawing-buffer pixels
+    uCardOn: { value: 0 },
   };
   const meshes = [];
   let faceMesh = null;
@@ -162,6 +166,14 @@ export async function start({ reduced = false } = {}) {
     o.material = abyssalize(o.material, shared);
     meshes.push(o);
     if (o.name === MODEL.face.mesh && o.morphTargetDictionary) faceMesh = o;
+  });
+
+  const behind = new Set(MODEL.behindCard.map(bare));
+  model.traverse((o) => {
+    if (!o.isMesh || Array.isArray(o.material) || !o.material.userData.uClip) return;
+    for (let n = o; n; n = n.parent) {
+      if (behind.has(bare(n.name).replace(/_\d+$/, ''))) { o.material.userData.uClip.value = 1; break; }
+    }
   });
 
   const restPose = [headBone, neckBone, ...shins, ...arms.flat()].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
@@ -473,7 +485,7 @@ export async function start({ reduced = false } = {}) {
     lantern.position.set(0, modelH * 0.1, modelH * 0.35);
     lantern.intensity = 7 * s * s * (1 - shared.uDissolve.value * 0.8);
     // while it travels as mist the motes keep the body's size, even into a small stop
-    pMat.uniforms.uScale.value = clamp((trans && (trans.via || trans.kind === 'send') ? trans.fromH : at.h) / 260, 0.55, 1.4);
+    pMat.uniforms.uScale.value = clamp((trans && trans.kind === 'send' ? trans.fromH : at.h) / 260, 0.55, 1.4);
     root.updateMatrixWorld(true);
     shared.uInvRoot.value.copy(root.matrixWorld).invert();
   }
@@ -528,7 +540,7 @@ export async function start({ reduced = false } = {}) {
       shared.uDissolve.value = 1;
     } else {
       sampleSurface(tStart, tRel);
-      trans = { phase: 'out', t: 0, toId: id, fromH: at.h };
+      trans = { phase: 'out', t: 0, toId: id, fromH: at.h, from: prev };
     }
     for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
     seedCtrl();
@@ -537,22 +549,17 @@ export async function start({ reduced = false } = {}) {
 
   // Where the current journey is heading: the section's spot, or a stop on the way.
   function transAnchor() {
-    return trans.via || anchorFor(trans.toId);
+    return anchorFor(trans.toId);
   }
 
   // Sending a message, in beats driven by the terminal:
   //   beginSend()  the guide turns to mist (the form waits for this)
-  //   fire()       the cloud churning in its place bursts into the terminal
-  //   result(ok)   it pours back out and re-forms: a dance, or a shaken head
+  //   fire()       the transmission bursts out of the cloud churning in its place,
+  //                and the mist gathers back into the body
+  //   result(ok)   once re-formed: a dance, or a shaken head
   const SEND_TRAVEL = 1.1, SEND_SPREAD = 0.35;
   let sendDone = null; // resolves beginSend()'s promise
-  function terminalStop() {
-    const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
-    if (!r) return null;
-    const [x, y] = clientToCanvas(r.left + r.width * 0.5, r.top + r.height * 0.58);
-    return { x, y, h: 60, yaw: 0 };
-  }
-  // the centre of a stop's cloud (anchor + half a body up), in world space
+  // the centre of the cloud (anchor + half a body up), in world space
   function stopCentre(a, h, out) {
     return toWorld(a.x, a.y - h * 0.45, 0, out);
   }
@@ -585,7 +592,6 @@ export async function start({ reduced = false } = {}) {
     if (!sending()) return;
     settleSend(null);
     trans.kind = null;
-    trans.via = null;
     if (trans.phase === 'hold') {
       trans.phase = 'travel';
       trans.t = 0;
@@ -637,8 +643,19 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
-    const H = (trans.via || trans.kind === 'send' ? trans.fromH : at.h) * view.wpp; // one body height in world units
-    if (trans.via) trans.via = terminalStop() || trans.via; // the card can move (scroll, wobble)
+    const H = (trans.kind === 'send' ? trans.fromH : at.h) * view.wpp; // one body height in world units
+    // A send happens beside the form: motes fade out at the card's left edge, as if
+    // they slipped behind it, so none drift over the fields.
+    let fence = null;
+    if (trans.kind === 'send' && nodes.terminal && !view.dock) {
+      const [ex] = clientToCanvas(nodes.terminal.getBoundingClientRect().left, 0);
+      fence = (ex - view.w / 2) * view.wpp;
+    }
+    const fenced = (i, a) => {
+      if (fence === null) return a;
+      const lim = (fence * (CAM_Z - pPos[i * 3 + 2])) / CAM_Z - H * 0.02;
+      return a * clamp01((lim - pPos[i * 3]) / (H * 0.06));
+    };
     if (trans.phase === 'out') {
       // the body evaporates from the feet up; motes lift off and start to drift
       const k = clamp01(trans.t / OUT);
@@ -651,11 +668,10 @@ export async function start({ reduced = false } = {}) {
         pPos[i * 3] = sx + f[0] * d;
         pPos[i * 3 + 1] = sy + f[1] * d + own * H * 0.06;
         pPos[i * 3 + 2] = sz + f[2] * d;
-        pAlpha[i] = own * 0.7;
+        pAlpha[i] = fenced(i, own * 0.7);
       }
       if (k >= 1) {
         trans.phase = trans.kind === 'send' ? 'hold' : 'travel';
-        trans.stop = 'origin';
         trans.t = 0;
         for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
         if (trans.kind === 'send') {
@@ -666,19 +682,17 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     if (trans.phase === 'hold') {
-      // a churning cloud: where it stood (compiling the message), then inside the card
-      // (waiting for the answer)
-      const inCard = trans.stop === 'card';
-      if (inCard) { const a = terminalStop(); if (a) stopCentre(a, 0, trans.c); }
-      else stopCentre(anchorFor('contato'), trans.fromH, trans.c);
+      // a churning cloud where it stood (nudged away from the form), while the
+      // terminal compiles the message
+      stopCentre(anchorFor('contato'), trans.fromH, trans.c);
+      trans.c.x -= H * 0.18;
       const c = trans.c;
-      const R = H * (inCard ? 0.14 : 0.3);
+      const R = H * 0.3;
       const blend = ease(clamp01(trans.t / 0.6));
-      const spin = inCard ? 2.6 : 1.5;
       const breathe = 1 + 0.12 * Math.sin(time * 3.1);
       for (let i = 0; i < N_TRANSIT; i++) {
         const p0 = phase[i * 3], p1 = phase[i * 3 + 1], p2 = phase[i * 3 + 2];
-        const sp = spin * (0.7 + 0.6 * (p1 / (Math.PI * 2)));
+        const sp = 1.5 * (0.7 + 0.6 * (p1 / (Math.PI * 2)));
         const a = p0 + time * sp;
         const rr = R * breathe * (0.3 + 0.7 * (p2 / (Math.PI * 2)));
         const sx = c.x + Math.cos(a) * rr;
@@ -687,19 +701,21 @@ export async function start({ reduced = false } = {}) {
         pPos[i * 3] = tStart[i * 3] + (sx - tStart[i * 3]) * blend;
         pPos[i * 3 + 1] = tStart[i * 3 + 1] + (sy - tStart[i * 3 + 1]) * blend;
         pPos[i * 3 + 2] = tStart[i * 3 + 2] + (sz - tStart[i * 3 + 2]) * blend;
-        pAlpha[i] = inCard ? 0.5 + 0.2 * Math.sin(time * 4 + p0) : 0.72;
+        pAlpha[i] = fenced(i, 0.72);
       }
       shared.uDissolve.value = 1;
-      // safety nets so a lost signal never strands the guide
-      const leave = inCard ? trans.result !== undefined || trans.t > 15 : trans.fire || trans.t > 5;
-      if (leave) {
-        trans.via = inCard ? null : terminalStop();
-        if (!inCard && !trans.via) trans.result = false;
+      // fired (or a lost signal: never strand the guide): the mist is thrown outward
+      // with the transmission, then gathers back into the body
+      if (trans.fire || trans.t > 5) {
         trans.phase = 'travel';
         trans.t = 0;
-        for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
+        for (let i = 0; i < N_TRANSIT * 3; i++) {
+          tStart[i] = pPos[i];
+          const d = pPos[i] - (i % 3 === 0 ? c.x : i % 3 === 1 ? c.y : c.z);
+          // outward, but only ever away from the form on x
+          tCtrl[i] = pPos[i] + (i % 3 === 0 ? -Math.abs(d) : d) * 1.4;
+        }
         for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SEND_SPREAD;
-        seedCtrl();
       }
       return;
     }
@@ -729,19 +745,10 @@ export async function start({ reduced = false } = {}) {
         pPos[i * 3] = u * u * tStart[i * 3] + 2 * u * k * tCtrl[i * 3] + k * k * ex + ox;
         pPos[i * 3 + 1] = u * u * tStart[i * 3 + 1] + 2 * u * k * tCtrl[i * 3 + 1] + k * k * ey + oy;
         pPos[i * 3 + 2] = u * u * tStart[i * 3 + 2] + 2 * u * k * tCtrl[i * 3 + 2] + k * k * ez + oz;
-        pAlpha[i] = (0.6 + 0.25 * Math.sin(Math.PI * raw)) * (trans.via ? 1 - raw * raw * 0.6 : 1);
+        pAlpha[i] = fenced(i, 0.6 + 0.25 * Math.sin(Math.PI * raw));
       }
       shared.uDissolve.value = 1;
       if (trans.t >= total) {
-        if (trans.via) {
-          // inside the card: churn there until the answer comes back
-          trans.via = null;
-          trans.phase = 'hold';
-          trans.stop = 'card';
-          trans.t = 0;
-          for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
-          return;
-        }
         trans.phase = 'in';
         trans.t = 0;
         const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
@@ -759,16 +766,16 @@ export async function start({ reduced = false } = {}) {
       pPos[i * 3] = m[0] * rx + m[4] * ry + m[8] * rz + m[12] + Math.cos(a) * swirl;
       pPos[i * 3 + 1] = m[1] * rx + m[5] * ry + m[9] * rz + m[13] + swirl * 0.5;
       pPos[i * 3 + 2] = m[2] * rx + m[6] * ry + m[10] * rz + m[14] + Math.sin(a) * swirl;
-      pAlpha[i] = Math.pow(1 - k, 1.6) * 0.8;
+      pAlpha[i] = fenced(i, Math.pow(1 - k, 1.6) * 0.8);
     }
     if (k >= 1) {
       const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
-      const greet = trans.greet || cfg.greet;
       const wasSend = trans.kind === 'send';
+      const greet = trans.greet || (wasSend ? null : cfg.greet);
       trans = null;
       pAlpha.fill(0, 0, N_TRANSIT);
       shared.uDissolve.value = 0;
-      if (wasSend) outcome(greet);
+      if (wasSend) { if (greet) outcome(greet); }
       else react(greet);
     }
   }
@@ -995,17 +1002,25 @@ export async function start({ reduced = false } = {}) {
     const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
     const on = !!(here && goal.grip && near && !trans && !oneShot && arms.length);
     grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(3.5, dt));
-    // keep reaching while the weight fades (leaving the section), so the arms ease off
-    if (grip.w < 0.01 || !card || view.dock || !arms.length) return;
+    // The left arm is behind the card whenever the guide stands at it (holding it,
+    // waving, dancing, or dissolving on the way out), never flipping sides mid-view:
+    // whatever of that arm overlaps the card is hidden.
+    const atCard = card && !view.dock && (here ? goal && goal.grip : trans && trans.phase === 'out' && trans.from === 'contato');
+    shared.uCardOn.value = atCard ? 1 : 0;
+    if (!card || view.dock || (!atCard && grip.w < 0.01)) return;
     const r = card.getBoundingClientRect();
     const [ox, oy] = clientToCanvas(r.left, r.top);
+    const pr = renderer.getPixelRatio();
+    shared.uCardRect.value.set(ox * pr, (view.h - oy - r.height) * pr, (ox + r.width) * pr, (view.h - oy) * pr);
+    // keep reaching while the weight fades (leaving the section), so the arms ease off
+    if (grip.w < 0.01 || !arms.length) return;
     const w = grip.w * grip.w * (3 - 2 * grip.w);
     arms.forEach((arm, i) => {
       arm[0].getWorldPosition(kS);
       const [, sy] = toCanvas(kS);
-      // near hand a little high, far hand lower, both just inside the edge
+      // left hand reaches round behind the edge, right hand holds it in front, lower
       const y = clamp(sy + at.h * (i === 0 ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
-      const x = ox + 7;
+      const x = i === 0 ? ox + at.h * 0.1 : ox + 7;
       toWorld(x, y, kS.z, gripTo);
       reach(arm, gripTo, w);
     });
@@ -1346,8 +1361,10 @@ function abyssalize(source, shared) {
     }
     if ('metalness' in m) { m.metalness = look.metal ?? 0.2; m.roughness = look.rough ?? 0.5; }
   }
+  m.userData.uClip = { value: 0 }; // 1 = this part can pass behind the contact card
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, shared);
+    sh.uniforms.uClip = m.userData.uClip;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vDPos;\nuniform mat4 uInvRoot;')
       .replace('#include <skinning_vertex>', '#include <skinning_vertex>\nvDPos = (uInvRoot * modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -1358,6 +1375,7 @@ function abyssalize(source, shared) {
         varying vec3 vDPos;
         uniform float uDissolve; uniform float uTime; uniform float uNoiseScale; uniform float uHeight;
         uniform vec3 uRim; uniform vec3 uEdge;
+        uniform float uClip; uniform float uCardOn; uniform vec4 uCardRect;
         float aHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float aNoise(vec3 x) {
           vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -1369,6 +1387,8 @@ function abyssalize(source, shared) {
       .replace(
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
+        if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
+            && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
         if (uDissolve > 0.001) {
           vec3 q = vDPos * uNoiseScale;
           float n = 0.65 * (aNoise(q) * 0.65 + aNoise(q * 2.3 + 7.1) * 0.35) + 0.35 * clamp(vDPos.y / uHeight, 0.0, 1.0);
