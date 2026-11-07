@@ -2391,3 +2391,100 @@ html.vt .work-stage {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ==========================================================================
+   Guide avatar (avatar.js / avatar-scene.js)
+   A transparent stage above the content that never takes clicks; only the
+   button over the guide's body does.
+   ========================================================================== */
+.avatar-stage {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s var(--ease-out);
+}
+
+.has-avatar .avatar-stage {
+  opacity: 1;
+}
+
+.avatar-stage.is-dock {
+  inset: auto max(12px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) auto;
+  width: 104px;
+  height: 132px;
+  border-radius: 50% 50% 18px 18px;
+  background: radial-gradient(closest-side at 50% 78%, rgba(255, 179, 92, 0.16), transparent 75%);
+}
+
+.avatar-hit {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 31;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 40%;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.avatar-hit:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 4px;
+}
+
+/* Out of the way while a phone keyboard is up or a video scene is open. */
+html.is-detail .avatar-stage,
+html.is-detail .avatar-hit,
+html:has(dialog[open]) .avatar-stage,
+html:has(dialog[open]) .avatar-hit,
+html:has(.terminal-form :focus) .avatar-stage.is-dock,
+html:has(.terminal-form :focus) .avatar-hit.is-dock {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Where the guide sits on the front project card: a soft contact shadow and
+   the amber spill of its lantern on the card's top edge. */
+.avatar-seat {
+  position: absolute;
+  top: 0;
+  left: 80%;
+  z-index: 10;
+  width: 150px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.45s var(--ease-out);
+}
+
+.avatar-seat::before,
+.avatar-seat::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.avatar-seat::before {
+  inset: 50% 4% -55% 4%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.35) 55%, transparent);
+}
+
+.avatar-seat::after {
+  inset: 28% -35%;
+  background: radial-gradient(closest-side, rgba(255, 194, 122, 0.95), rgba(255, 179, 92, 0.35) 45%, transparent);
+  filter: blur(1.5px);
+  mix-blend-mode: screen;
+}
+
+.avatar-seat.is-on {
+  opacity: 1;
+}
