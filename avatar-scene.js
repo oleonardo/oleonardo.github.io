@@ -52,9 +52,9 @@ const TEAL = new THREE.Color(0x63e6d2);
 const AMBER = new THREE.Color(0xffb35c);
 
 const N_TRANSIT = 720;
-const N_BURST = 120;
+const N_POOL = 260; // mist pool: click puffs, wake trail, evaporation
 const N_MOTE = 36;
-const N_ALL = N_TRANSIT + N_BURST + N_MOTE;
+const N_ALL = N_TRANSIT + N_POOL + N_MOTE;
 
 const CAM_Z = 20;
 const RIM_STRENGTH = '0.5'; // teal fresnel rim (GLSL literal)
@@ -138,7 +138,7 @@ export async function start({ reduced = false } = {}) {
     uHeight: { value: 1 },
     uInvRoot: { value: new THREE.Matrix4() },
     uRim: { value: TEAL.clone() },
-    uEdge: { value: AMBER.clone() },
+    uEdge: { value: new THREE.Color(0x9ff3e6) }, // soft sea-glow on the dissolving edge
   };
   const meshes = [];
   let faceMesh = null;
@@ -169,6 +169,7 @@ export async function start({ reduced = false } = {}) {
 
   // Animation
   const mixer = new THREE.AnimationMixer(model);
+  mixer.timeScale = 0.82; // everything moves a little slower under water
   const actions = {};
   for (const [k, name] of Object.entries(CLIPS)) {
     const clip = THREE.AnimationClip.findByName(gltf.animations, name);
@@ -196,16 +197,16 @@ export async function start({ reduced = false } = {}) {
   }
   function setBase(name) {
     baseName = name;
-    if (!oneShot) fadeTo(name, 0.4);
+    if (!oneShot) fadeTo(name, 0.8);
   }
   function react(name) {
     if (reduced || !actions[name]) return;
-    fadeTo(name, 0.2, true);
+    fadeTo(name, 0.45, true);
   }
   mixer.addEventListener('finished', (e) => {
     if (oneShot && e.action === current) {
       oneShot = false;
-      fadeTo(baseName, 0.35);
+      fadeTo(baseName, 0.7);
     }
   });
 
@@ -224,8 +225,9 @@ export async function start({ reduced = false } = {}) {
   const pSize = new Float32Array(N_ALL);
   const pTone = new Float32Array(N_ALL);
   for (let i = 0; i < N_ALL; i++) {
-    pTone[i] = Math.random() < 0.72 ? 1 : 0; // mostly amber, some teal
-    pSize[i] = 3.5 + Math.random() * 5.5;
+    // mist is mostly teal sea-light with amber flecks (the human light)
+    pTone[i] = Math.random() < 0.3 ? 1 : 0;
+    pSize[i] = i < N_TRANSIT ? 5 + Math.random() * 7 : i < N_TRANSIT + N_POOL ? 3 + Math.random() * 5 : 3 + Math.random() * 3;
   }
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3).setUsage(THREE.DynamicDrawUsage));
   pGeo.setAttribute('aAlpha', new THREE.BufferAttribute(pAlpha, 1).setUsage(THREE.DynamicDrawUsage));
@@ -268,7 +270,16 @@ export async function start({ reduced = false } = {}) {
   const tRel = new Float32Array(N_TRANSIT * 3); // position relative to the root, in model units
   const tCtrl = new Float32Array(N_TRANSIT * 3);
   const tDelay = new Float32Array(N_TRANSIT);
-  const burst = { t: -1, vel: new Float32Array(N_BURST * 3), life: new Float32Array(N_BURST) };
+  const pool = {
+    vel: new Float32Array(N_POOL * 3),
+    life: new Float32Array(N_POOL),
+    age: new Float32Array(N_POOL).fill(1e9),
+    a0: new Float32Array(N_POOL),
+    next: 0,
+    live: 0,
+  };
+  const phase = new Float32Array(N_TRANSIT * 3);
+  for (let i = 0; i < phase.length; i++) phase[i] = Math.random() * Math.PI * 2;
   const motePhase = new Float32Array(N_MOTE * 3);
   for (let i = 0; i < N_MOTE; i++) {
     motePhase[i * 3] = Math.random() * Math.PI * 2;
@@ -376,6 +387,13 @@ export async function start({ reduced = false } = {}) {
       case 'contato': {
         const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
         const h = Math.min(H * 0.24, 220);
+        // Typing in the terminal: drift up beside the field in use, head at its height.
+        const f = document.activeElement;
+        if (r && f && f.matches && f.matches('.terminal-form input, .terminal-form textarea')) {
+          const fr = f.getBoundingClientRect();
+          const y = clamp(fr.top + Math.min(fr.height, 60) / 2 + h * 0.62, h + 80, H * 0.97);
+          return { x: r.left - h * 0.34, y, h, yaw: 0.65 };
+        }
         if (r) return { x: r.left - h * 0.34, y: Math.min(r.bottom + h * 0.35, H * 0.93), h, yaw: 0.55 };
         return { x: W * 0.5, y: H * 0.85, h, yaw: 0.4 };
       }
@@ -423,6 +441,7 @@ export async function start({ reduced = false } = {}) {
   let section = 'inicio';
   let goal = null; // anchor we're heading to
   const at = { x: 0, y: 0, h: 1, yaw: 0 }; // eased, what is drawn
+  const vel = { x: 0, y: 0 }; // px/s, the drift carries momentum like something adrift
   let trans = null; // { phase, t, toId, fromScale }
   let dirty = true;
   let time = 0;
@@ -431,10 +450,12 @@ export async function start({ reduced = false } = {}) {
   const glance = { x: 0, y: 0, until: 0 };
   let focusTarget = null; // element the guide looks at when the visitor is still
   const look = { yaw: 0, pitch: 0 };
+  const nod = { x: 0, v: 0 }; // keystroke nods: a damped spring on the head pitch
   let scrollY = window.scrollY, scrollV = 0, lean = 0;
 
   function snapTo(a) {
     at.x = a.x; at.y = a.y; at.h = a.h; at.yaw = a.yaw;
+    vel.x = vel.y = 0;
   }
   function placeRoot() {
     const s = (at.h * view.wpp) / modelH;
@@ -442,7 +463,8 @@ export async function start({ reduced = false } = {}) {
     root.scale.setScalar(s);
     lantern.position.set(0, modelH * 0.1, modelH * 0.35);
     lantern.intensity = 7 * s * s * (1 - shared.uDissolve.value * 0.8);
-    pMat.uniforms.uScale.value = clamp(at.h / 260, 0.55, 1.4);
+    // while it travels as mist the motes keep the body's size, even into a small stop
+    pMat.uniforms.uScale.value = clamp((trans && trans.via ? trans.fromH : at.h) / 260, 0.55, 1.4);
     root.updateMatrixWorld(true);
     shared.uInvRoot.value.copy(root.matrixWorld).invert();
   }
@@ -450,7 +472,17 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Transitions between sections
   // ---------------------------------------------------------------------------
-  const OUT = 0.45, TRAVEL = 0.95, IN = 0.55, SPREAD = 0.3;
+  const OUT = 0.85, TRAVEL = 1.5, IN = 1.0, SPREAD = 0.5;
+
+  // A cheap, smooth flow field: the "current" every mote drifts in.
+  // Coordinates are in body heights, so it looks the same at any size.
+  const flowV = [0, 0, 0];
+  function flow(x, y, z, t) {
+    flowV[0] = Math.sin(y * 1.7 + t * 0.6) + 0.5 * Math.sin(z * 2.3 + t * 0.37);
+    flowV[1] = 0.45 + 0.6 * Math.sin(z * 1.9 + t * 0.5) + 0.4 * Math.sin(x * 2.1 - t * 0.43);
+    flowV[2] = 0.5 * Math.sin(x * 1.3 + t * 0.31);
+    return flowV;
+  }
 
   function travelTo(id, fromScatter) {
     const prev = section;
@@ -493,8 +525,30 @@ export async function start({ reduced = false } = {}) {
     dirty = true;
   }
 
+  // Where the current journey is heading: the section's spot, or a stop on the way.
+  function transAnchor() {
+    return trans.via || anchorFor(trans.toId);
+  }
+
+  // Sending a message: the guide turns to mist, flows into the terminal with the
+  // transmission, and comes back out to re-form beside it.
+  function carryMessage() {
+    if (reduced || view.dock || trans || section !== 'contato' || !nodes.terminal) {
+      react('jump');
+      puff();
+      return;
+    }
+    const r = nodes.terminal.getBoundingClientRect();
+    placeRoot();
+    sampleSurface(tStart, tRel);
+    trans = { phase: 'out', t: 0, toId: 'contato', fromH: at.h, via: { x: r.left + r.width * 0.5, y: r.top + r.height * 0.62, h: 60, yaw: 0 } };
+    for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
+    seedCtrl();
+    wake();
+  }
+
   function seedCtrl() {
-    const a = anchorFor(trans.toId);
+    const a = transAnchor();
     const from = new THREE.Vector3(root.position.x, root.position.y, 0);
     const to = toWorld(a.x, a.y, 0, new THREE.Vector3());
     const dist = from.distanceTo(to);
@@ -509,15 +563,20 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
-    const sNow = (at.h * view.wpp) / modelH;
+    const H = (trans.via ? trans.fromH : at.h) * view.wpp; // one body height in world units
     if (trans.phase === 'out') {
+      // the body evaporates from the feet up; motes lift off and start to drift
       const k = clamp01(trans.t / OUT);
       shared.uDissolve.value = ease(k);
       for (let i = 0; i < N_TRANSIT; i++) {
-        pAlpha[i] = clamp01(k * 1.6 - tDelay[i]);
-        pPos[i * 3] = tStart[i * 3];
-        pPos[i * 3 + 1] = tStart[i * 3 + 1] + k * k * 0.15 * sNow * modelH;
-        pPos[i * 3 + 2] = tStart[i * 3 + 2];
+        const own = clamp01((k - tDelay[i] * 0.8) / 0.6);
+        const sx = tStart[i * 3], sy = tStart[i * 3 + 1], sz = tStart[i * 3 + 2];
+        const f = flow(sx / H, sy / H, sz / H + phase[i * 3], time);
+        const d = own * own * H * 0.18;
+        pPos[i * 3] = sx + f[0] * d;
+        pPos[i * 3 + 1] = sy + f[1] * d + own * H * 0.06;
+        pPos[i * 3 + 2] = sz + f[2] * d;
+        pAlpha[i] = own * 0.7;
       }
       if (k >= 1) {
         trans.phase = 'travel';
@@ -527,28 +586,43 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     // Destination is live, so a moving anchor (the project deck) or a retarget is followed.
-    goal = anchorFor(trans.toId);
+    goal = transAnchor();
     snapTo(goal);
     placeRoot();
     root.updateMatrixWorld(true);
     const m = root.matrixWorld.elements;
     if (trans.phase === 'travel') {
+      // a loose cloud carried by the current: it billows mid-way and gathers at the end
       const total = TRAVEL + SPREAD;
       for (let i = 0; i < N_TRANSIT; i++) {
-        const k = ease(clamp01((trans.t - tDelay[i]) / TRAVEL));
+        const raw = clamp01((trans.t - tDelay[i]) / TRAVEL);
+        const k = ease(raw);
         const rx = tRel[i * 3], ry = tRel[i * 3 + 1], rz = tRel[i * 3 + 2];
         const ex = m[0] * rx + m[4] * ry + m[8] * rz + m[12];
         const ey = m[1] * rx + m[5] * ry + m[9] * rz + m[13];
         const ez = m[2] * rx + m[6] * ry + m[10] * rz + m[14];
         const u = 1 - k;
-        for (let c = 0; c < 3; c++) {
-          const s0 = tStart[i * 3 + c], s1 = tCtrl[i * 3 + c], s2 = c === 0 ? ex : c === 1 ? ey : ez;
-          pPos[i * 3 + c] = u * u * s0 + 2 * u * k * s1 + k * k * s2;
-        }
-        pAlpha[i] = 0.75 + 0.25 * Math.sin(Math.PI * k);
+        const billow = Math.sin(Math.PI * raw) * H * 0.3;
+        const p0 = phase[i * 3], p1 = phase[i * 3 + 1], p2 = phase[i * 3 + 2];
+        const ox = billow * Math.sin(raw * 4.2 + p0 + time * 0.7);
+        const oy = billow * 0.7 * Math.sin(raw * 3.4 + p1 + time * 0.55);
+        const oz = billow * 0.6 * Math.sin(raw * 2.7 + p2);
+        pPos[i * 3] = u * u * tStart[i * 3] + 2 * u * k * tCtrl[i * 3] + k * k * ex + ox;
+        pPos[i * 3 + 1] = u * u * tStart[i * 3 + 1] + 2 * u * k * tCtrl[i * 3 + 1] + k * k * ey + oy;
+        pPos[i * 3 + 2] = u * u * tStart[i * 3 + 2] + 2 * u * k * tCtrl[i * 3 + 2] + k * k * ez + oz;
+        pAlpha[i] = (0.6 + 0.25 * Math.sin(Math.PI * raw)) * (trans.via ? 1 - raw * raw * 0.6 : 1);
       }
       shared.uDissolve.value = 1;
       if (trans.t >= total) {
+        if (trans.via) {
+          // inside the terminal: pour back out toward the guide's spot
+          trans.via = null;
+          trans.t = 0;
+          for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
+          for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
+          seedCtrl();
+          return;
+        }
         trans.phase = 'in';
         trans.t = 0;
         const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
@@ -556,54 +630,103 @@ export async function start({ reduced = false } = {}) {
       }
       return;
     }
-    // 'in': the body re-forms from the feet up while the motes sink into it
+    // 'in': the mist condenses into the body, swirling inward as it fades
     const k = clamp01(trans.t / IN);
     shared.uDissolve.value = 1 - ease(k);
-    for (let i = 0; i < N_TRANSIT; i++) pAlpha[i] = Math.max(0, (1 - k * 1.4)) * 0.9;
+    const swirl = (1 - k) * (1 - k) * H * 0.1;
+    for (let i = 0; i < N_TRANSIT; i++) {
+      const rx = tRel[i * 3], ry = tRel[i * 3 + 1], rz = tRel[i * 3 + 2];
+      const a = phase[i * 3] + k * 3;
+      pPos[i * 3] = m[0] * rx + m[4] * ry + m[8] * rz + m[12] + Math.cos(a) * swirl;
+      pPos[i * 3 + 1] = m[1] * rx + m[5] * ry + m[9] * rz + m[13] + swirl * 0.5;
+      pPos[i * 3 + 2] = m[2] * rx + m[6] * ry + m[10] * rz + m[14] + Math.sin(a) * swirl;
+      pAlpha[i] = Math.pow(1 - k, 1.6) * 0.8;
+    }
     if (k >= 1) {
       const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
+      const greet = trans.greet || cfg.greet;
       trans = null;
       pAlpha.fill(0, 0, N_TRANSIT);
       shared.uDissolve.value = 0;
-      react(cfg.greet);
+      react(greet);
     }
   }
 
-  // Click burst from the chest
+  // Mist pool: one ring buffer for click puffs, the wake trail and anything that sheds.
+  function spawn(x, y, z, vx, vy, vz, life, alpha) {
+    const i = pool.next;
+    pool.next = (pool.next + 1) % N_POOL;
+    const j = N_TRANSIT + i;
+    pPos[j * 3] = x; pPos[j * 3 + 1] = y; pPos[j * 3 + 2] = z;
+    pool.vel[i * 3] = vx; pool.vel[i * 3 + 1] = vy; pool.vel[i * 3 + 2] = vz;
+    pool.life[i] = life;
+    pool.age[i] = 0;
+    pool.a0[i] = alpha;
+    pool.live = N_POOL;
+  }
+
+  const sv = new THREE.Vector3();
+  function sampleOne(out) {
+    const m = meshes[(Math.random() * meshes.length) | 0];
+    m.getVertexPosition((Math.random() * m.geometry.attributes.position.count) | 0, out);
+    return m.localToWorld(out);
+  }
+
+  // Click: a soft cloud breathes out of the chest
   function puff() {
     if (reduced) return;
-    burst.t = 0;
     root.updateMatrixWorld(true);
     const c = new THREE.Vector3(0, modelH * 0.62, modelH * 0.1).applyMatrix4(root.matrixWorld);
-    const sp = at.h * view.wpp;
-    for (let i = 0; i < N_BURST; i++) {
-      const j = N_TRANSIT + i;
-      pPos[j * 3] = c.x; pPos[j * 3 + 1] = c.y; pPos[j * 3 + 2] = c.z;
+    const H = at.h * view.wpp;
+    for (let n = 0; n < 90; n++) {
       const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
-      const sp2 = sp * (0.5 + Math.random() * 0.9);
-      burst.vel[i * 3] = Math.sin(ph) * Math.cos(th) * sp2;
-      burst.vel[i * 3 + 1] = Math.abs(Math.cos(ph)) * sp2 * 0.9;
-      burst.vel[i * 3 + 2] = Math.sin(ph) * Math.sin(th) * sp2 * 0.5;
-      burst.life[i] = 0.6 + Math.random() * 0.7;
+      const sp = H * (0.25 + Math.random() * 0.5);
+      spawn(c.x, c.y, c.z,
+        Math.sin(ph) * Math.cos(th) * sp, Math.abs(Math.cos(ph)) * sp * 0.6, Math.sin(ph) * Math.sin(th) * sp * 0.5,
+        1.2 + Math.random() * 1.2, 0.55);
     }
   }
-  function stepBurst(dt) {
-    if (burst.t < 0) return;
-    burst.t += dt;
-    let alive = false;
-    for (let i = 0; i < N_BURST; i++) {
-      const j = N_TRANSIT + i;
-      const k = burst.t / burst.life[i];
-      if (k >= 1) { pAlpha[j] = 0; continue; }
-      alive = true;
-      const drag = Math.exp(-2.6 * dt);
-      burst.vel[i * 3] *= drag; burst.vel[i * 3 + 1] *= drag; burst.vel[i * 3 + 2] *= drag;
-      pPos[j * 3] += burst.vel[i * 3] * dt;
-      pPos[j * 3 + 1] += burst.vel[i * 3 + 1] * dt;
-      pPos[j * 3 + 2] += burst.vel[i * 3 + 2] * dt;
-      pAlpha[j] = (1 - k) * (1 - k);
+
+  // Moving within a section: the body sheds a faint wake that the current takes away
+  let shedCarry = 0;
+  function shed(dt) {
+    if (reduced || trans || shared.uDissolve.value > 0.4) return;
+    const speed = Math.hypot(vel.x, vel.y);
+    shedCarry += Math.max(0, speed - 25) * dt * 0.09;
+    const H = at.h * view.wpp;
+    while (shedCarry >= 1) {
+      shedCarry -= 1;
+      sampleOne(sv);
+      spawn(sv.x, sv.y, sv.z,
+        -vel.x * view.wpp * 0.15 + (Math.random() - 0.5) * H * 0.05,
+        vel.y * view.wpp * 0.15 + H * 0.04,
+        (Math.random() - 0.5) * H * 0.05,
+        1.0 + Math.random() * 0.9, 0.35);
     }
-    if (!alive) burst.t = -1;
+  }
+
+  function stepPool(dt) {
+    if (!pool.live) return;
+    const H = Math.max(at.h * view.wpp, 1e-3);
+    const drag = Math.exp(-1.6 * dt);
+    let alive = 0;
+    for (let i = 0; i < N_POOL; i++) {
+      const j = N_TRANSIT + i;
+      pool.age[i] += dt;
+      const k = pool.age[i] / pool.life[i];
+      if (k >= 1) { pAlpha[j] = 0; continue; }
+      alive++;
+      const f = flow(pPos[j * 3] / H, pPos[j * 3 + 1] / H, pPos[j * 3 + 2] / H + i, time);
+      pool.vel[i * 3] = pool.vel[i * 3] * drag + f[0] * H * 0.12 * dt;
+      pool.vel[i * 3 + 1] = pool.vel[i * 3 + 1] * drag + f[1] * H * 0.12 * dt;
+      pool.vel[i * 3 + 2] = pool.vel[i * 3 + 2] * drag + f[2] * H * 0.12 * dt;
+      pPos[j * 3] += pool.vel[i * 3] * dt;
+      pPos[j * 3 + 1] += pool.vel[i * 3 + 1] * dt;
+      pPos[j * 3 + 2] += pool.vel[i * 3 + 2] * dt;
+      const fadeIn = Math.min(1, pool.age[i] / 0.15);
+      pAlpha[j] = pool.a0[i] * fadeIn * Math.pow(1 - k, 1.5);
+    }
+    pool.live = alive;
   }
 
   // Lantern motes: a slow orbit around the feet and knees
@@ -611,8 +734,8 @@ export async function start({ reduced = false } = {}) {
     const vis = 1 - shared.uDissolve.value;
     const s = root.scale.x;
     for (let i = 0; i < N_MOTE; i++) {
-      const j = N_TRANSIT + N_BURST + i;
-      const a = motePhase[i * 3] + time * motePhase[i * 3 + 1];
+      const j = N_TRANSIT + N_POOL + i;
+      const a = motePhase[i * 3] + time * motePhase[i * 3 + 1] * 0.55;
       const r = modelH * (0.3 + 0.12 * Math.sin(time * 0.7 + i)) * s;
       const y = modelH * (0.05 + 0.5 * motePhase[i * 3 + 2] + 0.04 * Math.sin(time * 1.3 + i * 2.1)) * s;
       pPos[j * 3] = root.position.x + Math.cos(a) * r;
@@ -660,15 +783,17 @@ export async function start({ reduced = false } = {}) {
       yaw = clamp(Math.atan2(tgtW.x, tgtW.z), -1.05, 1.05);
       pitch = clamp(-Math.atan2(tgtW.y, Math.hypot(tgtW.x, tgtW.z)), -0.5, 0.6);
     }
-    const k = reduced ? 1 : damp(7, dt);
+    const k = reduced ? 1 : damp(3.2, dt);
     look.yaw += (yaw - look.yaw) * k;
     look.pitch += (pitch - look.pitch) * k;
+    nod.v += (-nod.x * 110 - nod.v * 11) * dt;
+    nod.x += nod.v * dt;
     const parts = neckBone ? [[neckBone, 0.35], [headBone, 0.65]] : [[headBone, 1]];
     for (const [bone, w] of parts) {
       bone.parent.updateWorldMatrix(true, false);
       bone.parent.getWorldQuaternion(qParent);
       pivot.getWorldQuaternion(qRoot);
-      qOff.setFromEuler(eTmp.set(look.pitch * w, look.yaw * w, 0, 'YXZ'));
+      qOff.setFromEuler(eTmp.set((look.pitch + nod.x) * w, look.yaw * w, 0, 'YXZ'));
       // offset expressed in the root frame -> bone's parent frame
       qOff.premultiply(qRoot).multiply(qTmp.copy(qRoot).invert());
       qOff.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
@@ -800,21 +925,44 @@ export async function start({ reduced = false } = {}) {
   const welcomeBtn = $('#hero-welcome-btn');
   if (welcomeBtn) welcomeBtn.addEventListener('click', () => react('thumbs'));
   const out = $('#terminal-output');
+  const form = $('#terminal-form');
   if (out && 'MutationObserver' in window) {
     new MutationObserver(() => {
       const last = out.lastElementChild;
       const txt = last ? last.textContent : '';
-      if (/ERROR|FALHA/i.test(txt)) { react('no'); setFace('sad', 1); }
-      else if (/DISPARANDO/i.test(txt)) { react('jump'); puff(); }
-      else if (/CONCLU[ÍI]DA/i.test(txt)) { react('dance'); setFace('surprised', 0.6); puff(); }
+      // While it travels inside the message, the outcome waits for it to re-form.
+      const later = (name) => { if (trans) trans.greet = name; else react(name); };
+      if (/ERROR|FALHA/i.test(txt)) {
+        later('no');
+        setFace('sad', 1);
+        // look at the field that needs fixing
+        const bad = form && form.querySelector('[aria-invalid="true"]');
+        if (bad) {
+          const br = bad.getBoundingClientRect();
+          const [gx, gy] = clientToCanvas(br.left + Math.min(br.width, 240) / 2, br.top + Math.min(br.height, 60) / 2);
+          glance.x = gx; glance.y = gy; glance.until = performance.now() + 2600;
+        }
+      } else if (/DISPARANDO/i.test(txt)) {
+        carryMessage();
+      } else if (/CONCLU[ÍI]DA/i.test(txt)) {
+        later('dance');
+        setFace('surprised', 0.6);
+      }
       markInput();
     }).observe(out, { childList: true, subtree: true });
   }
-  const form = $('#terminal-form');
   if (form) {
     const greeted = new WeakSet();
     form.addEventListener('focusin', (e) => {
       if (!greeted.has(e.target)) { greeted.add(e.target); react('yes'); }
+      markInput();
+    });
+    form.addEventListener('focusout', () => markInput());
+    // every few keystrokes, a small nod: it is reading along
+    let keys = 0;
+    form.addEventListener('input', () => {
+      if (reduced) return;
+      if (++keys % 3 === 0) nod.v += 2.4;
       markInput();
     });
   }
@@ -868,19 +1016,33 @@ export async function start({ reduced = false } = {}) {
     const sy = window.scrollY;
     const v = (sy - scrollY) / Math.max(dt, 1e-3);
     scrollY = sy;
-    scrollV += (v - scrollV) * damp(6, dt);
+    scrollV += (v - scrollV) * damp(4, dt);
     const leanT = reduced ? 0 : clamp(scrollV / 2600, -1, 1);
-    lean += (leanT - lean) * damp(5, dt);
+    lean += (leanT - lean) * damp(2.4, dt);
 
     pollSection(now);
 
     if (!trans) {
       goal = anchorFor(section);
-      const k = reduced ? 1 : damp(6, dt);
-      at.x += (goal.x - at.x) * k;
-      at.y += (goal.y - at.y) * k;
-      at.h += (goal.h - at.h) * k;
-      at.yaw += (goal.yaw - at.yaw) * k;
+      if (reduced) {
+        snapTo(goal);
+      } else {
+        // A soft spring with a little overshoot: it drifts to its spot and settles,
+        // instead of sliding on rails. Seated on a card it holds on tight.
+        const stiff = goal.seat ? 170 : 11;
+        const dampC = 2 * Math.sqrt(stiff) * (goal.seat ? 1 : 0.72);
+        const h = Math.min(dt, 1 / 30);
+        for (let n = dt; n > 1e-6; n -= h) {
+          const st = Math.min(h, n);
+          vel.x += ((goal.x - at.x) * stiff - vel.x * dampC) * st;
+          vel.y += ((goal.y - at.y) * stiff - vel.y * dampC) * st;
+          at.x += vel.x * st;
+          at.y += vel.y * st;
+        }
+        const k = damp(2.6, dt);
+        at.h += (goal.h - at.h) * k;
+        at.yaw += (goal.yaw - at.yaw) * k;
+      }
     }
     stepTransit(dt);
     placeRoot();
@@ -888,10 +1050,22 @@ export async function start({ reduced = false } = {}) {
     // float, lean, turn toward what it looks at
     const cfg = SECTIONS[section] || SECTIONS.inicio;
     const floating = cfg.float && !reduced;
-    pivot.position.y = floating ? modelH * (0.03 + 0.025 * Math.sin(time * 1.6)) - lean * modelH * 0.05 : 0;
-    pivot.rotation.z = floating ? 0.04 * Math.sin(time * 0.9) : 0;
-    pivot.rotation.x = lean * 0.28;
-    pivot.rotation.y = at.yaw + look.yaw * 0.35;
+    // Adrift: layered slow sines (never quite repeating), a body that trails its own
+    // motion like something pushed through water, and the scroll current on top.
+    const hpx = Math.max(at.h, 1);
+    const driftX = clamp(vel.x / (hpx * 3.2), -0.32, 0.32);
+    const driftY = clamp(vel.y / (hpx * 4.5), -0.25, 0.25);
+    if (floating) {
+      pivot.position.x = modelH * (0.035 * Math.sin(time * 0.37) + 0.018 * Math.sin(time * 0.83 + 1.3));
+      pivot.position.y = modelH * (0.04 + 0.028 * Math.sin(time * 1.05) + 0.016 * Math.sin(time * 0.47 + 2.1)) - lean * modelH * 0.06;
+      pivot.position.z = modelH * 0.03 * Math.sin(time * 0.29 + 0.7);
+      pivot.rotation.z = 0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4) + driftX;
+    } else {
+      pivot.position.set(0, 0, 0);
+      pivot.rotation.z = goal && goal.seat ? 0 : driftX * 0.5;
+    }
+    pivot.rotation.x = lean * 0.3 + driftY + (floating ? 0.03 * Math.sin(time * 0.53 + 1.7) : 0);
+    pivot.rotation.y = at.yaw + look.yaw * 0.35 + (floating ? 0.06 * Math.sin(time * 0.31) : 0);
 
     // Bones the current clip doesn't animate keep last frame's look offset: undo it first.
     for (const r of restPose) r.bone.quaternion.copy(r.q);
@@ -913,7 +1087,8 @@ export async function start({ reduced = false } = {}) {
       if (d[MODEL.face.sad] !== undefined) inf[d[MODEL.face.sad]] = face.sad;
     }
 
-    stepBurst(dt);
+    shed(dt);
+    stepPool(dt);
     stepMotes();
     pGeo.attributes.position.needsUpdate = true;
     pGeo.attributes.aAlpha.needsUpdate = true;
@@ -1005,7 +1180,7 @@ function abyssalize(source, shared) {
         `#include <emissivemap_fragment>
         #define RIM_STRENGTH ${RIM_STRENGTH}
         float aRim = pow(1.0 - saturate(dot(normalize(normal), normalize(vViewPosition))), 2.6);
-        totalEmissiveRadiance += uRim * aRim * RIM_STRENGTH + uEdge * aEdge * 4.0;`
+        totalEmissiveRadiance += uRim * aRim * RIM_STRENGTH + uEdge * aEdge * 1.6;`
       );
   };
   m.customProgramCacheKey = () => 'abyssal-avatar';
