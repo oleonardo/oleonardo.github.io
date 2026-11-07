@@ -27,7 +27,7 @@ const MODEL = {
   face: { mesh: 'Head', surprised: 'Surprised', sad: 'Sad' },
   // Shins that dangle over the card edge while seated (knee bend + idle swing)
   shins: ['LowerLeg.L', 'LowerLeg.R'],
-  // Arm chains (upper arm, forearm, hand) used to point at things
+  // Arm chains (upper arm, forearm, hand) used to hold the contact card
   arms: [['UpperArm.L', 'LowerArm.L', 'Palm2.L'], ['UpperArm.R', 'LowerArm.R', 'Palm2.R']],
 };
 
@@ -164,7 +164,7 @@ export async function start({ reduced = false } = {}) {
     if (o.name === MODEL.face.mesh && o.morphTargetDictionary) faceMesh = o;
   });
 
-  const restPose = [headBone, neckBone, ...shins].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
+  const restPose = [headBone, neckBone, ...shins, ...arms.flat()].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
 
   // Measure the model once to map "pixels tall" to a scale.
   model.updateMatrixWorld(true);
@@ -198,6 +198,9 @@ export async function start({ reduced = false } = {}) {
     const holdLast = once || name === 'sit'; // "Sitting" is a sit-down move: hold its last frame
     next.setLoop(holdLast ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
     next.clampWhenFinished = holdLast;
+    // A clip's first play saves the bones' current pose as their "original": make
+    // sure that is the clean animated pose, not the arms bent around the card.
+    for (const r of restPose) r.bone.quaternion.copy(r.q);
     next.play();
     if (current && current !== next) current.crossFadeTo(next, dur, false);
     current = next;
@@ -395,7 +398,8 @@ export async function start({ reduced = false } = {}) {
       case 'contato': {
         const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
         const h = Math.min(H * 0.24, 220);
-        if (r) return { x: r.left - h * 0.34, y: Math.min(r.bottom + h * 0.35, H * 0.93), h, yaw: 0.55 };
+        // tucked against the card's lower-left corner, both hands on its edge
+        if (r) return { x: r.left - h * 0.2, y: Math.min(r.bottom + h * 0.16, H * 0.96), h, yaw: 0.6, grip: true };
         return { x: W * 0.5, y: H * 0.85, h, yaw: 0.4 };
       }
       default: {
@@ -452,18 +456,10 @@ export async function start({ reduced = false } = {}) {
   let focusTarget = null; // element the guide looks at when the visitor is still
   const look = { yaw: 0, pitch: 0 };
   const nod = { x: 0, v: 0 }; // keystroke nods: a damped spring on the head pitch
-  const point = { el: null, until: 0, w: 0 }; // the form field it is pointing at
   let shakeT = 9; // seconds since a "no" head shake started
-  function pointAt(el, ms) {
-    if (!el || reduced) return;
-    point.el = el;
-    point.until = performance.now() + ms;
-    wake();
-  }
-  function pointSpot(el) {
-    const r = el.getBoundingClientRect();
-    return clientToCanvas(r.left + Math.min(r.width, 220) * 0.35, r.top + Math.min(r.height, 56) / 2);
-  }
+  const grip = { w: 0 }; // how firmly it holds the contact card (0..1)
+  const tug = { x: 0, v: 0 }; // a jolt on the card when the focus moves: a springy wobble
+  let cardStyled = false;
   let scrollY = window.scrollY, scrollV = 0, lean = 0;
 
   function snapTo(a) {
@@ -477,7 +473,7 @@ export async function start({ reduced = false } = {}) {
     lantern.position.set(0, modelH * 0.1, modelH * 0.35);
     lantern.intensity = 7 * s * s * (1 - shared.uDissolve.value * 0.8);
     // while it travels as mist the motes keep the body's size, even into a small stop
-    pMat.uniforms.uScale.value = clamp((trans && trans.via ? trans.fromH : at.h) / 260, 0.55, 1.4);
+    pMat.uniforms.uScale.value = clamp((trans && (trans.via || trans.kind === 'send') ? trans.fromH : at.h) / 260, 0.55, 1.4);
     root.updateMatrixWorld(true);
     shared.uInvRoot.value.copy(root.matrixWorld).invert();
   }
@@ -511,6 +507,7 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     if (trans && trans.phase !== 'in') {
+      if (id !== 'contato') abandonSend();
       trans.toId = id; // retarget mid-flight: the motes just bend toward the new spot
       return;
     }
@@ -543,22 +540,86 @@ export async function start({ reduced = false } = {}) {
     return trans.via || anchorFor(trans.toId);
   }
 
-  // Sending a message: the guide turns to mist, flows into the terminal with the
-  // transmission, and comes back out to re-form beside it.
-  function carryMessage() {
-    if (reduced || view.dock || trans || section !== 'contato' || !nodes.terminal) {
-      react('jump');
-      puff();
-      return;
+  // Sending a message, in beats driven by the terminal:
+  //   beginSend()  the guide turns to mist (the form waits for this)
+  //   fire()       the cloud churning in its place bursts into the terminal
+  //   result(ok)   it pours back out and re-forms: a dance, or a shaken head
+  const SEND_TRAVEL = 1.1, SEND_SPREAD = 0.35;
+  let sendDone = null; // resolves beginSend()'s promise
+  function terminalStop() {
+    const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
+    if (!r) return null;
+    const [x, y] = clientToCanvas(r.left + r.width * 0.5, r.top + r.height * 0.58);
+    return { x, y, h: 60, yaw: 0 };
+  }
+  // the centre of a stop's cloud (anchor + half a body up), in world space
+  function stopCentre(a, h, out) {
+    return toWorld(a.x, a.y - h * 0.45, 0, out);
+  }
+  function settleSend(v) {
+    if (sendDone) { const f = sendDone; sendDone = null; f(v); }
+  }
+  function cloudRect() {
+    if (!trans || !trans.c) return null;
+    const [x, y] = toCanvas(trans.c);
+    const off = view.dock ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+    return { left: off.left + x - 1, top: off.top + y - 1, width: 2, height: 2 };
+  }
+  function beginSend() {
+    if (reduced || view.dock || trans || section !== 'contato' || !nodes.terminal || shared.uDissolve.value > 0.01) {
+      return Promise.resolve(null);
     }
-    const r = nodes.terminal.getBoundingClientRect();
+    settleSend(null);
     placeRoot();
     sampleSurface(tStart, tRel);
-    trans = { phase: 'out', t: 0, toId: 'contato', fromH: at.h, via: { x: r.left + r.width * 0.5, y: r.top + r.height * 0.62, h: 60, yaw: 0 } };
+    trans = { kind: 'send', phase: 'out', t: 0, toId: 'contato', fromH: at.h, c: new THREE.Vector3() };
     for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
-    seedCtrl();
-    wake();
+    markInput(); // full frame rate for the show, even after a quiet spell
+    return new Promise((res) => { sendDone = res; });
   }
+  function sending() {
+    return trans && trans.kind === 'send';
+  }
+  // A send that can't finish here (the visitor scrolled away): carry on as a normal journey.
+  function abandonSend() {
+    if (!sending()) return;
+    settleSend(null);
+    trans.kind = null;
+    trans.via = null;
+    if (trans.phase === 'hold') {
+      trans.phase = 'travel';
+      trans.t = 0;
+      for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
+      for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
+      seedCtrl();
+    }
+  }
+  const guide = {
+    beginSend,
+    fire() {
+      if (sending() && trans.phase !== 'in') {
+        trans.fire = true;
+        return cloudRect();
+      }
+      if (!reduced) { react('jump'); puff(); }
+      return null;
+    },
+    result(ok) {
+      if (sending()) {
+        trans.fire = true;
+        trans.result = !!ok;
+        trans.greet = ok ? 'dance' : 'no';
+        return;
+      }
+      outcome(ok ? 'dance' : 'no');
+    },
+  };
+  function outcome(name) {
+    if (name === 'no') { if (!reduced) shakeT = 0; setFace('sad', 1); }
+    if (name === 'dance') setFace('surprised', 0.6);
+    react(name);
+  }
+  window.avatarGuide = guide;
 
   function seedCtrl() {
     const a = transAnchor();
@@ -576,7 +637,8 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
-    const H = (trans.via ? trans.fromH : at.h) * view.wpp; // one body height in world units
+    const H = (trans.via || trans.kind === 'send' ? trans.fromH : at.h) * view.wpp; // one body height in world units
+    if (trans.via) trans.via = terminalStop() || trans.via; // the card can move (scroll, wobble)
     if (trans.phase === 'out') {
       // the body evaporates from the feet up; motes lift off and start to drift
       const k = clamp01(trans.t / OUT);
@@ -592,9 +654,52 @@ export async function start({ reduced = false } = {}) {
         pAlpha[i] = own * 0.7;
       }
       if (k >= 1) {
+        trans.phase = trans.kind === 'send' ? 'hold' : 'travel';
+        trans.stop = 'origin';
+        trans.t = 0;
+        for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
+        if (trans.kind === 'send') {
+          stopCentre(anchorFor('contato'), trans.fromH, trans.c);
+          settleSend(cloudRect());
+        }
+      }
+      return;
+    }
+    if (trans.phase === 'hold') {
+      // a churning cloud: where it stood (compiling the message), then inside the card
+      // (waiting for the answer)
+      const inCard = trans.stop === 'card';
+      if (inCard) { const a = terminalStop(); if (a) stopCentre(a, 0, trans.c); }
+      else stopCentre(anchorFor('contato'), trans.fromH, trans.c);
+      const c = trans.c;
+      const R = H * (inCard ? 0.14 : 0.3);
+      const blend = ease(clamp01(trans.t / 0.6));
+      const spin = inCard ? 2.6 : 1.5;
+      const breathe = 1 + 0.12 * Math.sin(time * 3.1);
+      for (let i = 0; i < N_TRANSIT; i++) {
+        const p0 = phase[i * 3], p1 = phase[i * 3 + 1], p2 = phase[i * 3 + 2];
+        const sp = spin * (0.7 + 0.6 * (p1 / (Math.PI * 2)));
+        const a = p0 + time * sp;
+        const rr = R * breathe * (0.3 + 0.7 * (p2 / (Math.PI * 2)));
+        const sx = c.x + Math.cos(a) * rr;
+        const sy = c.y + Math.sin(a * 0.8 + p1) * rr * 0.7 + Math.sin(time * 1.3 + p2) * R * 0.08;
+        const sz = c.z + Math.sin(a) * rr * 0.6;
+        pPos[i * 3] = tStart[i * 3] + (sx - tStart[i * 3]) * blend;
+        pPos[i * 3 + 1] = tStart[i * 3 + 1] + (sy - tStart[i * 3 + 1]) * blend;
+        pPos[i * 3 + 2] = tStart[i * 3 + 2] + (sz - tStart[i * 3 + 2]) * blend;
+        pAlpha[i] = inCard ? 0.5 + 0.2 * Math.sin(time * 4 + p0) : 0.72;
+      }
+      shared.uDissolve.value = 1;
+      // safety nets so a lost signal never strands the guide
+      const leave = inCard ? trans.result !== undefined || trans.t > 15 : trans.fire || trans.t > 5;
+      if (leave) {
+        trans.via = inCard ? null : terminalStop();
+        if (!inCard && !trans.via) trans.result = false;
         trans.phase = 'travel';
         trans.t = 0;
         for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
+        for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SEND_SPREAD;
+        seedCtrl();
       }
       return;
     }
@@ -606,9 +711,10 @@ export async function start({ reduced = false } = {}) {
     const m = root.matrixWorld.elements;
     if (trans.phase === 'travel') {
       // a loose cloud carried by the current: it billows mid-way and gathers at the end
-      const total = TRAVEL + SPREAD;
+      const TR = trans.kind === 'send' ? SEND_TRAVEL : TRAVEL;
+      const total = TR + (trans.kind === 'send' ? SEND_SPREAD : SPREAD);
       for (let i = 0; i < N_TRANSIT; i++) {
-        const raw = clamp01((trans.t - tDelay[i]) / TRAVEL);
+        const raw = clamp01((trans.t - tDelay[i]) / TR);
         const k = ease(raw);
         const rx = tRel[i * 3], ry = tRel[i * 3 + 1], rz = tRel[i * 3 + 2];
         const ex = m[0] * rx + m[4] * ry + m[8] * rz + m[12];
@@ -628,12 +734,12 @@ export async function start({ reduced = false } = {}) {
       shared.uDissolve.value = 1;
       if (trans.t >= total) {
         if (trans.via) {
-          // inside the terminal: pour back out toward the guide's spot
+          // inside the card: churn there until the answer comes back
           trans.via = null;
+          trans.phase = 'hold';
+          trans.stop = 'card';
           trans.t = 0;
           for (let i = 0; i < N_TRANSIT * 3; i++) tStart[i] = pPos[i];
-          for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
-          seedCtrl();
           return;
         }
         trans.phase = 'in';
@@ -658,10 +764,12 @@ export async function start({ reduced = false } = {}) {
     if (k >= 1) {
       const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
       const greet = trans.greet || cfg.greet;
+      const wasSend = trans.kind === 'send';
       trans = null;
       pAlpha.fill(0, 0, N_TRANSIT);
       shared.uDissolve.value = 0;
-      react(greet);
+      if (wasSend) outcome(greet);
+      else react(greet);
     }
   }
 
@@ -772,7 +880,6 @@ export async function start({ reduced = false } = {}) {
 
   function lookTarget(now) {
     if (now < glance.until) return [glance.x, glance.y];
-    if (point.el && now < point.until && point.el.isConnected) return pointSpot(point.el);
     const idle = !pointer.has || now - pointer.at > 1800;
     if (idle && focusTarget && focusTarget.isConnected) {
       const r = focusTarget.getBoundingClientRect();
@@ -818,7 +925,7 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
-  // Pointing: swing the upper arm, then the forearm, so the hand aims at the spot.
+  // Swing a bone so the direction to its child turns toward a target (weighted).
   const vA = new THREE.Vector3();
   const vB = new THREE.Vector3();
   const qSw = new THREE.Quaternion();
@@ -836,23 +943,72 @@ export async function start({ reduced = false } = {}) {
     bone.quaternion.premultiply(qSw);
     bone.updateMatrixWorld(true);
   }
-  function aimArm(dt, now) {
-    const on = !!(point.el && now < point.until && point.el.isConnected && !trans && section === 'contato' && arms.length);
-    point.w += ((on ? 1 : 0) - point.w) * (reduced ? 1 : damp(4.5, dt));
-    if (point.w < 0.01 || !point.el || !arms.length) return;
-    const [px, py] = pointSpot(point.el);
-    toWorld(px, py, 1.5, tgtW);
-    // the arm on the target's side
-    let arm = arms[0];
-    let best = Infinity;
-    for (const c of arms) {
-      c[0].getWorldPosition(vA);
-      const d = vA.distanceToSquared(tgtW);
-      if (d < best) { best = d; arm = c; }
+
+  // Two-bone reach: place the elbow (bent down and back, away from the card),
+  // then lay the forearm onto the target.
+  const kS = new THREE.Vector3(), kE = new THREE.Vector3(), kH = new THREE.Vector3();
+  const kDir = new THREE.Vector3(), kPole = new THREE.Vector3(), kTo = new THREE.Vector3();
+  function reach(arm, target, w) {
+    const [upper, lower, hand] = arm;
+    upper.getWorldPosition(kS);
+    lower.getWorldPosition(kE);
+    hand.getWorldPosition(kH);
+    const a = kS.distanceTo(kE), b = kE.distanceTo(kH);
+    kDir.subVectors(target, kS);
+    const full = kDir.length() || 1e-6;
+    kDir.divideScalar(full);
+    const d = clamp(full, Math.abs(a - b) + 1e-5, (a + b) * 0.995);
+    const alpha = Math.acos(clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1));
+    kPole.set(-0.35, -1, -0.45);
+    kPole.addScaledVector(kDir, -kPole.dot(kDir)).normalize();
+    kTo.copy(kS).addScaledVector(kDir, a * Math.cos(alpha)).addScaledVector(kPole, a * Math.sin(alpha));
+    swing(upper, lower, kTo, w);
+    kTo.copy(kS).addScaledVector(kDir, d);
+    swing(lower, hand, kTo, w);
+  }
+
+  // world -> canvas px (inverse of toWorld)
+  function toCanvas(v) {
+    const k = (CAM_Z - v.z) / CAM_Z;
+    return [v.x / (view.wpp * k) + view.w / 2, view.h / 2 - v.y / (view.wpp * k)];
+  }
+
+  // Contact: it holds the terminal card by its left edge. When the focus moves to
+  // another field it gives the card a jolt, as if it had moved the cursor itself.
+  const gripTo = new THREE.Vector3();
+  function gripCard(dt) {
+    tug.v += (-tug.x * 60 - tug.v * 4.2) * dt;
+    tug.x += tug.v * dt;
+    const card = nodes.terminal;
+    const here = section === 'contato' && !view.dock && card;
+    // the card wobbles with the jolt (individual transform properties compose with
+    // the card's own transform and transitions)
+    if (here && !reduced && (Math.abs(tug.x) > 0.002 || Math.abs(tug.v) > 0.02)) {
+      card.style.translate = `${(-tug.x * 16).toFixed(2)}px ${(tug.x * 4).toFixed(2)}px`;
+      card.style.rotate = `${(-tug.x * 2.6).toFixed(3)}deg`;
+      cardStyled = true;
+    } else if (cardStyled) {
+      card.style.translate = '';
+      card.style.rotate = '';
+      cardStyled = false;
     }
-    const w = point.w * point.w * (3 - 2 * point.w);
-    swing(arm[0], arm[1], tgtW, w);
-    swing(arm[1], arm[2], tgtW, w * 0.9);
+    const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
+    const on = !!(here && goal.grip && near && !trans && !oneShot && arms.length);
+    grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(3.5, dt));
+    // keep reaching while the weight fades (leaving the section), so the arms ease off
+    if (grip.w < 0.01 || !card || view.dock || !arms.length) return;
+    const r = card.getBoundingClientRect();
+    const [ox, oy] = clientToCanvas(r.left, r.top);
+    const w = grip.w * grip.w * (3 - 2 * grip.w);
+    arms.forEach((arm, i) => {
+      arm[0].getWorldPosition(kS);
+      const [, sy] = toCanvas(kS);
+      // near hand a little high, far hand lower, both just inside the edge
+      const y = clamp(sy + at.h * (i === 0 ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
+      const x = ox + 7;
+      toWorld(x, y, kS.z, gripTo);
+      reach(arm, gripTo, w);
+    });
   }
 
   // Seated on a card: shins hang over the edge and swing, a little out of phase.
@@ -984,29 +1140,21 @@ export async function start({ reduced = false } = {}) {
       // several lines can land in one go (status + hint), so read every added line
       let txt = '';
       for (const r of records) for (const n of r.addedNodes) txt += ' ' + n.textContent;
-      // While it travels inside the message, the outcome waits for it to re-form.
-      const later = (name) => { if (trans) trans.greet = name; else react(name); };
-      if (/ERROR|FALHA/i.test(txt)) {
-        // shake the head "no" and point at the field that needs fixing
+      // a form error: shake the head "no" (a failed send is told by result() instead)
+      if (/ERROR/i.test(txt) && !sending()) {
         if (!reduced) shakeT = 0;
         setFace('sad', 1);
-        pointAt(form && form.querySelector('[aria-invalid="true"]'), 2800);
-      } else if (/COMPILANDO/i.test(txt)) {
-        // the send starts: it turns to mist and flows in with the transmission
-        carryMessage();
-      } else if (/CONCLU[ÍI]DA/i.test(txt)) {
-        later('dance');
-        setFace('surprised', 0.6);
       }
       markInput();
     }).observe(out, { childList: true, subtree: true });
   }
   if (form) {
-    const greeted = new WeakSet();
-    // it stays put and points at the field you move to
+    // moving to another field: it jolts the card it holds, as if it moved the cursor
+    let lastField = null;
     form.addEventListener('focusin', (e) => {
-      if (e.target.matches('input, textarea')) pointAt(e.target, greeted.has(e.target) ? 1600 : 2600);
-      greeted.add(e.target);
+      const field = e.target.matches('input, textarea') ? e.target : null;
+      if (!reduced && field && field !== lastField && grip.w > 0.3) tug.v += 4.6;
+      if (field) lastField = field;
       markInput();
     });
     form.addEventListener('focusout', () => markInput());
@@ -1116,6 +1264,7 @@ export async function start({ reduced = false } = {}) {
       pivot.position.set(0, 0, 0);
       pivot.rotation.z = goal && goal.seat ? 0 : driftX * 0.5;
     }
+    pivot.rotation.z += tug.x * 0.25 * grip.w; // leans back with the jolt on the card
     pivot.rotation.x = lean * 0.3 + driftY + (floating ? 0.03 * Math.sin(time * 0.53 + 1.7) : 0);
     pivot.rotation.y = at.yaw + look.yaw * 0.35 + (floating ? 0.06 * Math.sin(time * 0.31) : 0);
 
@@ -1127,7 +1276,7 @@ export async function start({ reduced = false } = {}) {
     model.updateMatrixWorld(true);
     dangleLegs(dt, cfg.base === 'sit' && !oneShot);
     aimHead(dt, now);
-    aimArm(dt, now);
+    gripCard(dt);
     updateSeatMark();
 
     // face
@@ -1179,7 +1328,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; } };
   return window.__avatar;
 }
 
