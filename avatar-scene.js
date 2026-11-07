@@ -21,6 +21,8 @@ const MODEL = {
   headBone: 'Head',
   neckBone: 'Neck',
   face: { mesh: 'Head', surprised: 'Surprised', sad: 'Sad' },
+  // Shins that dangle over the card edge while seated (knee bend + idle swing)
+  shins: ['LowerLeg.L', 'LowerLeg.R'],
 };
 
 const CLIPS = {
@@ -51,6 +53,8 @@ const N_MOTE = 36;
 const N_ALL = N_TRANSIT + N_BURST + N_MOTE;
 
 const CAM_Z = 20;
+const SEAT_KNEE = 1.2; // radians the shins fold down from the sitting pose
+const SEAT_DROP = 0.2; // how far below the card edge the feet origin sits (x height)
 const FOV = 30;
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -135,7 +139,9 @@ export async function start({ reduced = false } = {}) {
   let faceMesh = null;
   let headBone = null;
   let neckBone = null;
+  const shins = [];
   model.traverse((o) => {
+    if (o.isBone && MODEL.shins.includes(o.name) && !shins.some((b) => b.name === o.name)) shins.push(o);
     if (o.isBone && o.name === MODEL.headBone && !headBone) headBone = o;
     if (o.isBone && o.name === MODEL.neckBone && !neckBone) neckBone = o;
     if (!o.isMesh) return;
@@ -145,7 +151,7 @@ export async function start({ reduced = false } = {}) {
     if (o.name === MODEL.face.mesh && o.morphTargetDictionary) faceMesh = o;
   });
 
-  const restPose = [headBone, neckBone].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
+  const restPose = [headBone, neckBone, ...shins].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
 
   // Measure the model once to map "pixels tall" to a scale.
   model.updateMatrixWorld(true);
@@ -295,7 +301,41 @@ export async function start({ reduced = false } = {}) {
     rail: $('#story-rail'),
     terminal: $('#terminal'),
     projectCards: $$('.project-card'),
+    projects: $$('.project'),
+    deck: $('#deck'),
   };
+
+  // Contact shadow + lantern spill on the card's top edge. It lives inside the
+  // card's own 3D transform, so it tilts and recedes with the deck for free.
+  const seatMark = document.createElement('span');
+  seatMark.className = 'avatar-seat';
+  seatMark.setAttribute('aria-hidden', 'true');
+  let seatHost = null;
+
+  // The card in front of the deck, read from the transform app.js writes:
+  // translate3d(x, 0, z) rotateY(ry) scale(s), inside the deck's perspective.
+  const DECK_RE = /translate3d\(([-\d.]+)px,\s*0(?:px)?,\s*([-\d.]+)px\)\s*rotateY\(([-\d.]+)deg\)\s*scale\(([\d.]+)\)/;
+  const SEAT_U = 0.3; // seat at 80% of the card's width (0.3 right of centre)
+  function deckSeat() {
+    if (!nodes.deck) return null;
+    let best = null;
+    for (const node of nodes.projects) {
+      const m = DECK_RE.exec(node.style.transform || '');
+      if (!m) continue;
+      const t = { node, x: +m[1], z: +m[2], ry: (+m[3] * Math.PI) / 180, s: +m[4] };
+      if (!best || t.s > best.s) best = t;
+    }
+    if (!best) return null;
+    const d = nodes.deck.getBoundingClientRect();
+    const persp = parseFloat(getComputedStyle(nodes.deck).perspective) || 1600;
+    const ox = d.left + d.width / 2, oy = d.top + d.height / 2;
+    const W = best.node.offsetWidth, H = best.node.offsetHeight;
+    const u = W * SEAT_U * best.s, v = (-H / 2) * best.s;
+    const X = best.x + u * Math.cos(best.ry);
+    const Z = best.z - u * Math.sin(best.ry);
+    const k = persp / Math.max(1, persp - Z);
+    return { node: best.node, x: ox + X * k, y: oy + v * k, k: k * best.s, ry: best.ry, H };
+  }
 
   function frontCard() {
     let best = null, bestW = 0;
@@ -317,6 +357,12 @@ export async function start({ reduced = false } = {}) {
         return { x: Math.max(r ? r.left + 64 : 0, h * 0.4), y: H * 0.94, h, yaw: 0.55 };
       }
       case 'projetos': {
+        const seat = deckSeat();
+        if (seat) {
+          const h = Math.min(seat.H * 0.4, H * 0.24, 210) * seat.k;
+          // the feet origin sits below the hips: drop it so the hips land on the edge
+          return { x: seat.x, y: seat.y + h * SEAT_DROP, h, yaw: seat.ry * 0.9 - 0.12, seat };
+        }
         const h = Math.min(H * 0.24, 210);
         const r = frontCard();
         if (r) return { x: r.left + r.width * 0.8, y: r.top + h * 0.17, h, yaw: -0.15 };
@@ -574,6 +620,7 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Look-at: head and neck turn toward the pointer (or what matters in the section)
   // ---------------------------------------------------------------------------
+  const AXIS_X = new THREE.Vector3(1, 0, 0);
   const qTmp = new THREE.Quaternion();
   const qRoot = new THREE.Quaternion();
   const qParent = new THREE.Quaternion();
@@ -625,6 +672,36 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
+  // Seated on a card: shins hang over the edge and swing, a little out of phase.
+  let dangle = 0;
+  function dangleLegs(dt, seated) {
+    dangle += ((seated ? 1 : 0) - dangle) * (reduced ? 1 : damp(4, dt));
+    if (dangle < 0.01 || !shins.length) return;
+    pivot.getWorldQuaternion(qRoot);
+    shins.forEach((bone, i) => {
+      const swing = reduced ? 0 : 0.22 * Math.sin(time * 2.1 + i * 1.9);
+      const a = dangle * (SEAT_KNEE + swing);
+      bone.parent.updateWorldMatrix(true, false);
+      bone.parent.getWorldQuaternion(qParent);
+      qOff.setFromAxisAngle(AXIS_X, a);
+      qOff.premultiply(qRoot).multiply(qTmp.copy(qRoot).invert());
+      qOff.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
+      bone.quaternion.premultiply(qOff);
+      bone.updateMatrixWorld(true);
+    });
+  }
+
+  function updateSeatMark() {
+    const seat = goal && goal.seat;
+    const on = !!seat && section === 'projetos' && !trans && !oneShot && shared.uDissolve.value < 0.2;
+    const host = seat ? seat.node.querySelector('.project-card') || seat.node : null;
+    if (host && host !== seatHost) {
+      seatHost = host;
+      seatHost.appendChild(seatMark);
+    }
+    seatMark.classList.toggle('is-on', on);
+  }
+
   // ---------------------------------------------------------------------------
   // Section awareness
   // ---------------------------------------------------------------------------
@@ -641,11 +718,10 @@ export async function start({ reduced = false } = {}) {
       }
       focusTarget = item;
     } else if (section === 'projetos') {
-      const r = frontCard();
-      const card = r && nodes.projectCards.find((c) => c.getBoundingClientRect().width === r.width);
-      const media = card ? $('.project-media', card) : null;
+      const seat = deckSeat();
+      const media = seat ? $('.project-media', seat.node) : null;
       if (media && media !== focusKey) {
-        if (focusKey && !trans) react('yes');
+        if (focusKey && !trans) { react('jump'); puff(); } // hop onto the next card
         focusKey = media;
       }
       focusTarget = media;
@@ -818,7 +894,9 @@ export async function start({ reduced = false } = {}) {
     else if (!mixer.time) mixer.update(0.5);
     for (const r of restPose) r.q.copy(r.bone.quaternion);
     model.updateMatrixWorld(true);
+    dangleLegs(dt, cfg.base === 'sit' && !oneShot);
     aimHead(dt, now);
+    updateSeatMark();
 
     // face
     if (faceMesh) {
