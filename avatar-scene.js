@@ -422,6 +422,7 @@ export async function start({ reduced = false } = {}) {
   }
 
   function resize() {
+    scrubReset();
     view.dock = mqDock.matches;
     canvas.classList.toggle('is-dock', view.dock);
     hit.classList.toggle('is-dock', view.dock);
@@ -538,11 +539,39 @@ export async function start({ reduced = false } = {}) {
       }
       trans = { phase: 'travel', t: 0, toId: id, fromH: goal.h };
       shared.uDissolve.value = 1;
+    } else if (scrub.mist) {
+      takeOverMist(id, prev);
+      return;
     } else {
       sampleSurface(tStart, tRel);
       trans = { phase: 'out', t: 0, toId: id, fromH: at.h, from: prev };
     }
     for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
+    seedCtrl();
+    dirty = true;
+  }
+
+  // A timed journey taking over from a scrubbed one, mid-mist: pick the 'out' phase
+  // up at the body's current dissolve, with the motes where they are now, so
+  // nothing pops back solid or vanishes.
+  function takeOverMist(id, prev) {
+    const d = shared.uDissolve.value;
+    let lo = 0, hi = 1;
+    for (let n = 0; n < 14; n++) { const m = (lo + hi) / 2; if (ease(m) < d) lo = m; else hi = m; }
+    const H = at.h * view.wpp;
+    for (let i = 0; i < N_TRANSIT; i++) {
+      tDelay[i] = Math.random() * SPREAD;
+      const own = clamp01((lo - tDelay[i] * 0.8) / 0.6);
+      const x = pPos[i * 3], y = pPos[i * 3 + 1], z = pPos[i * 3 + 2];
+      const f = flow(x / H, y / H, z / H + phase[i * 3], time);
+      const dd = own * own * H * 0.18;
+      tStart[i * 3] = x - f[0] * dd;
+      tStart[i * 3 + 1] = y - f[1] * dd - own * H * 0.06;
+      tStart[i * 3 + 2] = z - f[2] * dd;
+    }
+    scrub.mist = false;
+    scrub.on = false;
+    trans = { phase: 'out', t: lo * OUT, toId: id, fromH: at.h, from: prev };
     seedCtrl();
     dirty = true;
   }
@@ -780,6 +809,155 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Journeys scrubbed by the scroll
+  // ---------------------------------------------------------------------------
+  // Between two sections the journey is a pure function of the scroll position:
+  // scroll down and the guide evaporates, drifts and condenses at the next spot;
+  // scroll back and it all plays in reverse. u is a continuous section index:
+  // whole numbers are plateaus (solid at that section), fractions are partway.
+  // Time-based journeys (first appearance, menu jumps, the send) take over while
+  // they run and hand back here when they're done.
+  const ORDER = $$('main > section').map((el) => el.id).filter((id) => SECTIONS[id]);
+  const ZONE = 0.3; // half-length of a journey, in viewport heights
+  const scrub = { on: false, u: 0, mist: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0 };
+  // section tops are cached: drop them whenever the layout changes
+  if ('ResizeObserver' in window && document.querySelector('main')) {
+    new ResizeObserver(() => { scrub.tops = null; }).observe(document.querySelector('main'));
+  }
+  let jumping = false;
+  function scrubReset() { scrub.tops = null; }
+  function scrubbing() {
+    return !reduced && !view.dock && !trans && !jumping && ORDER.length > 1;
+  }
+  function scrubTarget(now) {
+    const vh = window.innerHeight, sy = window.scrollY;
+    if (!scrub.tops || now - scrub.topsAt > 1500) {
+      scrub.tops = ORDER.map((id) => document.getElementById(id).getBoundingClientRect().top + sy);
+      scrub.topsAt = now;
+    }
+    const tops = scrub.tops;
+    const end = document.documentElement.scrollHeight;
+    const maxS = end - vh;
+    for (let i = 0; i < ORDER.length - 1; i++) {
+      // the section line the menu uses: 45% down the viewport
+      const b = tops[i + 1] - vh * 0.45;
+      const next = i + 2 < tops.length ? tops[i + 2] : end;
+      let z = Math.min(vh * ZONE, (tops[i + 1] - tops[i]) * 0.45, (next - tops[i + 1]) * 0.45);
+      z = Math.max(24, Math.min(z, maxS - b));
+      if (sy <= b - z) return i;
+      if (sy < b + z) return i + (sy - (b - z)) / (2 * z);
+    }
+    return ORDER.length - 1;
+  }
+  const sA = new THREE.Vector3(), sB = new THREE.Vector3();
+  function stepScrub(dt, now) {
+    if (jumping && now - scrub.scrolledAt > 320 && !trans) { jumping = false; scrub.leap = false; }
+    // a leap (keyboard, scrollbar) keeps steering toward the section under the scroll
+    if (jumping && scrub.leap && trans && trans.phase !== 'in') {
+      const id = ORDER[Math.round(scrubTarget(now))];
+      if (id && id !== trans.toId) travelTo(id);
+    }
+    if (!scrubbing()) {
+      if (scrub.on) {
+        scrub.on = false;
+        if (scrub.mist && !trans) { pAlpha.fill(0, 0, N_TRANSIT); shared.uDissolve.value = 0; }
+        scrub.mist = false;
+      }
+      return;
+    }
+    const t = scrubTarget(now);
+    if (!scrub.on) {
+      // hand-over: start solid where the last journey left it
+      scrub.on = true;
+      scrub.u = Math.max(0, ORDER.indexOf(section));
+      scrub.greeted = section;
+    }
+    // A leap the scroll can't show (keyboard, find-in-page, scrollbar): travel directly.
+    if (Math.abs(t - scrub.u) > 1.25) {
+      const id = ORDER[Math.round(t)];
+      jumping = true;
+      scrub.leap = true;
+      scrub.scrolledAt = now;
+      travelTo(id);
+      scrub.on = false;
+      return;
+    }
+    // Left halfway: settle softly at the nearer section. Otherwise follow the scroll
+    // closely, smoothing out the steps of a mouse wheel.
+    const f = t - Math.floor(t);
+    const idle = now - scrub.scrolledAt > 450 && f > 0 && f < 1;
+    const target = idle ? Math.round(t) : t;
+    scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
+    if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
+
+    const N = ORDER.length;
+    let i = Math.min(Math.floor(scrub.u), N - 2);
+    let p = clamp01(scrub.u - i);
+    const side = p < 0.5 ? ORDER[i] : ORDER[i + 1];
+    if (side !== section) {
+      // the body crosses over while it is all mist
+      section = side;
+      focusKey = null;
+      goal = anchorFor(section);
+      snapTo(goal);
+      setBase((SECTIONS[section] || SECTIONS.inicio).base);
+    }
+    if (p < 1e-3 || p > 1 - 1e-3) {
+      if (scrub.mist || shared.uDissolve.value > 0) {
+        scrub.mist = false;
+        pAlpha.fill(0, 0, N_TRANSIT);
+        shared.uDissolve.value = 0;
+      }
+      if (scrub.greeted !== section) {
+        scrub.greeted = section;
+        react((SECTIONS[section] || SECTIONS.inicio).greet);
+      }
+      return;
+    }
+    if (!scrub.mist) {
+      // the shape the mist leaves from and gathers into
+      scrub.mist = true;
+      placeRoot();
+      sampleSurface(null, tRel);
+    }
+    // the body: evaporates over the first third, condenses over the last
+    shared.uDissolve.value = ease(clamp01(Math.min(p, 1 - p) / 0.32));
+    // the mist: from the body at one spot to the body at the other (both live)
+    const aA = section === ORDER[i] ? at : anchorFor(ORDER[i]);
+    const aB = section === ORDER[i + 1] ? at : anchorFor(ORDER[i + 1]);
+    toWorld(aA.x, aA.y, 0, sA);
+    toWorld(aB.x, aB.y, 0, sB);
+    const kA = (aA.h * view.wpp) / modelH, kB = (aB.h * view.wpp) / modelH;
+    const H = Math.max(aA.h, aB.h) * view.wpp;
+    const dist = sA.distanceTo(sB);
+    const lift = Math.max(dist * 0.28, H * 0.35);
+    const TAU = Math.PI * 2;
+    for (let j = 0; j < N_TRANSIT; j++) {
+      const p0 = phase[j * 3], p1 = phase[j * 3 + 1], p2 = phase[j * 3 + 2];
+      const r0 = p0 / TAU, r1 = p1 / TAU, r2 = p2 / TAU;
+      const rx = tRel[j * 3], ry = tRel[j * 3 + 1], rz = tRel[j * 3 + 2];
+      const Sx = sA.x + rx * kA, Sy = sA.y + ry * kA, Sz = sA.z + rz * kA;
+      const Ex = sB.x + rx * kB, Ey = sB.y + ry * kB, Ez = sB.z + rz * kB;
+      const own = clamp01((p - 0.22 * r0) / 0.18); // has left the body
+      const back = clamp01((1 - p - 0.22 * r1) / 0.18); // not yet gathered into the far body
+      const q = ease(clamp01((p - 0.12 - 0.16 * r0) / 0.62));
+      // evaporating, the current carries it a little before the journey takes it
+      const fl = flow(Sx / H, Sy / H, Sz / H + p0, time);
+      const ev = own * (1 - q) * H * 0.16;
+      const ax = Sx + fl[0] * ev, ay = Sy + fl[1] * ev + own * (1 - q) * H * 0.05, az = Sz + fl[2] * ev;
+      const cx = (Sx + Ex) / 2 + (r1 - 0.5) * dist * 0.12;
+      const cy = (Sy + Ey) / 2 + lift * (0.75 + 0.4 * r2);
+      const cz = (r0 - 0.3) * dist * 0.15;
+      const u1 = 1 - q;
+      const billow = Math.sin(Math.PI * q) * H * 0.2;
+      pPos[j * 3] = u1 * u1 * ax + 2 * u1 * q * cx + q * q * Ex + billow * Math.sin(q * 4.2 + p0 + time * 0.7);
+      pPos[j * 3 + 1] = u1 * u1 * ay + 2 * u1 * q * cy + q * q * Ey + billow * 0.7 * Math.sin(q * 3.4 + p1 + time * 0.55);
+      pPos[j * 3 + 2] = u1 * u1 * az + 2 * u1 * q * cz + q * q * Ez + billow * 0.6 * Math.sin(q * 2.7 + p2);
+      pAlpha[j] = 0.8 * Math.min(own, back) * (0.85 + 0.15 * Math.sin(Math.PI * q));
+    }
+  }
+
   // Mist pool: one ring buffer for click puffs, the wake trail and anything that sheds.
   function spawn(x, y, z, vx, vy, vz, life, alpha) {
     const i = pool.next;
@@ -1000,7 +1178,7 @@ export async function start({ reduced = false } = {}) {
       cardStyled = false;
     }
     const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
-    const on = !!(here && goal.grip && near && !trans && !oneShot && arms.length);
+    const on = !!(here && goal.grip && near && !trans && !scrub.mist && !oneShot && arms.length);
     grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(3.5, dt));
     // The left arm is behind the card whenever the guide stands at it (holding it,
     // waving, dancing, or dissolving on the way out), never flipping sides mid-view:
@@ -1047,7 +1225,7 @@ export async function start({ reduced = false } = {}) {
 
   function updateSeatMark() {
     const seat = goal && goal.seat;
-    const on = !!seat && section === 'projetos' && !trans && !oneShot && shared.uDissolve.value < 0.2;
+    const on = !!seat && section === 'projetos' && !trans && !scrub.mist && !oneShot && shared.uDissolve.value < 0.2;
     const host = seat ? seat.node.querySelector('.project-card') || seat.node : null;
     if (host && host !== seatHost) {
       seatHost = host;
@@ -1067,7 +1245,7 @@ export async function start({ reduced = false } = {}) {
     if (section === 'historia') {
       const item = $('.tl-item.is-focus .tl-card') || $('.tl-item.is-focus');
       if (item && item !== focusKey) {
-        if (focusKey) react('yes');
+        if (focusKey && !scrub.mist) react('yes');
         focusKey = item;
       }
       focusTarget = item;
@@ -1075,7 +1253,7 @@ export async function start({ reduced = false } = {}) {
       const seat = deckSeat();
       const media = seat ? $('.project-media', seat.node) : null;
       if (media && media !== focusKey) {
-        if (focusKey && !trans) { react('jump'); puff(); } // hop onto the next card
+        if (focusKey && !trans && !scrub.mist) { react('jump'); puff(); } // hop onto the next card
         focusKey = media;
       }
       focusTarget = media;
@@ -1094,7 +1272,7 @@ export async function start({ reduced = false } = {}) {
         entries.forEach((entry) => {
           if (!entry.isIntersecting) return;
           const id = entry.target.id;
-          if (SECTIONS[id] && id !== section) {
+          if (SECTIONS[id] && id !== section && !scrubbing() && !jumping) {
             focusKey = null;
             travelTo(id);
           }
@@ -1116,7 +1294,20 @@ export async function start({ reduced = false } = {}) {
     markInput();
   }, { passive: true });
 
-  window.addEventListener('scroll', () => markInput(), { passive: true });
+  window.addEventListener('scroll', () => { scrub.scrolledAt = performance.now(); markInput(); }, { passive: true });
+  // Menu links smooth-scroll across sections: one direct journey to the destination
+  // instead of passing through every section on the way.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a[href^="#"]');
+    const id = a ? a.getAttribute('href').slice(1) : '';
+    // (a link to the section it is in scrolls within reach: the scrub handles that)
+    if (!SECTIONS[id] || reduced || view.dock || id === section) return;
+    jumping = true;
+    scrub.leap = false;
+    scrub.scrolledAt = performance.now();
+    travelTo(id);
+    scrub.on = false;
+  }, true);
 
   // A click anywhere: a quick glance at it.
   window.addEventListener('pointerdown', (e) => {
@@ -1236,6 +1427,7 @@ export async function start({ reduced = false } = {}) {
     lean += (leanT - lean) * damp(2.4, dt);
 
     pollSection(now);
+    stepScrub(dt, now);
 
     if (!trans) {
       goal = anchorFor(section);
@@ -1343,7 +1535,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mist: scrub.mist, jumping, d: +shared.uDissolve.value.toFixed(2) }; } };
   return window.__avatar;
 }
 
