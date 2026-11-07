@@ -27,6 +27,8 @@ const MODEL = {
   face: { mesh: 'Head', surprised: 'Surprised', sad: 'Sad' },
   // Shins that dangle over the card edge while seated (knee bend + idle swing)
   shins: ['LowerLeg.L', 'LowerLeg.R'],
+  // Arm chains (upper arm, forearm, hand) used to point at things
+  arms: [['UpperArm.L', 'LowerArm.L', 'Palm2.L'], ['UpperArm.R', 'LowerArm.R', 'Palm2.R']],
 };
 
 const CLIPS = {
@@ -145,6 +147,12 @@ export async function start({ reduced = false } = {}) {
   let headBone = null;
   let neckBone = null;
   const shins = [];
+  const bare = (n) => n.replace(/[.\s]/g, '');
+  const bonesByName = {};
+  model.traverse((o) => {
+    if (o.isBone && !bonesByName[bare(o.name)]) bonesByName[bare(o.name)] = o;
+  });
+  const arms = MODEL.arms.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean));
   model.traverse((o) => {
     if (o.isBone && MODEL.shins.includes(o.name) && !shins.some((b) => b.name === o.name)) shins.push(o);
     if (o.isBone && o.name === MODEL.headBone && !headBone) headBone = o;
@@ -387,13 +395,6 @@ export async function start({ reduced = false } = {}) {
       case 'contato': {
         const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
         const h = Math.min(H * 0.24, 220);
-        // Typing in the terminal: drift up beside the field in use, head at its height.
-        const f = document.activeElement;
-        if (r && f && f.matches && f.matches('.terminal-form input, .terminal-form textarea')) {
-          const fr = f.getBoundingClientRect();
-          const y = clamp(fr.top + Math.min(fr.height, 60) / 2 + h * 0.62, h + 80, H * 0.97);
-          return { x: r.left - h * 0.34, y, h, yaw: 0.65 };
-        }
         if (r) return { x: r.left - h * 0.34, y: Math.min(r.bottom + h * 0.35, H * 0.93), h, yaw: 0.55 };
         return { x: W * 0.5, y: H * 0.85, h, yaw: 0.4 };
       }
@@ -451,6 +452,18 @@ export async function start({ reduced = false } = {}) {
   let focusTarget = null; // element the guide looks at when the visitor is still
   const look = { yaw: 0, pitch: 0 };
   const nod = { x: 0, v: 0 }; // keystroke nods: a damped spring on the head pitch
+  const point = { el: null, until: 0, w: 0 }; // the form field it is pointing at
+  let shakeT = 9; // seconds since a "no" head shake started
+  function pointAt(el, ms) {
+    if (!el || reduced) return;
+    point.el = el;
+    point.until = performance.now() + ms;
+    wake();
+  }
+  function pointSpot(el) {
+    const r = el.getBoundingClientRect();
+    return clientToCanvas(r.left + Math.min(r.width, 220) * 0.35, r.top + Math.min(r.height, 56) / 2);
+  }
   let scrollY = window.scrollY, scrollV = 0, lean = 0;
 
   function snapTo(a) {
@@ -759,6 +772,7 @@ export async function start({ reduced = false } = {}) {
 
   function lookTarget(now) {
     if (now < glance.until) return [glance.x, glance.y];
+    if (point.el && now < point.until && point.el.isConnected) return pointSpot(point.el);
     const idle = !pointer.has || now - pointer.at > 1800;
     if (idle && focusTarget && focusTarget.isConnected) {
       const r = focusTarget.getBoundingClientRect();
@@ -788,18 +802,57 @@ export async function start({ reduced = false } = {}) {
     look.pitch += (pitch - look.pitch) * k;
     nod.v += (-nod.x * 110 - nod.v * 11) * dt;
     nod.x += nod.v * dt;
+    shakeT += dt;
+    const shake = shakeT < 1.4 ? 0.5 * Math.sin(shakeT * 14) * (1 - shakeT / 1.4) : 0;
     const parts = neckBone ? [[neckBone, 0.35], [headBone, 0.65]] : [[headBone, 1]];
     for (const [bone, w] of parts) {
       bone.parent.updateWorldMatrix(true, false);
       bone.parent.getWorldQuaternion(qParent);
       pivot.getWorldQuaternion(qRoot);
-      qOff.setFromEuler(eTmp.set((look.pitch + nod.x) * w, look.yaw * w, 0, 'YXZ'));
+      qOff.setFromEuler(eTmp.set((look.pitch + nod.x) * w, (look.yaw + shake) * w, 0, 'YXZ'));
       // offset expressed in the root frame -> bone's parent frame
       qOff.premultiply(qRoot).multiply(qTmp.copy(qRoot).invert());
       qOff.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
       bone.quaternion.premultiply(qOff);
       bone.updateMatrixWorld(true);
     }
+  }
+
+  // Pointing: swing the upper arm, then the forearm, so the hand aims at the spot.
+  const vA = new THREE.Vector3();
+  const vB = new THREE.Vector3();
+  const qSw = new THREE.Quaternion();
+  const qId = new THREE.Quaternion();
+  function swing(bone, child, target, w) {
+    bone.getWorldPosition(vA);
+    child.getWorldPosition(vB);
+    vB.sub(vA).normalize();
+    vA.subVectors(target, vA).normalize();
+    qSw.setFromUnitVectors(vB, vA);
+    qSw.copy(qId.identity().slerp(qSw, w));
+    bone.parent.updateWorldMatrix(true, false);
+    bone.parent.getWorldQuaternion(qParent);
+    qSw.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
+    bone.quaternion.premultiply(qSw);
+    bone.updateMatrixWorld(true);
+  }
+  function aimArm(dt, now) {
+    const on = !!(point.el && now < point.until && point.el.isConnected && !trans && section === 'contato' && arms.length);
+    point.w += ((on ? 1 : 0) - point.w) * (reduced ? 1 : damp(4.5, dt));
+    if (point.w < 0.01 || !point.el || !arms.length) return;
+    const [px, py] = pointSpot(point.el);
+    toWorld(px, py, 1.5, tgtW);
+    // the arm on the target's side
+    let arm = arms[0];
+    let best = Infinity;
+    for (const c of arms) {
+      c[0].getWorldPosition(vA);
+      const d = vA.distanceToSquared(tgtW);
+      if (d < best) { best = d; arm = c; }
+    }
+    const w = point.w * point.w * (3 - 2 * point.w);
+    swing(arm[0], arm[1], tgtW, w);
+    swing(arm[1], arm[2], tgtW, w * 0.9);
   }
 
   // Seated on a card: shins hang over the edge and swing, a little out of phase.
@@ -927,22 +980,19 @@ export async function start({ reduced = false } = {}) {
   const out = $('#terminal-output');
   const form = $('#terminal-form');
   if (out && 'MutationObserver' in window) {
-    new MutationObserver(() => {
-      const last = out.lastElementChild;
-      const txt = last ? last.textContent : '';
+    new MutationObserver((records) => {
+      // several lines can land in one go (status + hint), so read every added line
+      let txt = '';
+      for (const r of records) for (const n of r.addedNodes) txt += ' ' + n.textContent;
       // While it travels inside the message, the outcome waits for it to re-form.
       const later = (name) => { if (trans) trans.greet = name; else react(name); };
       if (/ERROR|FALHA/i.test(txt)) {
-        later('no');
+        // shake the head "no" and point at the field that needs fixing
+        if (!reduced) shakeT = 0;
         setFace('sad', 1);
-        // look at the field that needs fixing
-        const bad = form && form.querySelector('[aria-invalid="true"]');
-        if (bad) {
-          const br = bad.getBoundingClientRect();
-          const [gx, gy] = clientToCanvas(br.left + Math.min(br.width, 240) / 2, br.top + Math.min(br.height, 60) / 2);
-          glance.x = gx; glance.y = gy; glance.until = performance.now() + 2600;
-        }
-      } else if (/DISPARANDO/i.test(txt)) {
+        pointAt(form && form.querySelector('[aria-invalid="true"]'), 2800);
+      } else if (/COMPILANDO/i.test(txt)) {
+        // the send starts: it turns to mist and flows in with the transmission
         carryMessage();
       } else if (/CONCLU[ÍI]DA/i.test(txt)) {
         later('dance');
@@ -953,8 +1003,10 @@ export async function start({ reduced = false } = {}) {
   }
   if (form) {
     const greeted = new WeakSet();
+    // it stays put and points at the field you move to
     form.addEventListener('focusin', (e) => {
-      if (!greeted.has(e.target)) { greeted.add(e.target); react('yes'); }
+      if (e.target.matches('input, textarea')) pointAt(e.target, greeted.has(e.target) ? 1600 : 2600);
+      greeted.add(e.target);
       markInput();
     });
     form.addEventListener('focusout', () => markInput());
@@ -1075,6 +1127,7 @@ export async function start({ reduced = false } = {}) {
     model.updateMatrixWorld(true);
     dangleLegs(dt, cfg.base === 'sit' && !oneShot);
     aimHead(dt, now);
+    aimArm(dt, now);
     updateSeatMark();
 
     // face
