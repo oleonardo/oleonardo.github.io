@@ -16,8 +16,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const MODEL = {
   url: 'assets/avatar/placeholder-robot.glb',
-  // Placeholder materials recoloured into the Abissal palette (amber = the human).
-  palette: { Main: 0xd98a3a, Grey: 0x34445a, Black: 0x0b1220 },
+  // Abissal palette: trench-blue shell, mist joints, amber eyes (the human light).
+  palette: {
+    Main: { color: 0x23395c, metal: 0.45, rough: 0.4 },
+    Grey: { color: 0x93a1b5, metal: 0.3, rough: 0.45 },
+    Black: { color: 0x050810, emissive: 0xffb35c, glow: 0.6 },
+  },
   headBone: 'Head',
   neckBone: 'Neck',
   face: { mesh: 'Head', surprised: 'Surprised', sad: 'Sad' },
@@ -53,6 +57,7 @@ const N_MOTE = 36;
 const N_ALL = N_TRANSIT + N_BURST + N_MOTE;
 
 const CAM_Z = 20;
+const RIM_STRENGTH = '0.5'; // teal fresnel rim (GLSL literal)
 const SEAT_KNEE = 1.2; // radians the shins fold down from the sitting pose
 const SEAT_DROP = 0.2; // how far below the card edge the feet origin sits (x height)
 const FOV = 30;
@@ -955,9 +960,15 @@ export async function start({ reduced = false } = {}) {
 // -----------------------------------------------------------------------------
 function abyssalize(source, shared) {
   const m = source.clone();
-  const hex = MODEL.palette[source.name];
-  if (hex !== undefined && m.color) m.color.setHex(hex);
-  if ('metalness' in m) { m.metalness = 0.2; m.roughness = 0.5; }
+  const look = MODEL.palette[source.name];
+  if (look && m.color) {
+    m.color.setHex(look.color);
+    if (m.emissive) {
+      m.emissive.setHex(look.emissive || 0x000000);
+      m.emissiveIntensity = look.glow || 1;
+    }
+    if ('metalness' in m) { m.metalness = look.metal ?? 0.2; m.roughness = look.rough ?? 0.5; }
+  }
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, shared);
     sh.vertexShader = sh.vertexShader
@@ -992,8 +1003,9 @@ function abyssalize(source, shared) {
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
+        #define RIM_STRENGTH ${RIM_STRENGTH}
         float aRim = pow(1.0 - saturate(dot(normalize(normal), normalize(vViewPosition))), 2.6);
-        totalEmissiveRadiance += uRim * aRim * 0.9 + uEdge * aEdge * 4.0;`
+        totalEmissiveRadiance += uRim * aRim * RIM_STRENGTH + uEdge * aEdge * 4.0;`
       );
   };
   m.customProgramCacheKey = () => 'abyssal-avatar';
