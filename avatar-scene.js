@@ -16,11 +16,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const MODEL = {
   url: 'assets/avatar/placeholder-robot.glb',
-  // Abissal palette: trench-blue shell, mist joints, amber eyes (the human light).
+  // Abissal palette: trench-blue shell, steel-blue joints, softly glowing teal eyes.
   palette: {
-    Main: { color: 0x23395c, metal: 0.45, rough: 0.4 },
-    Grey: { color: 0x93a1b5, metal: 0.3, rough: 0.45 },
-    Black: { color: 0x050810, emissive: 0xffb35c, glow: 0.6 },
+    Main: { color: 0x1b2b44, metal: 0.5, rough: 0.38 },
+    Grey: { color: 0x3d5a78, metal: 0.4, rough: 0.42 },
+    Black: { color: 0x050810, emissive: 0x63e6d2, glow: 0.6 },
   },
   headBone: 'Head',
   neckBone: 'Neck',
@@ -109,7 +109,7 @@ export async function start({ reduced = false } = {}) {
 
   // Deep-sea light: dim blue fill, warm key from the reader, strong teal rim from behind.
   scene.add(new THREE.HemisphereLight(0x2d8da4, 0x050810, 1.1));
-  const key = new THREE.DirectionalLight(0xffe6c8, 2.0);
+  const key = new THREE.DirectionalLight(0xdbe8f4, 1.8);
   key.position.set(3, 4, 8);
   scene.add(key);
   const rimLight = new THREE.DirectionalLight(0x63e6d2, 3.2);
@@ -441,7 +441,7 @@ export async function start({ reduced = false } = {}) {
     toWorld(at.x, at.y, 0, root.position);
     root.scale.setScalar(s);
     lantern.position.set(0, modelH * 0.1, modelH * 0.35);
-    lantern.intensity = 18 * s * s * (1 - shared.uDissolve.value * 0.8);
+    lantern.intensity = 7 * s * s * (1 - shared.uDissolve.value * 0.8);
     pMat.uniforms.uScale.value = clamp(at.h / 260, 0.55, 1.4);
     root.updateMatrixWorld(true);
     shared.uInvRoot.value.copy(root.matrixWorld).invert();
