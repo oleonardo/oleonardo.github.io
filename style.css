@@ -2454,13 +2454,14 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 /* Where the guide sits on the front project card: a soft contact shadow and
    the amber spill of its lantern on the card's top edge. */
 .avatar-seat {
+  --lift: 0; /* how high it is off the card (hops): the shadow shrinks and fades */
   position: absolute;
   top: 0;
   left: 80%;
   z-index: 10;
   width: 150px;
   height: 44px;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(calc(1 - var(--lift) * 0.55));
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.45s var(--ease-out);
@@ -2471,6 +2472,7 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
   content: "";
   position: absolute;
   border-radius: 50%;
+  opacity: calc(1 - var(--lift) * 0.75);
 }
 
 .avatar-seat::before {
