@@ -226,6 +226,16 @@ export async function start({ reduced = false } = {}) {
     if (reduced || !actions[name]) return;
     fadeTo(name, 0.45, true);
   }
+  // The hello on reaching a section. At the contact card with a field already in
+  // focus it skips the wave and takes hold of the card straight away.
+  function greet(id, name) {
+    if (id === 'contato' && formFocused()) return;
+    react(name);
+  }
+  function formFocused() {
+    const f = document.getElementById('terminal-form');
+    return !!(f && f.contains(document.activeElement));
+  }
   mixer.addEventListener('finished', (e) => {
     if (oneShot && e.action === current) {
       oneShot = false;
@@ -472,6 +482,7 @@ export async function start({ reduced = false } = {}) {
   let shakeT = 9; // seconds since a "no" head shake started
   const grip = { w: 0 }; // how firmly it holds the contact card (0..1)
   const tug = { x: 0, v: 0 }; // a jolt on the card when the focus moves: a springy wobble
+  let tugAsked = 0; // when a pull was asked for before the hands were on the card
   let cardStyled = false;
   let scrollY = window.scrollY, scrollV = 0, lean = 0;
 
@@ -515,7 +526,7 @@ export async function start({ reduced = false } = {}) {
       // No journey: a puff in place (dock) or a plain cut (reduced motion).
       snapTo(goal);
       setBase(cfg.base);
-      if (!reduced && prev !== id) { puff(); react(cfg.greet); }
+      if (!reduced && prev !== id) { puff(); greet(id, cfg.greet); }
       dirty = true;
       return;
     }
@@ -800,12 +811,13 @@ export async function start({ reduced = false } = {}) {
     if (k >= 1) {
       const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
       const wasSend = trans.kind === 'send';
-      const greet = trans.greet || (wasSend ? null : cfg.greet);
+      const hello = trans.greet || (wasSend ? null : cfg.greet);
+      const toId = trans.toId;
       trans = null;
       pAlpha.fill(0, 0, N_TRANSIT);
       shared.uDissolve.value = 0;
-      if (wasSend) { if (greet) outcome(greet); }
-      else react(greet);
+      if (wasSend) { if (hello) outcome(hello); }
+      else greet(toId, hello);
     }
   }
 
@@ -911,7 +923,7 @@ export async function start({ reduced = false } = {}) {
       }
       if (scrub.greeted !== section) {
         scrub.greeted = section;
-        react((SECTIONS[section] || SECTIONS.inicio).greet);
+        greet(section, (SECTIONS[section] || SECTIONS.inicio).greet);
       }
       return;
     }
@@ -1179,7 +1191,11 @@ export async function start({ reduced = false } = {}) {
     }
     const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
     const on = !!(here && goal.grip && near && !trans && !scrub.mist && !oneShot && arms.length);
-    grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(3.5, dt));
+    // a pull asked for while it was arriving or waving: take hold quickly, then pull
+    // (asked from afar, it pulls on arrival, as long as the field still has focus)
+    if (tugAsked && (performance.now() - tugAsked > 6000 || !formFocused())) tugAsked = 0;
+    grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(tugAsked && on ? 9 : 3.5, dt));
+    if (tugAsked && on && grip.w > 0.3) { tug.v += 4.6; tugAsked = 0; }
     // The left arm is behind the card whenever the guide stands at it (holding it,
     // waving, dancing, or dissolving on the way out), never flipping sides mid-view:
     // whatever of that arm overlaps the card is hidden.
@@ -1337,6 +1353,14 @@ export async function start({ reduced = false } = {}) {
   });
 
   // Hero CTA and contact terminal hooks
+  function pullCard() {
+    if (grip.w > 0.3) { tug.v += 4.6; return; }
+    // not holding it yet: still arriving, or waving hello. Cut the wave short so the
+    // hands go to the card now, and pull as soon as they are on it.
+    tugAsked = performance.now();
+    if (section === 'contato' && oneShot && !sending()) { oneShot = false; fadeTo(baseName, 0.3); }
+  }
+
   const welcomeBtn = $('#hero-welcome-btn');
   if (welcomeBtn) welcomeBtn.addEventListener('click', () => react('thumbs'));
   const out = $('#terminal-output');
@@ -1355,11 +1379,12 @@ export async function start({ reduced = false } = {}) {
     }).observe(out, { childList: true, subtree: true });
   }
   if (form) {
-    // moving to another field: it jolts the card it holds, as if it moved the cursor
+    // entering a field, the first one included: it pulls the card it holds, as if
+    // it moved the cursor there itself
     let lastField = null;
     form.addEventListener('focusin', (e) => {
       const field = e.target.matches('input, textarea') ? e.target : null;
-      if (!reduced && field && field !== lastField && grip.w > 0.3) tug.v += 4.6;
+      if (!reduced && field && field !== lastField) pullCard();
       if (field) lastField = field;
       markInput();
     });
