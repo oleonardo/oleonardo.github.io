@@ -10,8 +10,7 @@
  * that will be swapped for Léo's own avatar. Everything that depends on the model
  * lives in MODEL and CLIPS below.
  *
- * Loaded lazily by avatar.js once the page is idle, so it never competes with the
- * first paint or the sea's intro.
+ * Started by avatar.js as soon as the page is parsed: it is always on the page.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -424,7 +423,7 @@ export async function start({ reduced = false } = {}) {
     motePhase[i * 3 + 2] = Math.random(); // height
   }
 
-  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null };
+  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null, head: null };
   const v3 = new THREE.Vector3();
   function sampleSurface(intoWorld, intoRel) {
     root.updateMatrixWorld(true);
@@ -544,6 +543,14 @@ export async function start({ reduced = false } = {}) {
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
   const PORTAL = 0.06; // half a portal's width, in card widths (see .tl-portal)
+  // Flying, it faces the way it goes. The passes (and the leg out of the last tunnel)
+  // are laid out facing right, the way the page reads; scrolled back up they run
+  // backward, so it turns round to face left instead of flying backward. m: 0 as laid
+  // out, 1 turned round (see stepHeading).
+  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false };
+  // Which arm reaches out ahead in flight: the one on the visitor's side (the right
+  // arm flying right, the left one turned round), so the big head doesn't hide it.
+  const leadOf = (s) => (s < 0 ? 1 - head.m : head.m);
   function storyPos() {
     const sec = nodes.storySec;
     if (!sec) return 0;
@@ -618,8 +625,10 @@ export async function start({ reduced = false } = {}) {
     }
     const fly = smooth(clamp01(ph / 0.07)) * (exiting ? 1 : 1 - smooth(clamp01((ph - 0.88) / 0.12)));
     const inLeg = ph < TUN.off || exiting;
-    // how far it reaches ahead (hands first) and behind: upright, flying level
-    const front = h * (0.3 + 0.36 * fly), back = h * (0.3 + 0.15 * fly);
+    // how far it reaches ahead (the head, the fist under its chin) and behind (the
+    // feet), upright or flying level; to the right and left (front, back) as it faces
+    const ahead = h * (0.3 + 0.28 * fly), behind = h * (0.3 + 0.22 * fly);
+    const front = ahead + (behind - ahead) * head.m, back = behind + (ahead - behind) * head.m;
     // behind the card (any part of it, or all of it)
     const over = inLeg && x + front > c.l && x - back < c.r;
     const hidden = inLeg && x - back > c.l && x + front < c.r;
@@ -1324,13 +1333,15 @@ export async function start({ reduced = false } = {}) {
   }
 
   // Off the last video case: the deck holds its last card a while (app.js, under
-  // html.has-ledge) and it runs on to the end of the card and past it, treading air
-  // with nothing under its feet. It stops there, legs still going, looks down, looks at
-  // the visitor, gulps, and drops into the next section as the stage lets go (the second
-  // half of the zone), landing on its backside like everywhere else.
+  // html.has-ledge) and it runs on to the end of the card. The moment its feet leave
+  // it, it is caught in mid-air with nothing under it: arms up, legs dangling, turned
+  // to the visitor (no running on thin air). Carried a little past the edge, it looks
+  // down into the drop, back at the visitor, gulps, and drops into the next section as
+  // the stage lets go (the second half of the zone), landing on its backside like
+  // everywhere else.
   const DECK_DWELL = 0.4; // the hold, in viewport heights (the same in app.js)
   const ledgeMode = () => !reduced && !view.dock && !!nodes.deck && nodes.projects.length > 1;
-  const LEDGE = { edge: 0.2, stop: 0.3, look: 0.36, gulp: 0.43, drop: 0.5 }; // where each beat starts
+  const LEDGE = { edge: 0.2, stop: 0.3, look: 0.33, gulp: 0.42, drop: 0.5 }; // where each beat starts
   const ledge = { drove: false, was: false, face: 1, lastP: -1, still: 0, v: 0, carry: null }; // carry: the card it dropped in behind
   function ledgeExit(p, idB, dt) {
     const F = anchorFor('projetos'); // its footing on the card, held at the deck's resting height
@@ -1345,7 +1356,7 @@ export async function start({ reduced = false } = {}) {
       // drifting in behind it as the card rides up out of the way: whatever of it
       // overlaps the card is hidden (drawn by maskTunnel).
       const ek = endKind(idB);
-      journeyAt({ x: xOver, y: F.y, h, yaw: YAW_LOOK, lag: 0.4 }, anchorFor(idB, true), (p - LEDGE.drop) / (1 - LEDGE.drop), 'fall', ek, scrubPhases('fall', ek));
+      journeyAt({ x: xOver, y: F.y, h, yaw: YAW_LOOK, lag: 0.4, hang: true }, anchorFor(idB, true), (p - LEDGE.drop) / (1 - LEDGE.drop), 'fall', ek, scrubPhases('fall', ek));
       ledge.carry = card;
       return;
     }
@@ -1367,24 +1378,25 @@ export async function start({ reduced = false } = {}) {
     ledge.still = moving ? 0 : ledge.still + dt;
     const dir = p < S ? (moving ? Math.sign(dp) : Math.sign(ledge.face) || 1) : 1;
     ledge.face += (dir - ledge.face) * damp(7, dt);
-    const look = smooth(clamp01((p - LEDGE.look) / 0.04)); // eyes down
-    const turn = smooth(clamp01((p - LEDGE.gulp) / 0.05)); // round to the visitor
-    const hang = smooth(clamp01((p - LEDGE.gulp) / (LEDGE.drop - LEDGE.gulp))); // the legs give up: arms up, ready to drop
+    // its feet off the card: straight into the hang, turned to the visitor
+    const off = smooth(clamp01((x - r.right) / (h * 0.15)));
+    // a look down into the drop, and back up for the gulp
+    const down = smooth(clamp01((p - LEDGE.look) / 0.04)) * (1 - smooth(clamp01((p - LEDGE.gulp) / 0.03)));
     at.x = x;
     at.y = F.y;
     at.h = h;
-    at.yaw = YAW_RUN * ledge.face + (YAW_LOOK - YAW_RUN * ledge.face) * turn;
+    at.yaw = YAW_RUN * ledge.face + (YAW_LOOK - YAW_RUN * ledge.face) * off;
     snapAt();
     vel.x = vel.y = 0;
     jr.on = true;
     const P = jr.pose || (jr.pose = newPose());
-    mixPose(P, POSE.air, POSE.air, 0);
-    jr.w = hang;
-    jr.pin = 1 - hang; // (the soles stay level with the card's top: cartoon physics)
-    jr.air = hang;
+    mixPose(P, POSE.hang, POSE.hang, 0);
+    jr.w = off;
+    jr.pin = 1 - off; // (the soles stay level with the card's top: cartoon physics)
+    jr.air = off;
     jr.tilt = 0;
     jr.fly = 0;
-    jr.pitch = 0.14 * look * (1 - turn);
+    jr.pitch = 0.14 * down;
     const gk = clamp01((p - 0.445) / 0.035); // the gulp: a squash and a stretch
     jr.squash = gk > 0 && gk < 1 ? 0.07 * Math.sin(TAU * gk) : 0;
     jr.hop = 0;
@@ -1392,22 +1404,19 @@ export async function start({ reduced = false } = {}) {
     jr.lastP = 0; // (so the bump counts once the drop starts)
     seatLift = 0;
     // The legs: the Running clip while it covers ground (standing still on the card when
-    // the scroll stops), paced to its speed; stuck in the air, a cartoon spin that winds
-    // down as it looks down; then they hang under the pose.
+    // the scroll stops), paced to its speed; off the card they hang under the pose.
     const speed = moving ? Math.abs(dp * v) / Math.max(dt, 1e-3) : 0;
     ledge.v += (speed - ledge.v) * damp(8, dt);
-    const want = p < E && ledge.still > 0.35 ? 'idle' : 'run';
-    if (baseName !== want) { baseName = want; if (!oneShot || want === 'run') fadeTo(want, 0.22); }
-    if (current === actions.run) {
-      const ts = p < S ? clamp(ledge.v / (h * RUN_STRIDE) + 0.4, 0.8, 2.2) : 2.6 - 2.1 * smooth(clamp01((p - LEDGE.look) / (LEDGE.gulp - LEDGE.look)));
-      actions.run.setEffectiveTimeScale(ts);
-    }
-    // what it looks at: ahead, then down into the drop, then out at the visitor
-    if (p < LEDGE.look) [glance.x, glance.y] = [x + Math.sign(ledge.face || 1) * h * 3, F.y - h * 0.6];
-    else if (turn < 0.5) [glance.x, glance.y] = [x + h * 0.35, F.y + h * 3];
+    const want = off > 0.5 || (p < E && ledge.still > 0.35) ? 'idle' : 'run';
+    if (baseName !== want) { baseName = want; if (!oneShot || want === 'run') fadeTo(want, off > 0.5 ? 0.12 : 0.22); }
+    if (current === actions.run) actions.run.setEffectiveTimeScale(clamp(ledge.v / (h * RUN_STRIDE) + 0.4, 0.8, 2.2));
+    // what it looks at: ahead along the card, then out at the visitor, down into the
+    // drop, and back at the visitor
+    if (off < 0.5) [glance.x, glance.y] = [x + Math.sign(ledge.face || 1) * h * 3, F.y - h * 0.6];
+    else if (down > 0.5) [glance.x, glance.y] = [x + h * 0.35, F.y + h * 3];
     else [glance.x, glance.y] = [x, F.y - h * 0.75];
     glance.until = performance.now() + 150;
-    if (p >= LEDGE.look) setFace('surprised', 1);
+    if (off > 0.5) setFace('surprised', 1);
     ledge.lastP = p;
   }
 
@@ -1486,7 +1495,7 @@ export async function start({ reduced = false } = {}) {
       w = smooth(clamp01(p / Math.max(1e-4, T0 * 0.7)));
     } else if (p < L || airEnd) {
       // springing off (or setting off in the air), arms up in flight
-      if (sk === 'fall') mixPose(P, POSE.air, POSE.air, 0);
+      if (sk === 'fall') mixPose(P, A.hang ? POSE.hang : POSE.air, POSE.air, A.hang ? smooth(clamp01(q / 0.3)) : 0); // (off the ledge, the dangle turns to a flail)
       else if (aloft) mixPose(P, sk === 'fly' ? POSE.fly : POSE.hover, POSE.air, smooth(clamp01(q / 0.35)));
       else mixPose(P, POSE.crouch, POSE.air, smooth(clamp01(q / 0.2)));
       // and ready for what's coming: the portal, the feet, or the backside
@@ -1507,6 +1516,31 @@ export async function start({ reduced = false } = {}) {
     // the bump: once, on the way down
     if (!airEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
     jr.lastP = p;
+  }
+  // Facing the way it flies (see head): flying (laid out level) and moving the other
+  // way it turns round, through the front and rising out of the level flight while it
+  // turns. Slowed to a stop in mid-air it keeps its heading; hovering at a portal,
+  // standing or landing, the journey's own facing holds.
+  function stepHeading(dt) {
+    const flyW = jr.on ? clamp01((jr.tilt - TILT.hover) / (TILT.fly - TILT.hover)) : 0;
+    // which way it goes: through the tunnels, along the pass (the cards slide round the
+    // ring under it, and it wraps round the screen's edges); anywhere else, on screen
+    let v = 0;
+    if (tun.drove) {
+      if (head.wasTun && Number.isFinite(head.pg)) v = (head.g - head.pg) * head.gw;
+      head.pg = head.g;
+    } else {
+      const dx = Number.isFinite(head.x) ? at.x - head.x : 0;
+      v = Math.abs(dx) < view.w * 0.3 ? dx : 0;
+    }
+    head.wasTun = tun.drove;
+    head.x = at.x;
+    head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
+    if (flyW < 0.25 || reduced || view.dock) head.to = 0;
+    else if (Math.abs(head.vx) > at.h * 0.5) head.to = (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
+    head.m += (head.to - head.m) * damp(6, dt);
+    if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
+    if (dbg.head != null) head.m = head.to = dbg.head; // (QA: pin the heading)
   }
   // (a journey taking over mid-way starts from where the body was: see snapRig)
   function snapAt() {
@@ -1571,6 +1605,8 @@ export async function start({ reduced = false } = {}) {
       at.yaw = snap.at.yaw + wrapPi(at.yaw - snap.at.yaw) * snap.k;
     }
     goal = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tun: true };
+    head.g = st.k + st.ph; // (where along the pass, for the heading)
+    head.gw = st.c.w;
     jr.tilt = st.tilt;
     jr.fly = st.fly;
     jr.air = 0.45 * st.fly; // a little buffeting in flight
@@ -1599,8 +1635,11 @@ export async function start({ reduced = false } = {}) {
     // the head going in at the left edge, the feet clearing the right edge
     const edge = st.inside < 0 ? 2 : st.x + st.front < st.c.l ? 0 : st.x - st.back > st.c.r ? 2 : 1;
     if (tun.edge && tun.edge.k === st.k && tun.edge.e !== edge) {
-      if ((tun.edge.e === 0) !== (edge === 0)) portalBurst(st.c.l, st.c, st.h, true);
-      if ((tun.edge.e === 2) !== (edge === 2)) portalBurst(st.c.r, st.c, st.h, false);
+      // (in at the left and out at the right; scrolled back, in at the right and out at
+      // the left, the motes going its way)
+      const fwd = edge > tun.edge.e;
+      if ((tun.edge.e === 0) !== (edge === 0)) portalBurst(st.c.l, st.c, st.h, fwd, fwd ? 1 : -1);
+      if ((tun.edge.e === 2) !== (edge === 2)) portalBurst(st.c.r, st.c, st.h, !fwd, fwd ? 1 : -1);
     }
     tun.edge = { k: st.k, e: edge };
   }
@@ -1623,7 +1662,7 @@ export async function start({ reduced = false } = {}) {
       T.wake.style.setProperty('--wx', `${wx}px`);
     }
   }
-  function portalBurst(x, c, h, inward) {
+  function portalBurst(x, c, h, inward, dir) {
     setFace('surprised', 0.6);
     const H = h * view.wpp;
     const o = toWorld(x, c.cy, 0, new THREE.Vector3());
@@ -1633,8 +1672,8 @@ export async function start({ reduced = false } = {}) {
       const y = Math.sin(a) * R, xx = Math.cos(a) * H * 0.2;
       // in: drawn off the rim toward the heart and into the card; out: thrown clear
       const sp = H * (0.4 + Math.random() * 0.6);
-      spawn(o.x - xx * (inward ? 1 : -1), o.y + y, o.z,
-        inward ? sp * 0.7 : sp, inward ? -y * 1.6 : y * 0.5 + H * 0.05, (Math.random() - 0.5) * H * 0.2,
+      spawn(o.x - xx * (inward ? 1 : -1) * dir, o.y + y, o.z,
+        (inward ? sp * 0.7 : sp) * dir, inward ? -y * 1.6 : y * 0.5 + H * 0.05, (Math.random() - 0.5) * H * 0.2,
         inward ? 0.35 + Math.random() * 0.25 : 0.6 + Math.random() * 0.5, 0.6);
     }
   }
@@ -1871,6 +1910,8 @@ export async function start({ reduced = false } = {}) {
     const runW = Math.max(runner.run, trans && trans.kind === 'enter' ? trans.sp : 0, level);
     yaw *= 1 - runW * 0.85;
     pitch *= 1 - runW * 0.6;
+    // laid out level, chin up: it looks ahead, the way it flies
+    if (jr.on) pitch -= 0.8 * clamp01((tilt.rotation.x - TILT.hover) / (TILT.fly - TILT.hover));
     const cw = cheerWeight();
     if (cw > 0) {
       yaw += (-at.yaw * 0.8 * cheer.mix - yaw) * cw;
@@ -1949,14 +1990,17 @@ export async function start({ reduced = false } = {}) {
   //   up / back / scull / seat / push: where the hands go (weights; none = the clip's arms)
   //     up    raised and flailing, in the air
   //     back  swept back along the body: flying level, head first like a dart
+  //     lead  of the arms swept back, one reaches out ahead instead (flying; see leadOf)
   //     scull out in front, paddling slowly, to hold itself at a portal
   //     seat  on the card beside the hips;  push: on the card in front, to get up
   // The time tunnels: hover (at a portal, legs paddling) and fly (level, legs trailing);
   // the lean that lays it level is the tilt (see setTilt), not part of the pose.
   const POSE = {
     air: { pitch: -0.1, thigh: [0.4, -0.62, 0.62], shin: [0.2, -0.6, -0.75], kick: 1, flat: 0, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
+    // caught in mid-air off the end of the last case: arms up, the legs just dangling
+    hang: { pitch: -0.1, thigh: [0.4, -0.62, 0.62], shin: [0.2, -0.6, -0.75], kick: 0.2, flat: 0, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
     hover: { pitch: 0.06, thigh: [0.16, -0.86, 0.42], shin: [0.08, -0.92, -0.3], kick: 0.45, flat: 0, up: 0, back: 0, scull: 1, seat: 0, push: 0 },
-    fly: { pitch: -0.12, thigh: [0.1, -1, -0.12], shin: [0.07, -1, -0.22], kick: 0.3, flat: 0, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
+    fly: { pitch: -0.12, thigh: [0.1, -1, -0.12], shin: [0.07, -1, -0.22], kick: 0.3, flat: 0, up: 0, back: 1, lead: 1, scull: 0, seat: 0, push: 0 },
     seat: { pitch: -0.14, thigh: [0.17, -0.06, 1], shin: [0.13, -0.16, 1], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 1, push: 0 },
     crouch: { pitch: 0.32, thigh: [0.2, -0.5, 0.85], shin: [0.06, -0.92, -0.38], kick: 0, flat: 1, up: 0, back: 0, scull: 0, seat: 0.5, push: 0 },
     push: { pitch: 0.45, thigh: [0.22, -0.32, 0.92], shin: [0.06, -0.96, -0.28], kick: 0, flat: 1, up: 0, back: 0, scull: 0, seat: 0, push: 1 },
@@ -1970,10 +2014,10 @@ export async function start({ reduced = false } = {}) {
     tuck: { pitch: 0.12, thigh: [0.2, -0.3, 0.95], shin: [0.08, -0.95, -0.3], kick: 0, flat: 1, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
     stomp: { pitch: -0.05, thigh: [0.12, -1, 0.1], shin: [0.06, -1, -0.02], kick: 0, flat: 1, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
   };
-  const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'scull', 'seat', 'push'];
-  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 0, push: 0 }; }
+  const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'lead', 'scull', 'seat', 'push'];
+  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 0 }; }
   function mixPose(out, a, b, k) {
-    for (const key of POSE_KEYS) out[key] = a[key] + (b[key] - a[key]) * k;
+    for (const key of POSE_KEYS) { const x = a[key] || 0; out[key] = x + ((b[key] || 0) - x) * k; }
     for (let j = 0; j < 3; j++) {
       out.thigh[j] = a.thigh[j] + (b.thigh[j] - a.thigh[j]) * k;
       out.shin[j] = a.shin[j] + (b.shin[j] - a.shin[j]) * k;
@@ -2038,7 +2082,14 @@ export async function start({ reduced = false } = {}) {
       const fl = Math.sin(time * 5.2 + i * 2.4);
       const add = (k, x, y, z, px, py, pz) => { vT.x += k * x; vT.y += k * y; vT.z += k * z; vPo.x += k * px; vPo.y += k * py; vPo.z += k * pz; };
       if (P.up) add(P.up, vS.x + s * 0.16 * Hm, vS.y + (0.3 + 0.06 * fl) * Hm, vS.z + 0.06 * Hm, s, 0.15, -0.5);
-      if (P.back) add(P.back, vS.x + s * (0.1 + 0.01 * fl) * Hm, vS.y - 0.34 * Hm, vS.z - 0.14 * Hm, s, 0.2, 1);
+      if (P.back) {
+        // flying, one of them reaches out ahead instead: up past the shoulder in model
+        // space, which laid level is the way it flies, and a little forward (down, laid
+        // level) to clear the big head, the fist out in front under its chin
+        const ld = P.lead ? P.lead * leadOf(s) : 0;
+        if (ld < 1) add(P.back * (1 - ld), vS.x + s * (0.1 + 0.01 * fl) * Hm, vS.y - 0.34 * Hm, vS.z - 0.14 * Hm, s, 0.2, 1);
+        if (ld > 0) add(P.back * ld, vS.x + s * 0.08 * Hm, vS.y + 0.55 * Hm, vS.z + (0.25 + 0.015 * fl) * Hm, s, 0, -1);
+      }
       if (P.scull) {
         const sc = Math.sin(time * 2.6 + i * Math.PI);
         add(P.scull, vS.x + s * (0.18 + 0.05 * sc) * Hm, vS.y - (0.07 - 0.06 * sc) * Hm, vS.z + (0.2 + 0.04 * sc) * Hm, s, -0.6, -0.4);
@@ -2726,6 +2777,7 @@ export async function start({ reduced = false } = {}) {
     // blend from its last frame instead of jumping.
     if (wasOn && !jr.on && !reduced && !view.dock) snapRig();
     placeRoot();
+    stepHeading(dt);
 
     // float, lean, turn toward what it looks at
     const cfg = SECTIONS[section] || SECTIONS.inicio;
@@ -2760,11 +2812,12 @@ export async function start({ reduced = false } = {}) {
     // (on the cards the scroll moves the deck, not the guide: no lean into the current)
     pivot.rotation.x = calm * (onFloor ? 0 : lean * 0.3 + driftY) + fw * 0.03 * Math.sin(time * 0.53 + 1.7)
       + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : trans && trans.kind === 'enter' ? trans.pitch : 0);
-    pivot.rotation.y = at.yaw + look.yaw * 0.35 + fw * 0.06 * Math.sin(time * 0.31);
+    pivot.rotation.y = at.yaw * (1 - 2 * head.m) + look.yaw * 0.35 + fw * 0.06 * Math.sin(time * 0.31);
     if (dbg.yaw != null) pivot.rotation.y = dbg.yaw;
     const sq = jr.on ? jr.squash : 0;
     pivot.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
-    setTilt(jr.on ? jr.tilt : 0);
+    // (turning round in flight, it rises out of the level flight and lies down again)
+    setTilt(jr.on ? jr.tilt - Math.max(0, jr.tilt - TILT.hover) * 0.85 * Math.sin(Math.PI * head.m) : 0);
 
     // Bones the current clip doesn't animate keep last frame's offsets: undo them first.
     for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
@@ -2835,7 +2888,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
   return window.__avatar;
 }
 
