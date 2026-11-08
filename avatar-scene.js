@@ -25,17 +25,25 @@ const MODEL = {
   headBone: 'Head',
   neckBone: 'Neck',
   face: { mesh: 'Head', surprised: 'Surprised', sad: 'Sad' },
-  // Shins that dangle over the card edge while seated (knee bend + idle swing)
-  shins: ['LowerLeg.L', 'LowerLeg.R'],
   // Arm chains (upper arm, forearm, hand) used to hold the contact card
   arms: [['UpperArm.L', 'LowerArm.L', 'Palm2.L'], ['UpperArm.R', 'LowerArm.R', 'Palm2.R']],
+  // The cheer on a new video card, posed from the clips' own right arm: the raised
+  // arm of Wave with the index pointing up, then the fist and thumb of ThumbsUp.
+  cheer: {
+    arm: ['Shoulder.R', 'UpperArm.R', 'LowerArm.R'],
+    index: ['Index.R', 'Index2.R'],
+    curl: ['Middle1.R', 'Middle2.R', 'Ring1.R', 'Ring2.R'],
+    thumb: ['Thumb.R', 'Thumb2.R'],
+    point: ['Wave', 0.7], // clip and time of the raised arm
+    up: ['ThumbsUp', 0.9], // clip and time of the thumbs-up
+  },
   // Meshes of the left arm: while holding the card, that hand reaches behind it
   behindCard: ['Hand.L', 'Arm.L'],
 };
 
 const CLIPS = {
   idle: 'Idle',
-  sit: 'Sitting',
+  run: 'Running',
   wave: 'Wave',
   yes: 'Yes',
   no: 'No',
@@ -48,7 +56,7 @@ const CLIPS = {
 const SECTIONS = {
   inicio: { base: 'idle', greet: 'wave', float: true },
   historia: { base: 'idle', greet: 'yes', float: true },
-  projetos: { base: 'sit', greet: 'thumbs', float: false },
+  projetos: { base: 'idle', greet: 'thumbs', float: false },
   contato: { base: 'idle', greet: 'wave', float: true },
 };
 
@@ -62,8 +70,6 @@ const N_ALL = N_TRANSIT + N_POOL + N_MOTE;
 
 const CAM_Z = 20;
 const RIM_STRENGTH = '0.5'; // teal fresnel rim (GLSL literal)
-const SEAT_KNEE = 1.2; // radians the shins fold down from the sitting pose
-const SEAT_DROP = 0.2; // how far below the card edge the feet origin sits (x height)
 const FOV = 30;
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -150,7 +156,6 @@ export async function start({ reduced = false } = {}) {
   let faceMesh = null;
   let headBone = null;
   let neckBone = null;
-  const shins = [];
   const bare = (n) => n.replace(/[.\s]/g, '');
   const bonesByName = {};
   model.traverse((o) => {
@@ -158,7 +163,6 @@ export async function start({ reduced = false } = {}) {
   });
   const arms = MODEL.arms.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean));
   model.traverse((o) => {
-    if (o.isBone && MODEL.shins.includes(o.name) && !shins.some((b) => b.name === o.name)) shins.push(o);
     if (o.isBone && o.name === MODEL.headBone && !headBone) headBone = o;
     if (o.isBone && o.name === MODEL.neckBone && !neckBone) neckBone = o;
     if (!o.isMesh) return;
@@ -176,7 +180,51 @@ export async function start({ reduced = false } = {}) {
     }
   });
 
-  const restPose = [headBone, neckBone, ...shins, ...arms.flat()].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
+  // The cheer's poses, sampled from the clips: for each bone, where it is while
+  // pointing up and while giving the thumbs-up.
+  const cheerBones = [];
+  {
+    const C = MODEL.cheer;
+    const sample = ([clipName, at], bone) => {
+      const clip = THREE.AnimationClip.findByName(gltf.animations, clipName);
+      const tr = clip && clip.tracks.find((t) => t.name === `${bone.name}.quaternion`);
+      if (!tr) return bone.quaternion.clone();
+      const v = tr.createInterpolant(new Float32Array(4)).evaluate(at);
+      return new THREE.Quaternion(v[0], v[1], v[2], v[3]);
+    };
+    const add = (names, point) => names.forEach((n) => {
+      const bone = bonesByName[bare(n)];
+      if (bone) cheerBones.push({ bone, point: point(bone), up: sample(C.up, bone) });
+    });
+    add(C.arm, (b) => sample(C.point, b));
+    add(C.index, (b) => sample(C.point, b)); // open: the index straight up
+    add(C.curl, (b) => sample(C.up, b)); // curled into the fist
+    add(C.thumb, (b) => b.quaternion.clone()); // relaxed
+  }
+
+  // The soles: the vertices of the rigid foot meshes riding on the foot bones
+  // (the ankle bone itself sits well above the toes).
+  const soles = [];
+  for (const n of ['Foot.L', 'Foot.R']) {
+    const bone = bonesByName[bare(n)];
+    if (!bone) continue;
+    bone.traverse((o) => {
+      if (!o.isMesh || o.isSkinnedMesh) return;
+      const a = o.geometry.attributes.position;
+      const step = Math.max(1, Math.ceil(a.count / 160));
+      const pts = [];
+      for (let i = 0; i < a.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(a, i));
+      soles.push({ mesh: o, pts });
+    });
+  }
+  const vSole = new THREE.Vector3();
+  function soleY() {
+    let low = Infinity;
+    for (const s of soles) for (const p of s.pts) low = Math.min(low, model.worldToLocal(vSole.copy(p).applyMatrix4(s.mesh.matrixWorld)).y);
+    return low;
+  }
+
+  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone)])].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
 
   // Measure the model once to map "pixels tall" to a scale.
   model.updateMatrixWorld(true);
@@ -185,6 +233,8 @@ export async function start({ reduced = false } = {}) {
   const modelH = size.y || 1;
   model.position.y = -box.min.y;
   shared.uNoiseScale.value = 7 / modelH;
+  // how high the soles sit when standing (model space): the run is pinned to it
+  const footRest = soles.length ? soleY() : 0;
   shared.uHeight.value = modelH;
 
   // Animation
@@ -207,9 +257,8 @@ export async function start({ reduced = false } = {}) {
     next.enabled = true;
     next.setEffectiveTimeScale(1);
     next.setEffectiveWeight(1);
-    const holdLast = once || name === 'sit'; // "Sitting" is a sit-down move: hold its last frame
-    next.setLoop(holdLast ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
-    next.clampWhenFinished = holdLast;
+    next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = !!once;
     // A clip's first play saves the bones' current pose as their "original": make
     // sure that is the clean animated pose, not the arms bent around the card.
     for (const r of restPose) r.bone.quaternion.copy(r.q);
@@ -352,38 +401,52 @@ export async function start({ reduced = false } = {}) {
     projectCards: $$('.project-card'),
     projects: $$('.project'),
     deck: $('#deck'),
+    workStage: $('.work-stage'),
   };
 
-  // Contact shadow + lantern spill on the card's top edge. It lives inside the
-  // card's own 3D transform, so it tilts and recedes with the deck for free.
+  // Contact shadow + lantern spill under its feet on the card it stands on. It lives
+  // inside the card's own 3D transform, so it tilts and recedes with the deck for free.
   const seatMark = document.createElement('span');
   seatMark.className = 'avatar-seat';
   seatMark.setAttribute('aria-hidden', 'true');
   let seatHost = null;
 
-  // The card in front of the deck, read from the transform app.js writes:
+  // Video cases: it runs on top of the deck, at the centre of the screen, while the
+  // cards slide by underneath. The floor is the top edge of whichever card is under
+  // the centre, read from the transform app.js writes:
   // translate3d(x, 0, z) rotateY(ry) scale(s), inside the deck's perspective.
   const DECK_RE = /translate3d\(([-\d.]+)px,\s*0(?:px)?,\s*([-\d.]+)px\)\s*rotateY\(([-\d.]+)deg\)\s*scale\(([\d.]+)\)/;
-  const SEAT_U = 0.3; // seat at 80% of the card's width (0.3 right of centre)
-  function deckSeat() {
-    if (!nodes.deck) return null;
+  let deckPersp = 1600, barBottom = 68;
+  function deckFloor() {
+    if (!nodes.deck || !nodes.projects.length) return null;
+    const d = nodes.deck.getBoundingClientRect();
+    const ox = d.left + d.width / 2, oy = d.top + d.height / 2;
     let best = null;
     for (const node of nodes.projects) {
       const m = DECK_RE.exec(node.style.transform || '');
       if (!m) continue;
-      const t = { node, x: +m[1], z: +m[2], ry: (+m[3] * Math.PI) / 180, s: +m[4] };
-      if (!best || t.s > best.s) best = t;
+      const X = +m[1], Z = +m[2], ry = (+m[3] * Math.PI) / 180, s = +m[4];
+      const hw = (node.offsetWidth / 2) * s, hh = (node.offsetHeight / 2) * s;
+      const c = Math.cos(ry), sn = Math.sin(ry);
+      // the card's top corners (u = -hw, +hw), projected
+      const ka = deckPersp / Math.max(1, deckPersp - (Z + hw * sn));
+      const kb = deckPersp / Math.max(1, deckPersp - (Z - hw * sn));
+      const xa = ox + (X - hw * c) * ka, xb = ox + (X + hw * c) * kb;
+      if (ox < Math.min(xa, xb) || ox > Math.max(xa, xb)) continue;
+      const t = (ox - xa) / (xb - xa || 1);
+      const z = Z + hw * sn * (1 - 2 * t);
+      if (best && z <= best.z) continue;
+      best = { node, z, u: t, y: oy - hh * (ka + (kb - ka) * t) };
     }
     if (!best) return null;
-    const d = nodes.deck.getBoundingClientRect();
-    const persp = parseFloat(getComputedStyle(nodes.deck).perspective) || 1600;
-    const ox = d.left + d.width / 2, oy = d.top + d.height / 2;
-    const W = best.node.offsetWidth, H = best.node.offsetHeight;
-    const u = W * SEAT_U * best.s, v = (-H / 2) * best.s;
-    const X = best.x + u * Math.cos(best.ry);
-    const Z = best.z - u * Math.sin(best.ry);
-    const k = persp / Math.max(1, persp - Z);
-    return { node: best.node, x: ox + X * k, y: oy + v * k, k: k * best.s, ry: best.ry, H };
+    // Where a card's top sits at rest while the deck holds still on screen. It sizes
+    // the guide (as tall as fits under the top bar), and it is as high as it goes:
+    // once the deck scrolls away it stays put and evaporates instead of riding up.
+    const stageTop = nodes.workStage ? nodes.workStage.getBoundingClientRect().top : 0;
+    const restTop = oy - stageTop - nodes.projects[0].offsetHeight / 2;
+    const h = clamp(restTop - barBottom + 6, view.h * 0.12, 200); // (the model box has headroom over the head)
+    // (reduced motion has no evaporating: it stays on its card wherever that goes)
+    return { node: best.node, u: best.u, x: ox, y: (reduced ? best.y : Math.max(best.y, restTop)) + 1, h };
   }
 
   function frontCard() {
@@ -396,6 +459,9 @@ export async function start({ reduced = false } = {}) {
     return best;
   }
 
+  // Running state, kept here because the deck anchor reads its heading.
+  const runner = { f: -1, v: 0, dir: 1, run: 0, on: false, still: 0, yaw: -0.1, idx: -1 };
+
   function anchorFor(id) {
     const W = view.w, H = view.h;
     if (view.dock) return { x: W / 2, y: H * 0.98, h: H * 0.9, yaw: -0.25 };
@@ -406,16 +472,12 @@ export async function start({ reduced = false } = {}) {
         return { x: Math.max(r ? r.left + 64 : 0, h * 0.4), y: H * 0.94, h, yaw: 0.55 };
       }
       case 'projetos': {
-        const seat = deckSeat();
-        if (seat) {
-          const h = Math.min(seat.H * 0.4, H * 0.24, 210) * seat.k;
-          // the feet origin sits below the hips: drop it so the hips land on the edge
-          return { x: seat.x, y: seat.y + h * SEAT_DROP, h, yaw: seat.ry * 0.9 - 0.12, seat };
-        }
-        const h = Math.min(H * 0.24, 210);
+        const floor = deckFloor();
+        if (floor) return { x: floor.x, y: floor.y, h: floor.h, yaw: runner.yaw, floor };
+        const h = Math.min(H * 0.18, 170);
         const r = frontCard();
-        if (r) return { x: r.left + r.width * 0.8, y: r.top + h * 0.17, h, yaw: -0.15 };
-        return { x: W * 0.12, y: H * 0.8, h, yaw: 0.5 };
+        if (r) return { x: r.left + r.width / 2, y: r.top, h, yaw: runner.yaw };
+        return { x: W * 0.5, y: H * 0.3, h, yaw: runner.yaw };
       }
       case 'contato': {
         const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
@@ -433,6 +495,9 @@ export async function start({ reduced = false } = {}) {
 
   function resize() {
     scrubReset();
+    if (nodes.deck) deckPersp = parseFloat(getComputedStyle(nodes.deck).perspective) || 1600;
+    const bar = $('.topbar');
+    if (bar) barBottom = bar.getBoundingClientRect().bottom;
     view.dock = mqDock.matches;
     canvas.classList.toggle('is-dock', view.dock);
     hit.classList.toggle('is-dock', view.dock);
@@ -832,7 +897,7 @@ export async function start({ reduced = false } = {}) {
   // they run and hand back here when they're done.
   const ORDER = $$('main > section').map((el) => el.id).filter((id) => SECTIONS[id]);
   const ZONE = 0.3; // half-length of a journey, in viewport heights
-  const scrub = { on: false, u: 0, mist: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0 };
+  const scrub = { on: false, u: 0, mist: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
   // section tops are cached: drop them whenever the layout changes
   if ('ResizeObserver' in window && document.querySelector('main')) {
     new ResizeObserver(() => { scrub.tops = null; }).observe(document.querySelector('main'));
@@ -852,10 +917,12 @@ export async function start({ reduced = false } = {}) {
     const end = document.documentElement.scrollHeight;
     const maxS = end - vh;
     for (let i = 0; i < ORDER.length - 1; i++) {
-      // the section line the menu uses: 45% down the viewport
-      const b = tops[i + 1] - vh * 0.45;
       const next = i + 2 < tops.length ? tops[i + 2] : end;
       let z = Math.min(vh * ZONE, (tops[i + 1] - tops[i]) * 0.45, (next - tops[i + 1]) * 0.45);
+      // the section line the menu uses: 45% down the viewport. Off the video cases it
+      // stands on the deck, so it sets off as soon as the deck starts to scroll away.
+      let b = tops[i + 1] - vh * 0.45;
+      if (ORDER[i] === 'projetos') b = Math.min(b, tops[i + 1] - vh + z);
       z = Math.max(24, Math.min(z, maxS - b));
       if (sy <= b - z) return i;
       if (sy < b + z) return i + (sy - (b - z)) / (2 * z);
@@ -896,10 +963,16 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     // Left halfway: settle softly at the nearer section. Otherwise follow the scroll
-    // closely, smoothing out the steps of a mouse wheel.
+    // closely, smoothing out the steps of a mouse wheel. (Leaving the video cases, the
+    // deck it stands on is already scrolling away: it goes on instead of back.)
     const f = t - Math.floor(t);
     const idle = now - scrub.scrolledAt > 450 && f > 0 && f < 1;
-    const target = idle ? Math.round(t) : t;
+    const onward = ORDER[Math.floor(t)] === 'projetos' && nodes.workStage && nodes.workStage.getBoundingClientRect().top < -40;
+    let target = idle ? (onward ? Math.ceil(t) : Math.round(t)) : t;
+    // Once it has settled ahead, scrolling on the same way doesn't pull it back into
+    // the mist: it waits there for the scroll to catch up.
+    if (!idle && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
+    if (!idle && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
     scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
     if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
 
@@ -1066,7 +1139,6 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Look-at: head and neck turn toward the pointer (or what matters in the section)
   // ---------------------------------------------------------------------------
-  const AXIS_X = new THREE.Vector3(1, 0, 0);
   const qTmp = new THREE.Quaternion();
   const qRoot = new THREE.Quaternion();
   const qParent = new THREE.Quaternion();
@@ -1100,6 +1172,15 @@ export async function start({ reduced = false } = {}) {
       tgtW.applyQuaternion(qTmp.copy(qRoot).invert());
       yaw = clamp(Math.atan2(tgtW.x, tgtW.z), -1.05, 1.05);
       pitch = clamp(-Math.atan2(tgtW.y, Math.hypot(tgtW.x, tgtW.z)), -0.5, 0.6);
+    }
+    // running, it watches where it goes; cheering, it looks up at the card it points
+    // to, then out at the visitor for the thumbs-up
+    yaw *= 1 - runner.run * 0.85;
+    pitch *= 1 - runner.run * 0.6;
+    const cw = cheerWeight();
+    if (cw > 0) {
+      yaw += (-at.yaw * 0.8 * cheer.mix - yaw) * cw;
+      pitch += (-0.42 * (1 - cheer.mix) - pitch) * cw;
     }
     const k = reduced ? 1 : damp(3.2, dt);
     look.yaw += (yaw - look.yaw) * k;
@@ -1220,32 +1301,97 @@ export async function start({ reduced = false } = {}) {
     });
   }
 
-  // Seated on a card: shins hang over the edge and swing, a little out of phase.
-  let dangle = 0;
-  function dangleLegs(dt, seated) {
-    dangle += ((seated ? 1 : 0) - dangle) * (reduced ? 1 : damp(4, dt));
-    if (dangle < 0.01 || !shins.length) return;
-    pivot.getWorldQuaternion(qRoot);
-    shins.forEach((bone, i) => {
-      const swing = reduced ? 0 : 0.22 * Math.sin(time * 2.1 + i * 1.9);
-      const a = dangle * (SEAT_KNEE + swing);
-      bone.parent.updateWorldMatrix(true, false);
-      bone.parent.getWorldQuaternion(qParent);
-      qOff.setFromAxisAngle(AXIS_X, a);
-      qOff.premultiply(qRoot).multiply(qTmp.copy(qRoot).invert());
-      qOff.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
-      bone.quaternion.premultiply(qOff);
-      bone.updateMatrixWorld(true);
-    });
+  // ---------------------------------------------------------------------------
+  // Video cases: running along with the deck, and a cheer for every new card
+  // ---------------------------------------------------------------------------
+  // The deck position (in cards) straight from the scroll, as app.js computes it.
+  const workSec = document.getElementById('projetos');
+  function deckPos() {
+    if (!workSec) return 0;
+    const r = workSec.getBoundingClientRect();
+    return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * Math.max(0, nodes.projects.length - 1);
+  }
+  function stepRunner(dt) {
+    const here = section === 'projetos' && !view.dock && !reduced && !trans && !scrub.mist && !!nodes.deck;
+    const f = deckPos();
+    const v = runner.f < 0 ? 0 : (f - runner.f) / Math.max(dt, 1e-3);
+    runner.f = f;
+    runner.v += (v - runner.v) * damp(8, dt);
+    const speed = Math.abs(runner.v);
+    if (speed > 0.06) runner.dir = runner.v > 0 ? 1 : -1; // down the page: the cards go left, it runs right
+    // it runs while the cards move, and stops a beat after they do
+    if (!runner.on && speed > 0.22) runner.on = true;
+    runner.still = runner.on && speed < 0.1 ? runner.still + dt : 0;
+    if (runner.still > 0.35 || !here) runner.on = false;
+    runner.run += ((runner.on ? 1 : 0) - runner.run) * damp(6, dt);
+    // which way it faces: where it runs; half toward the viewer to cheer; else at them
+    const cheering = cheer.t >= 0 && cheer.t < CHEER_END - 0.25;
+    // (standing, it turns a touch to its right so the thumbs-up clears the big head)
+    const yawT = runner.on ? runner.dir * (cheering ? 0.75 : 1.15) : cheering ? -0.35 : -0.1;
+    runner.yaw += (yawT - runner.yaw) * damp(runner.on ? 7 : 4, dt);
+    if (here) {
+      const want = runner.on ? 'run' : 'idle';
+      if (baseName !== want) {
+        baseName = want;
+        // a hello or a click reaction gives way to the run
+        if (runner.on || !oneShot) fadeTo(want, runner.on ? 0.22 : 0.3);
+      }
+      // the stride keeps pace with the cards
+      if (current === actions.run) actions.run.setEffectiveTimeScale(clamp(0.75 + speed * 0.55, 0.85, 1.9));
+    } else if (baseName === 'run') {
+      setBase((SECTIONS[section] || SECTIONS.inicio).base);
+    }
+    // a new card in the middle: point up at it, then a thumbs-up
+    const idx = Math.round(f);
+    if (here && runner.idx >= 0 && idx !== runner.idx) startCheer();
+    runner.idx = here ? idx : -1;
+  }
+
+  // The cheer: the right arm goes up with the index pointing, holds, comes down to a
+  // thumbs-up and lets go. Another new card while it cheers sends the arm back up,
+  // so a fast scroll through the deck ends on a single thumbs-up.
+  const CHEER_END = 2.1;
+  const cheer = { t: -1, mix: 0, w: 0 };
+  const qPose = new THREE.Quaternion();
+  const smooth = (x) => x * x * (3 - 2 * x);
+  function startCheer() {
+    if (reduced || !cheerBones.length) return;
+    if (cheer.t < 0) { cheer.t = 0; cheer.mix = 0; }
+    else cheer.t = Math.min(cheer.t, 0.4);
+    setFace('surprised', 0.8);
+  }
+  function cheerWeight() {
+    return cheer.t < 0 ? 0 : cheer.w;
+  }
+  function applyCheer(dt) {
+    if (cheer.t < 0) return;
+    cheer.t += dt;
+    // Eased, never cut: leaving into the mist (or a new card halfway down) moves the
+    // arm there, it doesn't snap.
+    const away = section !== 'projetos' || !!trans || scrub.mist;
+    const shape = smooth(clamp01(cheer.t / 0.28)) * (1 - smooth(clamp01((cheer.t - 1.75) / 0.3)));
+    const target = away || cheer.t >= CHEER_END ? 0 : shape;
+    cheer.w += (target - cheer.w) * damp(away ? 9 : 16, dt);
+    if (target === 0 && cheer.w < 0.01) { cheer.t = -1; cheer.w = 0; return; }
+    if (!away) cheer.mix += (smooth(clamp01((cheer.t - 0.85) / 0.27)) - cheer.mix) * damp(14, dt);
+    for (const c of cheerBones) {
+      qPose.copy(c.point).slerp(c.up, cheer.mix);
+      c.bone.quaternion.slerp(qPose, cheer.w);
+    }
   }
 
   function updateSeatMark() {
-    const seat = goal && goal.seat;
-    const on = !!seat && section === 'projetos' && !trans && !scrub.mist && !oneShot && shared.uDissolve.value < 0.2;
-    const host = seat ? seat.node.querySelector('.project-card') || seat.node : null;
+    const floor = goal && goal.floor;
+    const on = !!floor && section === 'projetos' && !trans && !scrub.mist && shared.uDissolve.value < 0.2;
+    const host = floor ? floor.node.querySelector('.project-card') || floor.node : null;
     if (host && host !== seatHost) {
       seatHost = host;
       seatHost.appendChild(seatMark);
+    }
+    if (on) {
+      // under its feet, a little narrower while it runs
+      seatMark.style.left = `${(floor.u * 100).toFixed(2)}%`;
+      seatMark.style.width = `${(at.h * (0.85 - 0.15 * runner.run)).toFixed(0)}px`;
     }
     seatMark.classList.toggle('is-on', on);
   }
@@ -1266,13 +1412,8 @@ export async function start({ reduced = false } = {}) {
       }
       focusTarget = item;
     } else if (section === 'projetos') {
-      const seat = deckSeat();
-      const media = seat ? $('.project-media', seat.node) : null;
-      if (media && media !== focusKey) {
-        if (focusKey && !trans && !scrub.mist) { react('jump'); puff(); } // hop onto the next card
-        focusKey = media;
-      }
-      focusTarget = media;
+      // standing on the cards: it looks out at the visitor (cheers are the runner's)
+      focusTarget = null;
     } else if (section === 'contato') {
       focusTarget = document.activeElement && document.activeElement.closest && document.activeElement.closest('.terminal-form')
         ? document.activeElement
@@ -1310,7 +1451,13 @@ export async function start({ reduced = false } = {}) {
     markInput();
   }, { passive: true });
 
-  window.addEventListener('scroll', () => { scrub.scrolledAt = performance.now(); markInput(); }, { passive: true });
+  window.addEventListener('scroll', () => {
+    const y = window.scrollY;
+    if (y !== scrub.lastY) scrub.dir = y > scrub.lastY ? 1 : -1;
+    scrub.lastY = y;
+    scrub.scrolledAt = performance.now();
+    markInput();
+  }, { passive: true });
   // Menu links smooth-scroll across sections: one direct journey to the destination
   // instead of passing through every section on the way.
   document.addEventListener('click', (e) => {
@@ -1453,6 +1600,7 @@ export async function start({ reduced = false } = {}) {
 
     pollSection(now);
     stepScrub(dt, now);
+    stepRunner(dt);
 
     if (!trans) {
       goal = anchorFor(section);
@@ -1460,9 +1608,9 @@ export async function start({ reduced = false } = {}) {
         snapTo(goal);
       } else {
         // A soft spring with a little overshoot: it drifts to its spot and settles,
-        // instead of sliding on rails. Seated on a card it holds on tight.
-        const stiff = goal.seat ? 170 : 11;
-        const dampC = 2 * Math.sqrt(stiff) * (goal.seat ? 1 : 0.72);
+        // instead of sliding on rails. On the cards it keeps its feet on the edge.
+        const stiff = goal.floor ? 170 : 11;
+        const dampC = 2 * Math.sqrt(stiff) * (goal.floor ? 1 : 0.72);
         const h = Math.min(dt, 1 / 30);
         for (let n = dt; n > 1e-6; n -= h) {
           const st = Math.min(h, n);
@@ -1471,6 +1619,7 @@ export async function start({ reduced = false } = {}) {
           at.x += vel.x * st;
           at.y += vel.y * st;
         }
+        if (goal.floor) { at.y = goal.y; vel.y = 0; }
         const k = damp(2.6, dt);
         at.h += (goal.h - at.h) * k;
         at.yaw += (goal.yaw - at.yaw) * k;
@@ -1494,10 +1643,13 @@ export async function start({ reduced = false } = {}) {
       pivot.rotation.z = 0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4) + driftX;
     } else {
       pivot.position.set(0, 0, 0);
-      pivot.rotation.z = goal && goal.seat ? 0 : driftX * 0.5;
+      // a little hop of excitement as it points up (standing; running it is in the air anyway)
+      if (cheer.t >= 0 && cheer.t < 0.34) pivot.position.y = modelH * 0.07 * Math.sin((Math.PI * cheer.t) / 0.34) * (1 - runner.run) * Math.min(1, cheer.w * 2);
+      pivot.rotation.z = goal && goal.floor ? 0 : driftX * 0.5;
     }
     pivot.rotation.z += tug.x * 0.25 * grip.w; // leans back with the jolt on the card
-    pivot.rotation.x = lean * 0.3 + driftY + (floating ? 0.03 * Math.sin(time * 0.53 + 1.7) : 0);
+    // (on the cards the scroll moves the deck, not the guide: no lean into the current)
+    pivot.rotation.x = goal && goal.floor ? 0 : lean * 0.3 + driftY + (floating ? 0.03 * Math.sin(time * 0.53 + 1.7) : 0);
     pivot.rotation.y = at.yaw + look.yaw * 0.35 + (floating ? 0.06 * Math.sin(time * 0.31) : 0);
 
     // Bones the current clip doesn't animate keep last frame's look offset: undo it first.
@@ -1506,9 +1658,15 @@ export async function start({ reduced = false } = {}) {
     else if (!mixer.time) mixer.update(0.5);
     for (const r of restPose) r.q.copy(r.bone.quaternion);
     model.updateMatrixWorld(true);
-    dangleLegs(dt, cfg.base === 'sit' && !oneShot);
+    // The Running clip bounds high: keep most of each stride down on the card.
+    const wRun = actions.run && actions.run.isRunning() ? actions.run.getEffectiveWeight() : 0;
+    if (wRun > 0.01 && soles.length) {
+      pivot.position.y -= (soleY() - footRest) * 0.75 * wRun;
+      pivot.updateMatrixWorld(true);
+    }
     aimHead(dt, now);
     gripCard(dt);
+    applyCheer(dt);
     updateSeatMark();
 
     // face
@@ -1529,7 +1687,7 @@ export async function start({ reduced = false } = {}) {
 
     // the clickable area follows the body
     const visible = shared.uDissolve.value < 0.6;
-    const w = at.h * 0.5, hh = at.h * (cfg.base === 'sit' ? 0.7 : 0.95);
+    const w = at.h * 0.5, hh = at.h * 0.95;
     const off = view.dock ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
     hit.style.transform = `translate(${(off.left + at.x - w / 2).toFixed(1)}px, ${(off.top + at.y - hh).toFixed(1)}px)`;
     hit.style.width = `${w.toFixed(0)}px`;
@@ -1560,7 +1718,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mist: scrub.mist, jumping, d: +shared.uDissolve.value.toFixed(2) }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mist: scrub.mist, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
   return window.__avatar;
 }
 
