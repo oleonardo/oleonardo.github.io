@@ -542,7 +542,7 @@ export async function start({ reduced = false } = {}) {
   const TUN = { dive: 0.16, inside: 0.42, off: 0.74, last: 0.56 };
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
-  const PORTAL = 0.06; // half a portal's width, in card widths (see .tl-portal)
+  let PORTAL = 0.033; // half a portal's width, in card widths (read from .tl-portal's --pw on resize)
   // Flying, it faces the way it goes. The passes (and the leg out of the last tunnel)
   // are laid out facing right, the way the page reads; scrolled back up they run
   // backward, so it turns round to face left instead of flying backward. m: 0 as laid
@@ -661,7 +661,14 @@ export async function start({ reduced = false } = {}) {
         const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
         const h = Math.min(H * 0.24, 220);
         // tucked against the card's lower-left corner, both hands on its edge
-        if (r) return { x: r.left - h * 0.2, y: Math.min(r.bottom + h * 0.16, H * 0.96), h, yaw: 0.6, grip: true };
+        if (r) {
+          const x = r.left - h * 0.2, y = Math.min(r.bottom + h * 0.16, H * 0.96);
+          // (with the last video case still held over that spot, it waits off the case's
+          // right side, where it dropped, until the case rides up out of the way)
+          const c = ledgeMode() ? lastCase().getBoundingClientRect() : null;
+          const w = c && c.right > x - h * 0.4 ? smooth(clamp01((c.bottom - (y - h * 0.95)) / (h * 0.12))) : 0;
+          return { x: x + (Math.max(x, c ? c.right + h * 0.45 : x) - x) * w, y, h, yaw: 0.6, grip: w < 0.01 };
+        }
         return { x: W * 0.5, y: H * 0.85, h, yaw: 0.4 };
       }
       default: {
@@ -680,6 +687,7 @@ export async function start({ reduced = false } = {}) {
     if (bar) barBottom = bar.getBoundingClientRect().bottom;
     view.dock = mqDock.matches;
     doc.classList.toggle('has-tunnels', tunnelMode());
+    if (tunnels.length && tunnels[0].pin.offsetWidth) PORTAL = tunnels[0].pin.offsetWidth / 2 / Math.max(1, tunnels[0].li.offsetWidth);
     doc.classList.toggle('has-ledge', ledgeMode());
     canvas.classList.toggle('is-dock', view.dock);
     hit.classList.toggle('is-dock', view.dock);
@@ -1226,8 +1234,8 @@ export async function start({ reduced = false } = {}) {
       if (ORDER[i + 1] === 'historia' && tunnelMode()) b = Math.max(b, tops[i + 1] - z);
       if (ORDER[i] === 'historia' && tunnelMode()) b = tops[i + 1] - vh + z;
       // Off the video cases: the first half of the zone is the deck's hold on its last
-      // card (the run to its edge and the moment in the air), the second the stage
-      // letting go (the drop).
+      // card (the run to its edge, then it falls on the clock), the second the stage
+      // letting go.
       if (ORDER[i] === 'projetos' && ledgeMode()) { b = tops[i + 1] - vh; z = DECK_DWELL * vh; }
       z = Math.max(24, Math.min(z, maxS - b));
       if (sy <= b - z) return i;
@@ -1272,16 +1280,28 @@ export async function start({ reduced = false } = {}) {
     const f = t - Math.floor(t);
     const idle = now - scrub.scrolledAt > 450 && f > 0 && f < 1;
     const onward = ORDER[Math.floor(t)] === 'projetos' && nodes.workStage && nodes.workStage.getBoundingClientRect().top < -40;
-    // (on the last case's hold it stays where the scroll left it: on the card, or
-    // hanging in the air past its edge)
-    const held = ORDER[Math.floor(t)] === 'projetos' && ledgeMode() && f < 0.5;
-    let target = idle && !held ? (onward ? Math.ceil(t) : Math.round(t)) : t;
-    // Once it has settled ahead, scrolling on the same way doesn't pull it back into
-    // the air: it waits there for the scroll to catch up.
-    if (!idle && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
-    if (!idle && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
-    scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
-    if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
+    const onLedge = ORDER[Math.floor(t)] === 'projetos' && ledgeMode();
+    if (onLedge && f > LEDGE.edge && scrub.u - Math.floor(t) >= LEDGE.edge - 1e-3) {
+      // Gravity: run off the end of the last case, it falls on the clock (faster only
+      // if the scroll runs ahead) and stays down in the next section, until the scroll
+      // takes it back onto the card.
+      const li = Math.floor(t);
+      const s = (scrub.u - li - LEDGE.edge) / (1 - LEDGE.edge); // through the fall
+      const L = scrubPhases('fall', endKind(ORDER[li + 1])).L;
+      const rate = (1 - LEDGE.edge) * (s < L ? L / LEDGE.fall : (1 - L) / LEDGE.up);
+      const follow = t > scrub.u ? (t - scrub.u) * damp(7, dt) : 0;
+      scrub.u = Math.min(li + 1, scrub.u + Math.max(rate * dt, follow));
+    } else {
+      // (on the last case's hold it stays where the scroll left it, on the card)
+      const held = onLedge && f <= LEDGE.edge;
+      let target = idle && !held ? (onward ? Math.ceil(t) : Math.round(t)) : t;
+      // Once it has settled ahead, scrolling on the same way doesn't pull it back into
+      // the air: it waits there for the scroll to catch up.
+      if (!idle && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
+      if (!idle && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
+      scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
+      if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
+    }
 
     const N = ORDER.length;
     let i = Math.min(Math.floor(scrub.u), N - 2);
@@ -1333,90 +1353,93 @@ export async function start({ reduced = false } = {}) {
   }
 
   // Off the last video case: the deck holds its last card a while (app.js, under
-  // html.has-ledge) and it runs on to the end of the card. The moment its feet leave
-  // it, it is caught in mid-air with nothing under it: arms up, legs dangling, turned
-  // to the visitor (no running on thin air). Carried a little past the edge, it looks
-  // down into the drop, back at the visitor, gulps, and drops into the next section as
-  // the stage lets go (the second half of the zone), landing on its backside like
-  // everywhere else.
+  // html.has-ledge) and it runs on to the end of the card, the scroll pacing its run.
+  // The moment its feet leave the card there is nothing under it: arms up, legs
+  // dangling, turned to the visitor (no running on thin air), and gravity takes it. It
+  // drops into the next section on the clock, whatever the scroll does then (see
+  // stepScrub), landing on its backside like everywhere else: it never hangs in the air.
   const DECK_DWELL = 0.4; // the hold, in viewport heights (the same in app.js)
   const ledgeMode = () => !reduced && !view.dock && !!nodes.deck && nodes.projects.length > 1;
-  const LEDGE = { edge: 0.2, stop: 0.3, look: 0.33, gulp: 0.42, drop: 0.5 }; // where each beat starts
+  const lastCase = () => { const n = nodes.projects[nodes.projects.length - 1]; return n.querySelector('.project-card') || n; };
+  const LEDGE = { edge: 0.2, fall: 0.62, up: 0.9 }; // the run's share of the zone; the fall and the getting up, in seconds
   const ledge = { drove: false, was: false, face: 1, lastP: -1, still: 0, v: 0, carry: null }; // carry: the card it dropped in behind
   function ledgeExit(p, idB, dt) {
     const F = anchorFor('projetos'); // its footing on the card, held at the deck's resting height
     const node = nodes.projects[nodes.projects.length - 1];
-    const card = node.querySelector('.project-card') || node;
+    const card = lastCase();
     const r = card.getBoundingClientRect();
     const h = F.h;
-    const xOver = r.right + h * 0.42; // where it gets to, on thin air
+    const xEdge = r.right + h * 0.08; // where its feet leave the card
     const YAW_RUN = 1.15, YAW_LOOK = 0.15; // facing its way, and (nearly) the visitor
-    if (p >= LEDGE.drop) {
-      // Down past the end of the card, then (the next section's spot is back under it)
-      // drifting in behind it as the card rides up out of the way: whatever of it
-      // overlaps the card is hidden (drawn by maskTunnel).
+    if (p > LEDGE.edge) {
+      // Off the edge: it drops (y goes as the square of the time, see journeyAt),
+      // carried on a little by its run, down beside the case to the next section's
+      // spot (while the case is held there, just off its right side: see anchorFor).
+      // Whatever of it overlaps the case is hidden behind it (drawn by maskTunnel).
+      const s = (p - LEDGE.edge) / (1 - LEDGE.edge);
       const ek = endKind(idB);
-      journeyAt({ x: xOver, y: F.y, h, yaw: YAW_LOOK, lag: 0.4, hang: true }, anchorFor(idB, true), (p - LEDGE.drop) / (1 - LEDGE.drop), 'fall', ek, scrubPhases('fall', ek));
+      const ph = scrubPhases('fall', ek);
+      journeyAt({ x: xEdge, y: F.y, h, yaw: YAW_LOOK, hang: true }, anchorFor(idB, true), s, 'fall', ek, ph);
+      const q = clamp01(s / ph.L);
+      // (straight into the hang: from its run to the visitor in a flash)
+      const k = smooth(clamp01(s / 0.1));
+      at.yaw = YAW_RUN + (at.yaw - YAW_RUN) * k;
+      jr.w *= smooth(clamp01(s / 0.06));
+      if (baseName !== 'idle') { baseName = 'idle'; if (!oneShot) fadeTo('idle', 0.12); }
+      if (q < 1) {
+        setFace('surprised', 1);
+        // a look down into the drop, then at where it is going
+        [glance.x, glance.y] = q < 0.45 ? [at.x + h * 0.2, at.y + h * 3] : [at.x, at.y - h * 0.75];
+        glance.until = performance.now() + 150;
+      }
       ledge.carry = card;
+      ledge.lastP = -1;
       return;
     }
     ledge.drove = true;
     ledge.carry = null;
-    // (back in the hold afresh: nothing left over from the last time)
+    // (back on the card afresh: nothing left over from the last time)
     if (ledge.lastP < 0) { ledge.still = 0; ledge.v = 0; ledge.face = 1; }
-    // the run: at full tilt up to the end of the card, easing to a stop just past it at
-    // the same speed (one smooth motion, a pure function of the scroll)
-    const E = LEDGE.edge, S = LEDGE.stop;
-    const v = ((xOver - F.x) * 2) / (E + S);
-    let x = xOver;
-    if (p <= E) x = F.x + v * p;
-    else if (p < S) { const k = (p - E) / (S - E); x = F.x + v * E + v * (S - E) * (k - (k * k) / 2); }
+    // the run: at an even pace to the end of the card, a pure function of the scroll
+    const v = (xEdge - F.x) / LEDGE.edge;
+    const x = F.x + v * p;
     // which way it faces: the way it goes along the card (back up the page it turns
-    // round); once off the end, out over the drop
+    // round)
     const dp = ledge.lastP >= 0 ? p - ledge.lastP : 0;
     const moving = Math.abs(dp) > 1e-5;
     ledge.still = moving ? 0 : ledge.still + dt;
-    const dir = p < S ? (moving ? Math.sign(dp) : Math.sign(ledge.face) || 1) : 1;
+    const dir = moving ? Math.sign(dp) : Math.sign(ledge.face) || 1;
     ledge.face += (dir - ledge.face) * damp(7, dt);
-    // its feet off the card: straight into the hang, turned to the visitor
-    const off = smooth(clamp01((x - r.right) / (h * 0.15)));
-    // a look down into the drop, and back up for the gulp
-    const down = smooth(clamp01((p - LEDGE.look) / 0.04)) * (1 - smooth(clamp01((p - LEDGE.gulp) / 0.03)));
     at.x = x;
     at.y = F.y;
     at.h = h;
-    at.yaw = YAW_RUN * ledge.face + (YAW_LOOK - YAW_RUN * ledge.face) * off;
+    at.yaw = YAW_RUN * ledge.face;
     snapAt();
     vel.x = vel.y = 0;
     jr.on = true;
     const P = jr.pose || (jr.pose = newPose());
     mixPose(P, POSE.hang, POSE.hang, 0);
-    jr.w = off;
-    jr.pin = 1 - off; // (the soles stay level with the card's top: cartoon physics)
-    jr.air = off;
+    jr.w = 0;
+    jr.pin = 1;
+    jr.air = 0;
     jr.tilt = 0;
     jr.fly = 0;
-    jr.pitch = 0.14 * down;
-    const gk = clamp01((p - 0.445) / 0.035); // the gulp: a squash and a stretch
-    jr.squash = gk > 0 && gk < 1 ? 0.07 * Math.sin(TAU * gk) : 0;
+    jr.pitch = 0;
+    jr.squash = 0;
     jr.hop = 0;
-    jr.floor = x < r.right ? { node, u: clamp01((x - r.left) / Math.max(1, r.width)), x, y: F.y, h } : null;
+    jr.floor = { node, u: clamp01((x - r.left) / Math.max(1, r.width)), x, y: F.y, h };
     jr.lastP = 0; // (so the bump counts once the drop starts)
     seatLift = 0;
     // The legs: the Running clip while it covers ground (standing still on the card when
-    // the scroll stops), paced to its speed; off the card they hang under the pose.
+    // the scroll stops), paced to its speed.
     const speed = moving ? Math.abs(dp * v) / Math.max(dt, 1e-3) : 0;
     ledge.v += (speed - ledge.v) * damp(8, dt);
-    const want = off > 0.5 || (p < E && ledge.still > 0.35) ? 'idle' : 'run';
-    if (baseName !== want) { baseName = want; if (!oneShot || want === 'run') fadeTo(want, off > 0.5 ? 0.12 : 0.22); }
+    const want = ledge.still > 0.35 ? 'idle' : 'run';
+    if (baseName !== want) { baseName = want; if (!oneShot || want === 'run') fadeTo(want, 0.22); }
     if (current === actions.run) actions.run.setEffectiveTimeScale(clamp(ledge.v / (h * RUN_STRIDE) + 0.4, 0.8, 2.2));
-    // what it looks at: ahead along the card, then out at the visitor, down into the
-    // drop, and back at the visitor
-    if (off < 0.5) [glance.x, glance.y] = [x + Math.sign(ledge.face || 1) * h * 3, F.y - h * 0.6];
-    else if (down > 0.5) [glance.x, glance.y] = [x + h * 0.35, F.y + h * 3];
-    else [glance.x, glance.y] = [x, F.y - h * 0.75];
+    // what it looks at: ahead along the card
+    [glance.x, glance.y] = [x + Math.sign(ledge.face || 1) * h * 3, F.y - h * 0.6];
     glance.until = performance.now() + 150;
-    if (off > 0.5) setFace('surprised', 1);
     ledge.lastP = p;
   }
 
@@ -2263,25 +2286,22 @@ export async function start({ reduced = false } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Opening a case: a few hops on the card, one big jump, and the card gives way
-  // under the landing. app.js opens the case from there (caseJump's promise resolves
-  // true) and the poster grows into the video. Closed again, it springs back out of
-  // the card it fell into.
+  // Opening a case: straight into one big jump, and the card gives way under the
+  // landing. app.js opens the case from there (caseJump's promise resolves true) and
+  // the poster grows into the video in one even motion. Closed again, it springs back
+  // out of the card it fell into.
   // ---------------------------------------------------------------------------
-  // The show as a timeline, in seconds: on the card (a springy crouch, depth 0..1), a
-  // hop (height in body heights), the wind-up, the big jump (up and out of the top of
-  // the screen, consistent with the hops' gravity), and the landing that sends the card
-  // down.
+  // The show as a timeline, in seconds: a quick wind-up (the card bowing under it), the
+  // big jump (height in body heights: up and out of the top of the screen), and the
+  // landing that sends the card down. ('ground' and 'hop', a springy crouch and a small
+  // hop, are there for a longer show.)
   const STUNT = (() => {
     const segs = [];
     let t = 0;
     const add = (kind, d, a) => { segs.push({ kind, t0: t, d, a }); t += d; };
-    add('ground', 0.09, 0.45); add('hop', 0.16, 0.1);
-    add('ground', 0.09, 0.55); add('hop', 0.18, 0.13);
-    add('ground', 0.09, 0.65); add('hop', 0.2, 0.17);
-    add('wind', 0.22, 1); add('jump', 0.62, 1.6);
-    add('slam', 0.17, 1);
-    return { segs, end: t, dip: 0.012, give: 0.1 }; // the card: a dip under each crouch, then how far it falls (card heights)
+    add('wind', 0.16, 1); add('jump', 0.46, 1.3);
+    add('slam', 0.1, 1);
+    return { segs, end: t, dip: 0.012, give: 0.07 }; // the card: a dip under each crouch, then how far it falls (card heights)
   })();
   // The card's give, on its own translate (it composes with the deck's transform): a
   // stiff, bouncy spring under the hops, or driven straight as it falls away.
