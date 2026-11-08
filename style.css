@@ -2148,8 +2148,9 @@ html.is-locked .topbar {
    ========================================================================== */
 ::view-transition-group(portal) {
   border-radius: var(--radius);
-  animation-duration: 0.62s;
-  animation-timing-function: cubic-bezier(0.2, 0.85, 0.15, 1);
+  animation-duration: 0.5s;
+  /* one even motion out of the guide's landing, easing only at the end */
+  animation-timing-function: cubic-bezier(0.3, 0.3, 0.3, 1);
 }
 
 ::view-transition-image-pair(portal) {
@@ -2177,7 +2178,7 @@ html.is-locked .topbar {
 }
 
 ::view-transition-new(scene-info) {
-  animation: info-in 0.6s var(--ease-out) 0.16s both;
+  animation: info-in 0.46s var(--ease-out) 0.14s both;
 }
 
 ::view-transition-old(scene-info) {
@@ -2186,6 +2187,11 @@ html.is-locked .topbar {
 
 /* closing: the video stays on screen while it shrinks, the poster or button
    only takes over at the end */
+html.vt-close::view-transition-group(portal) {
+  animation-duration: 0.62s;
+  animation-timing-function: cubic-bezier(0.2, 0.85, 0.15, 1);
+}
+
 html.vt-close::view-transition-old(portal) {
   animation: portal-out 0.18s ease 0.36s both;
 }
@@ -2494,7 +2500,9 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 /* Time tunnels: with the guide on a desktop, every story card is a tunnel it
    flies through, with a portal at each end. Rings fall away into the card at the
    way in and come back out of it at the way out, over and over, like a corridor
-   with no end. While it is inside, a wake of light runs through the card. */
+   with no end. While it is inside, a wake of light runs through the card.
+   A portal is a slim upright ellipse centred on the card's edge, its inner half
+   and its glow kept inside the card's side padding, clear of the text. */
 .tl-portal,
 .tl-wake {
   display: none;
@@ -2503,13 +2511,14 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 @media (min-width: 1025px) {
   .has-tunnels .tl-portal {
     --dir: 1;
+    --pw: 34px; /* the mouth's width (avatar-scene.js reads it) */
     position: absolute;
-    top: 16%;
-    bottom: 16%;
-    left: -6%;
+    top: 30%;
+    bottom: 30%;
+    left: calc(var(--pw) / -2);
     z-index: 3;
     display: block;
-    width: 12%; /* (half of it inside the card stays clear of the text inset) */
+    width: var(--pw);
     pointer-events: none;
     opacity: 0.45;
     transition:
@@ -2519,7 +2528,7 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 
   .has-tunnels .tl-portal.is-out {
     --dir: -1;
-    right: -6%;
+    right: calc(var(--pw) / -2);
     left: auto;
   }
 
@@ -2529,7 +2538,7 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 
   .has-tunnels .tl-portal.is-near {
     opacity: 1;
-    transform: scale(1.12);
+    transform: scale(1.1);
   }
 
   /* the mouth: a dark heart with a sea-glow round it */
@@ -2539,7 +2548,7 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
     inset: 0;
     border-radius: 50%;
     background: radial-gradient(closest-side, rgba(2, 6, 14, 0.92), rgba(2, 6, 14, 0.6) 48%, rgba(99, 230, 210, 0.22) 80%, transparent);
-    box-shadow: 0 0 28px 2px rgba(99, 230, 210, 0.3);
+    box-shadow: 0 0 10px 1px rgba(99, 230, 210, 0.28);
   }
 
   /* the rim */
@@ -2550,15 +2559,15 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
     border: 1.5px solid rgba(159, 243, 230, 0.9);
     border-radius: 50%;
     box-shadow:
-      0 0 14px rgba(99, 230, 210, 0.7),
-      inset 0 0 12px rgba(99, 230, 210, 0.45);
+      0 0 7px rgba(99, 230, 210, 0.7),
+      inset 0 0 6px rgba(99, 230, 210, 0.45);
   }
 
   .has-tunnels .tl-portal.is-near::after {
     border-color: #e9fffb;
     box-shadow:
-      0 0 22px rgba(99, 230, 210, 0.95),
-      inset 0 0 18px rgba(99, 230, 210, 0.7);
+      0 0 11px rgba(99, 230, 210, 0.95),
+      inset 0 0 9px rgba(99, 230, 210, 0.7);
   }
 
   .has-tunnels .tl-portal i {
@@ -2589,8 +2598,8 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 
   .has-tunnels .tl-wake {
     position: absolute;
-    top: 8%;
-    bottom: 8%;
+    top: 26%; /* (the height of the portals, a little taller) */
+    bottom: 26%;
     left: 0;
     z-index: 2;
     display: block;
