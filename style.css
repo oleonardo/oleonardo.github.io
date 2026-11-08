@@ -681,10 +681,10 @@ html.is-locked .topbar {
 
 .hero-title {
   margin: 0;
-  font-size: clamp(46px, 7.4vw, 108px);
-  font-weight: 760;
+  font-size: clamp(38px, 4.6vw, 68px);
+  font-weight: 700;
   font-stretch: 75%;
-  line-height: 0.9;
+  line-height: 0.98;
   letter-spacing: -0.012em;
   text-wrap: balance;
 }
