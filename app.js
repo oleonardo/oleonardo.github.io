@@ -317,7 +317,10 @@
     }
 
     if (L.desktop) {
-      placeStory(s.storyP, s.morph);
+      // With the guide's time tunnels the cards hold on a moment as the stage lets go:
+      // it flies out through the last one while that is still in view.
+      const hold = doc.classList.contains('has-tunnels') ? vh * 0.3 : 0;
+      placeStory(s.storyP, hold ? storyIn * (1 - clamp01((y + vh - L.work.top - hold) / (vh * 0.5))) : s.morph);
       placeDeck(s.workP);
     }
     return s.storyP !== storyT || s.workP !== workT;
@@ -351,6 +354,7 @@
       node.style.transform = `translate(-50%, -50%) translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, ${z.toFixed(1)}px) rotateY(${(dn * 0.3).toFixed(1)}deg)`;
       node.style.opacity = opacity.toFixed(3);
       node.style.visibility = opacity < 0.01 ? 'hidden' : '';
+      node.classList.toggle('is-gone', opacity < 0.01);
       node.style.pointerEvents = gate > 0.5 && depth > 0.9 ? 'auto' : 'none';
       if (depth > frontDepth) {
         frontDepth = depth;

@@ -2488,3 +2488,142 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 .avatar-seat.is-on {
   opacity: 1;
 }
+
+/* Time tunnels: with the guide on a desktop, every story card is a tunnel it
+   flies through, with a portal at each end. Rings fall away into the card at the
+   way in and come back out of it at the way out, over and over, like a corridor
+   with no end. While it is inside, a wake of light runs through the card. */
+.tl-portal,
+.tl-wake {
+  display: none;
+}
+
+@media (min-width: 1025px) {
+  .has-tunnels .tl-portal {
+    --dir: 1;
+    position: absolute;
+    top: 16%;
+    bottom: 16%;
+    left: -6%;
+    z-index: 3;
+    display: block;
+    width: 12%; /* (half of it inside the card stays clear of the text inset) */
+    pointer-events: none;
+    opacity: 0.45;
+    transition:
+      opacity 0.5s ease,
+      transform 0.45s var(--ease-out);
+  }
+
+  .has-tunnels .tl-portal.is-out {
+    --dir: -1;
+    right: -6%;
+    left: auto;
+  }
+
+  .has-tunnels .tl-item.is-focus .tl-portal {
+    opacity: 0.9;
+  }
+
+  .has-tunnels .tl-portal.is-near {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+
+  /* the mouth: a dark heart with a sea-glow round it */
+  .has-tunnels .tl-portal::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(2, 6, 14, 0.92), rgba(2, 6, 14, 0.6) 48%, rgba(99, 230, 210, 0.22) 80%, transparent);
+    box-shadow: 0 0 28px 2px rgba(99, 230, 210, 0.3);
+  }
+
+  /* the rim */
+  .has-tunnels .tl-portal::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid rgba(159, 243, 230, 0.9);
+    border-radius: 50%;
+    box-shadow:
+      0 0 14px rgba(99, 230, 210, 0.7),
+      inset 0 0 12px rgba(99, 230, 210, 0.45);
+  }
+
+  .has-tunnels .tl-portal.is-near::after {
+    border-color: #e9fffb;
+    box-shadow:
+      0 0 22px rgba(99, 230, 210, 0.95),
+      inset 0 0 18px rgba(99, 230, 210, 0.7);
+  }
+
+  .has-tunnels .tl-portal i {
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(99, 230, 210, 0.85);
+    border-radius: 50%;
+    opacity: 0;
+    animation: tunnel-rings 2.4s linear infinite;
+  }
+
+  .has-tunnels .tl-portal i:nth-child(2) {
+    animation-delay: -0.6s;
+  }
+
+  .has-tunnels .tl-portal i:nth-child(3) {
+    animation-delay: -1.2s;
+  }
+
+  .has-tunnels .tl-portal i:nth-child(4) {
+    animation-delay: -1.8s;
+  }
+
+  /* (the way out: the same rings, coming back out of the depth) */
+  .has-tunnels .tl-portal.is-out i {
+    animation-direction: reverse;
+  }
+
+  .has-tunnels .tl-wake {
+    position: absolute;
+    top: 8%;
+    bottom: 8%;
+    left: 0;
+    z-index: 2;
+    display: block;
+    width: 130px;
+    margin-left: -65px;
+    background: radial-gradient(closest-side, rgba(159, 243, 230, 0.42), rgba(99, 230, 210, 0.14) 55%, transparent);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    opacity: var(--wo, 0);
+    transform: translateX(var(--wx, 0px));
+  }
+
+  /* (its own layer while it runs, so moving it doesn't repaint the card) */
+  .has-tunnels .tl-wake.is-on {
+    will-change: transform, opacity;
+  }
+
+  /* rings rest on the cards that are out of sight (all of them, off the timeline) */
+  .has-tunnels .tl-item.is-gone .tl-portal i {
+    animation: none;
+  }
+}
+
+@keyframes tunnel-rings {
+  0% {
+    opacity: 0;
+    transform: translateX(0) scale(1);
+  }
+
+  14% {
+    opacity: 0.9;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(calc(var(--dir) * 40%)) scale(0.12);
+  }
+}
