@@ -3,7 +3,8 @@
  * avatar-scene.js: the guide. A small 3D character that lives in the particle sea,
  * follows the visitor with its eyes, reacts to scroll and clicks, and moves between
  * the sections in plain sight: it jumps, falls and lands on its backside on the next
- * section's card, then gets up. Through the timeline it falls down the vortex.
+ * section's card, then gets up. Through the timeline every card is a time tunnel: it
+ * flies in at one end, behind the card, and out of the portal at the other.
  *
  * Proof of concept: the model is a CC0 placeholder (RobotExpressive by Tomás Laulhé)
  * that will be swapped for Léo's own avatar. Everything that depends on the model
@@ -56,7 +57,7 @@ const CLIPS = {
 // What the guide does in each section of the page.
 const SECTIONS = {
   inicio: { base: 'idle', greet: 'wave', float: true },
-  historia: { base: 'idle', greet: 'yes', float: true }, // (on desktop it falls down the vortex instead)
+  historia: { base: 'idle', greet: 'yes', float: true }, // (on desktop it flies through the cards instead)
   projetos: { base: 'idle', greet: 'thumbs', float: false },
   contato: { base: 'idle', greet: 'wave', float: true },
 };
@@ -137,7 +138,9 @@ export async function start({ reduced = false } = {}) {
   const model = gltf.scene;
   const root = new THREE.Group(); // feet at the origin, scaled to pixels
   const pivot = new THREE.Group(); // float, lean and turn
-  pivot.add(model);
+  const tilt = new THREE.Group(); // flying level: pitched about the middle of the body, in its own frame
+  tilt.add(model);
+  pivot.add(tilt);
   root.add(pivot);
   scene.add(root);
 
@@ -153,8 +156,9 @@ export async function start({ reduced = false } = {}) {
     uInvRoot: { value: new THREE.Matrix4() },
     uRim: { value: TEAL.clone() },
     uEdge: { value: new THREE.Color(0x9ff3e6) }, // soft sea-glow on the dissolving edge
-    uCardRect: { value: new THREE.Vector4() }, // the contact card, in drawing-buffer pixels
+    uCardRect: { value: new THREE.Vector4() }, // the contact card (or a story card), in drawing-buffer pixels
     uCardOn: { value: 0 },
+    uClipAll: { value: 0 }, // 1 = the whole body passes behind that card (a time tunnel)
   };
   const meshes = [];
   let faceMesh = null;
@@ -239,11 +243,18 @@ export async function start({ reduced = false } = {}) {
   // how high the soles sit when standing (model space): the run is pinned to it
   const footRest = soles.length ? soleY() : 0;
   shared.uHeight.value = modelH;
+  // Flying level, the body turns about its middle (as a fraction of its height), so a
+  // pitch doesn't swing it round its feet.
+  const BODY_C = 0.46;
+  function setTilt(a) {
+    tilt.rotation.x = a;
+    tilt.position.set(0, BODY_C * modelH * (1 - Math.cos(a)), -BODY_C * modelH * Math.sin(a));
+  }
 
-  // Rig for the poses the clips don't have: the take-off, the fall with the claps,
-  // landing on its backside and getting up. A pose is a set of aims in model space
-  // (forward +z, up +y, x mirrored per side), so it doesn't depend on the bones' own
-  // axes. The feet are free IK targets in this rig; in these poses they ride on the
+  // Rig for the poses the clips don't have: the take-off, the fall, hovering and flying
+  // through the time tunnels, landing on its backside and getting up. A pose is a set
+  // of aims in model space (forward +z, up +y, x mirrored per side), so it doesn't
+  // depend on the bones' own axes. The feet are free IK targets in this rig; in these poses they ride on the
   // shins instead, the way they hang in the bind pose.
   const nodeByBare = {};
   model.traverse((o) => {
@@ -315,7 +326,7 @@ export async function start({ reduced = false } = {}) {
     if (!oneShot) fadeTo(name, 0.8);
   }
   function react(name) {
-    if (reduced || !actions[name]) return;
+    if (reduced || !actions[name] || (trans && trans.kind === 'enter')) return;
     fadeTo(name, 0.45, true);
   }
   // The hello on reaching a section. At the contact card with a field already in
@@ -412,7 +423,7 @@ export async function start({ reduced = false } = {}) {
     motePhase[i * 3 + 2] = Math.random(); // height
   }
 
-  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null };
+  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null };
   const v3 = new THREE.Vector3();
   function sampleSurface(intoWorld, intoRel) {
     root.updateMatrixWorld(true);
@@ -505,29 +516,113 @@ export async function start({ reduced = false } = {}) {
     return best;
   }
 
-  // The timeline: it falls down the vortex in the middle of the screen, in the gap
-  // under the card in front (app.js turns the cards on a ring of radius 360px around
-  // the spine). The spot rests there until the stage is pinned, and rides up with the
-  // stage when the section scrolls away. It turns once around for every card.
+  // The timeline: every card is a time tunnel, with a portal at each end. Parked on a
+  // card it hovers at the left portal. Scrolling on, it dives in, passes behind the card,
+  // shoots out of the right portal and off the screen, and comes flying back in from the
+  // left to the next card's portal, over and over. Out of the last one it falls onto the
+  // video cases instead (see tunnelExit). Positions come from the cards' live rects: app.js
+  // turns them on a ring around the spine, and their vertical edges stay vertical on
+  // screen, so the box is exact where it matters, at the ends.
   let storyPersp = 2000, storyCardH = 0;
-  const VORTEX_YAW = -0.15; // facing, at the first card (one more turn per card after it)
-  const vortexMode = () => !reduced && !view.dock && !!nodes.storyStage && nodes.tlItems.length > 1;
-  const vortexOn = () => section === 'historia' && vortexMode();
+  const tunnelMode = () => !reduced && !view.dock && !!nodes.storyStage && tunnels.length > 1;
+  const tunnelOn = () => section === 'historia' && tunnelMode();
+  const tunnels = nodes.storyStage && nodes.tlItems.length > 1 ? nodes.tlItems.map((li) => {
+    const mk = (cls, rings) => {
+      const el = document.createElement('span');
+      el.className = cls;
+      el.setAttribute('aria-hidden', 'true');
+      for (let n = 0; n < rings; n++) el.appendChild(document.createElement('i'));
+      li.appendChild(el);
+      return el;
+    };
+    return { li, card: li.querySelector('.tl-card') || li, pin: mk('tl-portal is-in', 4), pout: mk('tl-portal is-out', 4), wake: mk('tl-wake', 0), near: [false, false], wo: -1, wx: -1 };
+  }) : [];
+  // (the legs of a pass, as the fraction of a card's scroll where each one ends; the last
+  // leg, in from the left, ends on the next card)
+  const TUN = { dive: 0.16, inside: 0.42, off: 0.74, last: 0.56 };
+  const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
+  const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
+  const PORTAL = 0.06; // half a portal's width, in card widths (see .tl-portal)
   function storyPos() {
     const sec = nodes.storySec;
     if (!sec) return 0;
     const r = sec.getBoundingClientRect();
-    return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * (nodes.tlItems.length - 1);
+    return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * (tunnels.length - 1);
   }
-  function vortexSpot() {
+  // Where the cards are drawn: app.js eases its progress and writes it on the year rail.
+  function storyF() {
+    const v = nodes.rail ? parseFloat(nodes.rail.style.getPropertyValue('--p')) : NaN;
+    return Number.isFinite(v) ? clamp01(v) * (tunnels.length - 1) : storyPos();
+  }
+  const tunH = () => clamp(storyCardH * 0.36, view.h * 0.12, 170);
+  function cardBox(k) {
+    const r = tunnels[k].card.getBoundingClientRect();
+    return { l: r.left, r: r.right, t: r.top, b: r.bottom, cy: (r.top + r.bottom) / 2, w: r.width, h: r.height };
+  }
+  const hoverX = (c, h) => c.l - c.w * PORTAL - h * 0.36;
+  // a card it can park at: its portal still clear of the screen's left edge (the
+  // card in front always is; one turning away round the ring soon isn't)
+  function hoverOK(k) {
+    const rail = nodes.rail ? nodes.rail.getBoundingClientRect().left : 0;
+    return hoverX(cardBox(k), tunH()) >= rail + tunH() * 0.25;
+  }
+  // The spot at the first portal (any card's, at the front of the ring): where it flies to
+  // into the timeline, rising with the stage until it pins (as the hover on the card
+  // there does) and riding up with it once the section scrolls away.
+  function tunnelFront() {
     const r = nodes.storyStage.getBoundingClientRect();
     if (r.height < 10 || !storyCardH) return null;
-    const top = Math.min(r.top, 0);
-    const cardBottom = top + r.height / 2 + (storyCardH / 2) * (storyPersp / Math.max(1, storyPersp - 360));
-    const gap = top + r.height - cardBottom;
-    const h = clamp(gap * 0.82, view.h * 0.12, 230);
-    const f = storyPos(), n = Math.floor(f);
-    return { x: r.left + r.width / 2, y: cardBottom + gap * 0.5 + h * 0.4, h, yaw: VORTEX_YAW + TAU * (n + smooth(f - n)), vortex: true };
+    // (with the stage pinned and the page at rest, between two cards: the portal it
+    // will park at; while the page still scrolls there, the front, which holds still)
+    if (r.top <= 0 && r.bottom >= view.h - 1 && performance.now() - scrub.scrolledAt > 450) {
+      const st = tunnelAt(restCard(storyF()));
+      return { x: st.x, y: st.cy + st.h * BODY_C, h: st.h, yaw: st.yaw, tun: true };
+    }
+    const top = r.top;
+    const s = storyPersp / Math.max(1, storyPersp - 360);
+    const w = tunnels[0].li.offsetWidth * s;
+    const h = tunH();
+    const x = hoverX({ l: r.left + r.width / 2 - w / 2, w }, h);
+    return { x, y: top + r.height / 2 + h * BODY_C, h, yaw: YAW.hover, tun: true };
+  }
+  // The pass at g (card index + how far through it): the middle of the body, its size,
+  // facing and lean, and whether it is behind the card.
+  function tunnelAt(g, exiting) {
+    const n = tunnels.length;
+    const k = Math.min(Math.floor(g), n - 1);
+    const ph = g - k;
+    const h = tunH();
+    const c = cardBox(k);
+    const xIn = c.l + h * 0.55; // just inside: the feet past the left edge
+    const xOut = c.r - h * 0.65; // the head at the right edge, still hidden
+    let x, y = c.cy;
+    if (ph < TUN.dive) {
+      const u = ph / TUN.dive;
+      const hx = hoverX(c, h);
+      x = hx + (xIn - hx) * u * u; // leaning in, then faster and faster into the portal
+    } else if (ph < TUN.inside) {
+      x = xIn + (xOut - xIn) * (ph - TUN.dive) / (TUN.inside - TUN.dive);
+    } else if (exiting) {
+      // out of the last card: clear of the portal, where the fall takes over
+      x = xOut + (c.r + c.w * PORTAL + h * 0.5 - xOut) * clamp01((ph - TUN.inside) / (TUN.last - TUN.inside));
+    } else if (ph < TUN.off) {
+      x = xOut + (view.w + h * 0.9 - xOut) * (ph - TUN.inside) / (TUN.off - TUN.inside);
+    } else {
+      // in from the left edge, braking at the next portal
+      const c2 = cardBox(k + 1);
+      const u = (ph - TUN.off) / (1 - TUN.off);
+      const x0 = -h * 0.9, x1 = hoverX(c2, h);
+      x = x0 + (x1 - x0) * (1 - (1 - u) * (1 - u));
+      y = c2.cy;
+    }
+    const fly = smooth(clamp01(ph / 0.07)) * (exiting ? 1 : 1 - smooth(clamp01((ph - 0.88) / 0.12)));
+    const inLeg = ph < TUN.off || exiting;
+    // how far it reaches ahead (hands first) and behind: upright, flying level
+    const front = h * (0.3 + 0.36 * fly), back = h * (0.3 + 0.15 * fly);
+    // behind the card (any part of it, or all of it)
+    const over = inLeg && x + front > c.l && x - back < c.r;
+    const hidden = inLeg && x - back > c.l && x + front < c.r;
+    return { k, ph, x, cy: y, h, c, fly, front, back, tilt: TILT.hover + (TILT.fly - TILT.hover) * fly, yaw: YAW.hover + (YAW.fly - YAW.hover) * fly, over, hidden, inside: inLeg ? clamp01((x - c.l) / Math.max(1, c.r - c.l)) : -1 };
   }
 
   // Running state, kept here because the deck anchor reads its heading.
@@ -538,7 +633,7 @@ export async function start({ reduced = false } = {}) {
     if (view.dock) return { x: W / 2, y: H * 0.98, h: H * 0.9, yaw: -0.25 };
     switch (id) {
       case 'historia': {
-        const v = vortexMode() && vortexSpot();
+        const v = tunnelMode() && tunnelFront();
         if (v) return v;
         const r = nodes.rail ? nodes.rail.getBoundingClientRect() : null;
         const h = Math.min(H * 0.3, 270);
@@ -574,6 +669,7 @@ export async function start({ reduced = false } = {}) {
     const bar = $('.topbar');
     if (bar) barBottom = bar.getBoundingClientRect().bottom;
     view.dock = mqDock.matches;
+    doc.classList.toggle('has-tunnels', tunnelMode());
     canvas.classList.toggle('is-dock', view.dock);
     hit.classList.toggle('is-dock', view.dock);
     const r = canvas.getBoundingClientRect();
@@ -587,7 +683,7 @@ export async function start({ reduced = false } = {}) {
     view.wpp = (2 * CAM_Z * Math.tan(THREE.MathUtils.degToRad(FOV / 2))) / view.h;
     pMat.uniforms.uPx.value = view.dpr;
     goal = anchorFor(section);
-    if (view.dock && trans && trans.kind === 'hop') trans = null;
+    if (view.dock && trans && (trans.kind === 'hop' || trans.kind === 'enter')) trans = null;
     if (!trans) snapTo(goal);
     dirty = true;
   }
@@ -665,22 +761,27 @@ export async function start({ reduced = false } = {}) {
     const cfg = SECTIONS[id] || SECTIONS.inicio;
     if (reduced || view.dock) {
       // No journey: a puff in place (dock) or a plain cut (reduced motion).
-      if (trans && trans.kind === 'hop') trans = null;
+      if (trans && (trans.kind === 'hop' || trans.kind === 'enter')) trans = null;
       snapTo(goal);
       setBase(cfg.base);
       if (!reduced && prev !== id) { puff(); greet(id, cfg.greet); }
       dirty = true;
       return;
     }
-    if (trans && trans.kind !== 'hop' && trans.phase !== 'in' && !fromScatter) {
+    if (trans && trans.kind !== 'hop' && trans.kind !== 'enter' && trans.phase !== 'in' && !fromScatter) {
       // the first appearance or a send, still in mist: bend it toward the new spot
       if (id !== 'contato') abandonSend();
       trans.toId = id;
       return;
     }
     placeRoot();
+    if (fromScatter && id === 'inicio' && actions.run) {
+      // First appearance at the hero: it comes running in from the right.
+      enterRunning(id);
+      return;
+    }
     if (fromScatter) {
-      // First appearance: motes rise out of the sea around the destination.
+      // First appearance elsewhere: motes rise out of the sea around the destination.
       snapTo(goal);
       placeRoot();
       sampleSurface(null, tRel);
@@ -704,11 +805,12 @@ export async function start({ reduced = false } = {}) {
   // A timed journey (menu links, leaps, a retarget): the same jump, fall and landing
   // as the scrolled ones, run by the clock from wherever the guide is right now.
   function hopTo(id, prev) {
-    const airborne = trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid ? jr.air > 0.5 : prev === 'historia' && vortexMode();
+    // (flying through a tunnel it sets off from there, still in the air)
+    const airborne = trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && jr.air > 0.5;
     if (trans && trans.kind === 'send') settleSend(null);
-    const sk = airborne ? 'fall' : 'stand';
+    const sk = tun.active ? 'hover' : airborne ? 'fall' : 'stand';
     const ek = endKind(id);
-    const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw };
+    const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tilt: tilt.rotation.x };
     const B = anchorFor(id, true);
     const dist = Math.hypot(B.x - A.x, clamp(B.y, 0, view.h) - A.y);
     const tk = sk === 'stand' ? 0.32 : 0;
@@ -720,19 +822,82 @@ export async function start({ reduced = false } = {}) {
     // only while low over that spot): the one it was leaving. In mid-air: none, so it
     // keeps the snapshot. Nearly or fully down: the one it was heading to.
     const pq = trans && trans.kind === 'hop' ? trans.t / trans.dur : -1;
-    const from = pq < 0 ? prev
+    const from = trans && trans.kind === 'enter' ? null
+      : pq < 0 ? prev
       : pq < trans.ph.T0 ? trans.from
       : sk === 'fall' ? null
       : pq < (trans.ph.T0 + trans.ph.L) / 2 ? trans.from
       : prev;
     snapRig();
-    trans = { kind: 'hop', phase: 'travel', t: 0, dur, toId: id, from, A, sk, ek, vBase: ek === 'fall' ? B.yaw : undefined, ph: { T0: tk / dur, L: (tk + tf) / dur, S: (tk + tf + ts) / dur } };
+    trans = { kind: 'hop', phase: 'travel', t: 0, dur, toId: id, from, A, sk, ek, ph: { T0: tk / dur, L: (tk + tf) / dur, S: (tk + tf + ts) / dur } };
     jr.lastP = -1;
     scrub.mid = false;
     scrub.on = false;
     pAlpha.fill(0, 0, N_TRANSIT);
     shared.uDissolve.value = 0;
     dirty = true;
+  }
+
+  // The first appearance at the hero: it runs in from beyond the right edge, brakes on
+  // its spot (leaning back, kicking up a little dust), turns to the visitor and waves.
+  // The stride is paced to the ground it covers. Scrolling or a menu link meanwhile
+  // turns it straight into a jump from wherever it is.
+  const RUN_STRIDE = 1.1; // body heights a second the Running clip covers at speed 1 (under the mixer's 0.82)
+  const ENTER = { v: 1.6, yaw: -1.2, brake: 0.5, turn: 0.4 }; // speed in body heights a second
+  function enterRunning(id) {
+    goal = anchorFor(id);
+    const h = goal.h;
+    const x0 = view.w + h * 0.45; // just out of view
+    const v = ENTER.v * h;
+    const tr = Math.max(0.15, (x0 - goal.x) / v - ENTER.brake / 2); // full speed, then the brake
+    Object.assign(at, { x: x0, y: goal.y, h, yaw: ENTER.yaw });
+    vel.x = vel.y = 0;
+    trans = { kind: 'enter', phase: 'travel', t: 0, toId: id, x0, v, tr, run: v * (tr + ENTER.brake / 2), sp: 1, pitch: 0 };
+    shared.uDissolve.value = 0;
+    pAlpha.fill(0, 0, N_TRANSIT);
+    baseName = 'run';
+    fadeTo('run', 0.05);
+    floatW = 0;
+    dirty = true;
+  }
+  function stepEnter() {
+    const E = trans;
+    const B = anchorFor(E.toId);
+    goal = B;
+    const tb = ENTER.brake;
+    // ground covered: full speed, then slowing evenly to a stop on the spot
+    const b = clamp01((E.t - E.tr) / tb);
+    const s = E.v * Math.min(E.t, E.tr) + E.v * tb * (b - (b * b) / 2);
+    E.sp = E.t < E.tr ? 1 : 1 - b;
+    at.x = E.x0 + (B.x - E.x0) * Math.min(1, s / E.run);
+    at.y = B.y;
+    at.h = B.h;
+    if (current === actions.run) actions.run.setEffectiveTimeScale((ENTER.v / RUN_STRIDE) * Math.max(0.4, E.sp));
+    if (E.phase === 'travel' && E.t >= E.tr) {
+      // the brake: into the idle, a skid of dust off its feet
+      E.phase = 'brake';
+      baseName = (SECTIONS[E.toId] || SECTIONS.inicio).base;
+      fadeTo(baseName, 0.45);
+      skid();
+    }
+    E.pitch = -0.16 * Math.sin(Math.PI * b); // leaning back into the stop
+    // facing where it runs (a little toward the viewer), then round to its spot
+    const k = smooth(clamp01((E.t - E.tr - tb * 0.35) / (tb * 0.65 + ENTER.turn)));
+    at.yaw = ENTER.yaw + wrapPi(B.yaw - ENTER.yaw) * k;
+    if (E.t >= E.tr + tb + ENTER.turn) {
+      trans = null;
+      greet(E.toId, (SECTIONS[E.toId] || SECTIONS.inicio).greet);
+    }
+  }
+  function skid() {
+    root.updateMatrixWorld(true);
+    const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
+    const H = at.h * view.wpp;
+    for (let n = 0; n < 22; n++) {
+      spawn(c.x + (Math.random() - 0.3) * H * 0.2, c.y + H * 0.02, c.z + (Math.random() - 0.5) * H * 0.12,
+        -H * (0.25 + Math.random() * 0.45), H * (0.04 + Math.random() * 0.14), (Math.random() - 0.5) * H * 0.2,
+        0.5 + Math.random() * 0.5, 0.45);
+    }
   }
 
   // Where the current journey is heading: the section's spot, or a stop on the way.
@@ -831,6 +996,7 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
+    if (trans.kind === 'enter') { stepEnter(); return; }
     if (trans.kind === 'hop') {
       const p = clamp01(trans.t / trans.dur);
       const B = anchorFor(trans.toId, true);
@@ -849,7 +1015,7 @@ export async function start({ reduced = false } = {}) {
         trans.phase = 'in';
         setBase((SECTIONS[trans.toId] || SECTIONS.inicio).base);
       }
-      journeyAt(trans.A, B, p, trans.sk, trans.ek, trans.ph, trans.vBase);
+      journeyAt(trans.A, B, p, trans.sk, trans.ek, trans.ph);
       if (p >= 1) {
         const toId = trans.toId;
         trans = null;
@@ -1033,9 +1199,11 @@ export async function start({ reduced = false } = {}) {
       // stands on the deck, so it sets off as soon as the deck starts to scroll away.
       let b = tops[i + 1] - vh * 0.45;
       if (ORDER[i] === 'projetos') b = Math.min(b, tops[i + 1] - vh + z);
-      // Into the timeline it lands in the vortex just as the stage pins (before that
-      // the card in front is still rising through the spot it falls to).
-      if (ORDER[i + 1] === 'historia' && vortexMode()) b = Math.max(b, tops[i + 1] - z);
+      // Into the timeline it reaches the first portal just as the stage pins (before
+      // that the card is still rising into place). Out of it, it flies through the last
+      // card as soon as the stage lets go, while that card is still in view.
+      if (ORDER[i + 1] === 'historia' && tunnelMode()) b = Math.max(b, tops[i + 1] - z);
+      if (ORDER[i] === 'historia' && tunnelMode()) b = tops[i + 1] - vh + z;
       z = Math.max(24, Math.min(z, maxS - b));
       if (sy <= b - z) return i;
       if (sy < b + z) return i + (sy - (b - z)) / (2 * z);
@@ -1113,11 +1281,26 @@ export async function start({ reduced = false } = {}) {
       snapRig();
     }
     const idA = ORDER[i], idB = ORDER[i + 1];
-    const sk = startKind(idA), ek = endKind(idB);
-    // (the vortex's facing where this zone meets it: its first card from above, its last
-    // from below; see journeyAt)
-    const vBase = ek === 'fall' ? VORTEX_YAW : sk === 'fall' ? VORTEX_YAW + TAU * (nodes.tlItems.length - 1) : undefined;
-    journeyAt(anchorFor(idA, true), anchorFor(idB, true), p, sk, ek, scrubPhases(sk, ek), vBase);
+    if (idA === 'historia' && tunnelMode()) { tunnelExit(p, idB); return; }
+    const sk = 'stand', ek = endKind(idB);
+    journeyAt(anchorFor(idA, true), anchorFor(idB, true), p, sk, ek, scrubPhases(sk, ek));
+  }
+
+  // Out of the timeline: through the last card's tunnel, then out of its right portal
+  // it drops onto the next section's card.
+  const EXIT_PASS = 0.37; // the share of the zone spent inside the last tunnel
+  function tunnelExit(p, idB) {
+    const last = tunnels.length - 1;
+    if (p < EXIT_PASS) {
+      jr.lastP = 0; // (so the bump still counts if the fall starts on the next frame)
+      tun.g = last; // (back up on the timeline, the plateau carries on from the last portal)
+      applyTunnel(tunnelAt(last + TUN.last * (p / EXIT_PASS), true));
+      return;
+    }
+    const o = tunnelAt(last + TUN.last, true); // the way out, riding up with the stage
+    const ek = endKind(idB);
+    journeyAt({ x: o.x, y: o.cy + o.h * BODY_C, h: o.h, yaw: o.yaw, tilt: o.tilt }, anchorFor(idB, true),
+      (p - EXIT_PASS) / (1 - EXIT_PASS), 'fly', ek, scrubPhases('fly', ek));
   }
 
   // ---------------------------------------------------------------------------
@@ -1126,46 +1309,42 @@ export async function start({ reduced = false } = {}) {
   // From spot A to spot B at progress p (0..1), the same whether the scroll scrubs it
   // or a clock runs it:
   //   take-off  (off a floor) a crouch and a spring
-  //   flight    an arc from A to B (out of the vortex it just keeps falling)
-  //   landing   into the vortex it keeps falling; anywhere else it lands on its
-  //             backside on the card, bounces, shakes its head and gets up
-  // sk (start): 'stand' | 'fall'      ek (end): 'fall' | 'feet' | 'butt'
-  const startKind = (id) => (id === 'historia' && vortexMode() ? 'fall' : 'stand');
-  const endKind = (id) => (id === 'historia' && vortexMode() ? 'fall' : id === 'inicio' ? 'feet' : 'butt');
+  //   flight    an arc from A to B (setting off in the air, it drops from there; out
+  //             of a portal it keeps flying on a moment first)
+  //   landing   at a portal it stays in the air, leaning in; anywhere else it lands on
+  //             its backside on the card, bounces, shakes its head and gets up
+  // sk (start): 'stand' | 'fall' | 'hover' | 'fly'      ek (end): 'hover' | 'feet' | 'butt'
+  const endKind = (id) => (id === 'historia' && tunnelMode() ? 'hover' : id === 'inicio' ? 'feet' : 'butt');
   function scrubPhases(sk, ek) {
     const T0 = sk === 'stand' ? 0.14 : 0;
-    const L = ek === 'fall' ? 1 : ek === 'feet' ? 0.8 : 0.58;
+    const L = ek === 'hover' ? 1 : ek === 'feet' ? 0.8 : 0.58;
     return { T0, L, S: ek === 'butt' ? L + 0.12 : L };
   }
   // what a journey asks of the frame: pose (and its weight over the clips), floor
-  // pinning, airborne-ness, body lean, squash, a little bounce, the card it sits on
-  const jr = { on: false, w: 0, pin: 0, air: 0, pitch: 0, squash: 0, hop: 0, pose: null, floor: null, lastP: -1 };
-  function journeyAt(A, B, p, sk, ek, ph, vBase) {
+  // pinning, airborne-ness, body lean, flying tilt, squash, a little bounce, the card it
+  // sits on (tun: the tunnel drives it, so it may float and look around)
+  const jr = { on: false, tun: false, w: 0, pin: 0, air: 0, pitch: 0, tilt: 0, fly: 0, squash: 0, hop: 0, pose: null, floor: null, lastP: -1 };
+  function journeyAt(A, B, p, sk, ek, ph) {
     const { T0, L, S } = ph;
     jr.on = true;
     vel.x = vel.y = 0;
     const q = clamp01((p - T0) / Math.max(1e-4, L - T0)); // flight progress
     const kq = smooth(q);
-    const fallEnd = ek === 'fall';
+    const airEnd = ek === 'hover';
+    const aloft = sk !== 'stand';
 
     // where: still at A for the take-off, an arc in flight, then B
     if (p < T0) { at.x = A.x; at.y = A.y; }
-    else if (p < L || fallEnd) {
-      at.x = A.x + (B.x - A.x) * kq;
-      const ky = sk === 'fall' ? q * q : fallEnd ? kq : q;
+    else if (p < L || airEnd) {
+      at.x = A.x + (B.x - A.x) * kq + (sk === 'fly' ? A.h * 1.5 * Math.sin(Math.PI * q) * (1 - q) : 0);
+      const ky = aloft ? q * q : airEnd ? kq : q;
       const apex = sk === 'stand' ? Math.max(A.h, B.h) * 0.32 + Math.max(0, A.y - B.y) * 0.25 : 0;
       at.y = A.y + (B.y - A.y) * ky - apex * Math.sin(Math.PI * q);
     } else { at.x = B.x; at.y = B.y; }
     at.h = p < T0 ? A.h : A.h + (B.h - A.h) * kq;
     // it lands three-quarters on (so the sit reads), then turns to its spot
     const landYaw = ek === 'butt' ? 0.62 : B.yaw;
-    // The vortex end turns once per card while the page scrolls through the timeline,
-    // so its yaw has no fixed turn to wrap against: take off its whole turns from where
-    // the journey meets it (vBase) once, and the turn in flight stays continuous.
-    const vEnd = vBase === undefined ? null : fallEnd ? 'B' : sk === 'fall' ? 'A' : null;
-    if (vEnd === 'B') at.yaw = A.yaw + (B.yaw - TAU * Math.round((vBase - A.yaw) / TAU) - A.yaw) * kq;
-    else if (vEnd === 'A' && p < L) at.yaw = A.yaw + (landYaw + TAU * Math.round((vBase - landYaw) / TAU) - A.yaw) * kq;
-    else at.yaw = p < L || fallEnd
+    at.yaw = p < L || airEnd
       ? A.yaw + wrapPi(landYaw - A.yaw) * kq
       : landYaw + wrapPi(B.yaw - landYaw) * smooth(clamp01((p - S) / Math.max(1e-4, 1 - S)));
     if (snap.k < 1) {
@@ -1176,16 +1355,19 @@ export async function start({ reduced = false } = {}) {
     }
 
     // how: airborne in flight, pinned to the floor at both ends, leaning back into
-    // the landing, squashed by the bump
-    jr.air = (sk === 'fall' ? 1 : smooth(clamp01(q / 0.12))) * (fallEnd ? 1 : 1 - smooth(clamp01((q - 0.82) / 0.18)));
-    jr.pin = Math.max(sk === 'stand' ? 1 - smooth(clamp01(q / 0.25)) : 0, fallEnd ? 0 : smooth(clamp01((q - 0.55) / 0.45)));
+    // the landing, squashed by the bump; flying level, it rights itself as it drops,
+    // and arriving at a portal it leans in
+    jr.air = (aloft ? (sk === 'fly' ? 0.45 + 0.55 * smooth(clamp01(q / 0.25)) : 1) : smooth(clamp01(q / 0.12))) * (1 - (airEnd ? smooth(clamp01((q - 0.7) / 0.3)) : smooth(clamp01((q - 0.82) / 0.18))));
+    jr.pin = Math.max(sk === 'stand' ? 1 - smooth(clamp01(q / 0.25)) : 0, airEnd ? 0 : smooth(clamp01((q - 0.55) / 0.45)));
+    jr.tilt = (A.tilt || 0) * (1 - smooth(clamp01(q / 0.45))) + (airEnd ? TILT.hover * smooth(clamp01((q - 0.55) / 0.45)) : 0);
+    jr.fly = 0;
     jr.pitch = 0;
     if (sk === 'stand' && p < T0) jr.pitch += 0.16 * Math.sin(Math.PI * p / T0);
     if (ek === 'butt') jr.pitch -= 0.45 * smooth(clamp01((q - 0.5) / 0.5)) * (1 - smooth(clamp01((p - L) / Math.max(1e-4, (S - L) * 0.6))));
     jr.squash = 0;
     jr.hop = 0;
     if (sk === 'stand' && p < T0) jr.squash = 0.07 * Math.sin(Math.PI * p / T0);
-    if (!fallEnd && p >= L) {
+    if (!airEnd && p >= L) {
       const e = clamp01((p - L) / Math.max(1e-4, (ek === 'butt' ? S : 1) - L));
       jr.squash = (ek === 'butt' ? 0.2 : 0.1) * Math.sin(Math.PI * Math.min(1, e * 2.4)) * (1 - e);
       if (ek === 'butt' && e > 0.42) jr.hop = modelH * 0.045 * Math.sin(Math.PI * clamp01((e - 0.42) / 0.4));
@@ -1197,13 +1379,14 @@ export async function start({ reduced = false } = {}) {
     if (p < T0) {
       mixPose(P, POSE.crouch, POSE.crouch, 0);
       w = smooth(clamp01(p / Math.max(1e-4, T0 * 0.7)));
-    } else if (p < L || fallEnd) {
-      // springing off (or carrying on falling), arms up in flight
-      if (sk === 'fall') mixPose(P, POSE.fall, POSE.air, smooth(clamp01(q / 0.35)));
+    } else if (p < L || airEnd) {
+      // springing off (or setting off in the air), arms up in flight
+      if (sk === 'fall') mixPose(P, POSE.air, POSE.air, 0);
+      else if (aloft) mixPose(P, sk === 'fly' ? POSE.fly : POSE.hover, POSE.air, smooth(clamp01(q / 0.35)));
       else mixPose(P, POSE.crouch, POSE.air, smooth(clamp01(q / 0.2)));
-      // and ready for what's coming: the vortex, the feet, or the backside
+      // and ready for what's coming: the portal, the feet, or the backside
       const ready = smooth(clamp01((q - 0.62) / 0.38));
-      if (ready > 0) mixPose(P, P, fallEnd ? POSE.fall : ek === 'feet' ? POSE.crouch : POSE.seat, ready);
+      if (ready > 0) mixPose(P, P, airEnd ? POSE.hover : ek === 'feet' ? POSE.crouch : POSE.seat, ready);
     } else if (ek === 'butt') {
       const g = clamp01((p - S) / Math.max(1e-4, 1 - S)); // getting up
       if (g < 0.4) mixPose(P, POSE.seat, POSE.push, smooth(g / 0.4));
@@ -1215,9 +1398,9 @@ export async function start({ reduced = false } = {}) {
     }
     jr.w = w;
     // (the card under it: the one it takes off from, then the one it lands on)
-    jr.floor = !fallEnd && p >= L - 0.02 && B.floor ? B.floor : sk === 'stand' && p < T0 && A.floor ? A.floor : null;
+    jr.floor = !airEnd && p >= L - 0.02 && B.floor ? B.floor : sk === 'stand' && p < T0 && A.floor ? A.floor : null;
     // the bump: once, on the way down
-    if (!fallEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
+    if (!airEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
     jr.lastP = p;
   }
   function touchdown(ek) {
@@ -1234,13 +1417,154 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Time tunnels: the timeline's plateau
+  // ---------------------------------------------------------------------------
+  // On the timeline the pass follows the cards (g: card index + how far through it).
+  // Left between two cards it settles at the nearer portal it can park at; once it has
+  // settled ahead, scrolling on the same way waits for the cards to catch up.
+  const tun = { g: 0, active: false, drove: false, mask: null, maskK: -1, carry: null, hidden: false, wake: -1, edge: null };
+  function restCard(f) {
+    const last = tunnels.length - 1;
+    const lo = Math.min(Math.floor(f), last), hi = Math.min(lo + 1, last);
+    return (f - lo < 0.5 && (f - lo < 0.15 || hoverOK(lo))) || hi === lo ? lo : hi;
+  }
+  function stepTunnel(dt, now) {
+    const f = storyF();
+    const idle = now - scrub.scrolledAt > 450;
+    // taking over (from a journey, a jump): with the page still moving, straight onto
+    // the pass under the scroll; at rest, at the nearer portal
+    if (!tun.active) { tun.g = idle ? restCard(f) : f; tun.edge = null; snapRig(); }
+    let target = idle ? restCard(f) : f;
+    if (!idle && scrub.dir > 0 && f < tun.g && tun.g <= Math.floor(f) + 1) target = tun.g;
+    if (!idle && scrub.dir < 0 && f > tun.g && tun.g >= Math.ceil(f) - 1) target = tun.g;
+    tun.g += (target - tun.g) * damp(idle ? 2.4 : 10, dt);
+    if (Math.abs(target - tun.g) < 2e-4) tun.g = target;
+    tun.g = clamp(dbg.tunG != null ? dbg.tunG : tun.g, 0, tunnels.length - 1); // (QA: pin the pass)
+    applyTunnel(tunnelAt(tun.g));
+  }
+  function applyTunnel(st) {
+    jr.on = true;
+    jr.tun = true;
+    vel.x = vel.y = 0;
+    at.x = st.x;
+    at.y = st.cy + st.h * BODY_C;
+    at.h = st.h;
+    at.yaw = st.yaw;
+    if (snap.k < 1) {
+      at.x = snap.at.x + (at.x - snap.at.x) * snap.k;
+      at.y = snap.at.y + (at.y - snap.at.y) * snap.k;
+      at.h = snap.at.h + (at.h - snap.at.h) * snap.k;
+      at.yaw = snap.at.yaw + wrapPi(at.yaw - snap.at.yaw) * snap.k;
+    }
+    goal = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tun: true };
+    jr.tilt = st.tilt;
+    jr.fly = st.fly;
+    jr.air = 0.45 * st.fly; // a little buffeting in flight
+    jr.pin = jr.pitch = jr.squash = jr.hop = 0;
+    jr.floor = null;
+    jr.w = 1;
+    mixPose(jr.pose || (jr.pose = newPose()), POSE.hover, POSE.fly, st.fly);
+    tun.mask = st.over ? st.c : null;
+    tun.maskK = st.k;
+    tun.carry = null;
+    tun.hidden = st.hidden;
+    tun.drove = true;
+    portalFx(st);
+  }
+  // The portals light up as it nears them, a wake of light runs through the card while
+  // it is inside, and motes swirl into the way in and burst out of the way out.
+  function portalFx(st) {
+    tunnels.forEach((T, j) => {
+      const nearIn = (j === st.k && st.ph > 0.005 && st.ph < TUN.dive + 0.05) || (j === st.k + 1 && st.ph > 0.82);
+      const nearOut = j === st.k && st.ph > TUN.inside - 0.08 && st.ph < TUN.inside + 0.16;
+      if (nearIn !== T.near[0]) { T.near[0] = nearIn; T.pin.classList.toggle('is-near', nearIn); }
+      if (nearOut !== T.near[1]) { T.near[1] = nearOut; T.pout.classList.toggle('is-near', nearOut); }
+    });
+    const wo = st.inside >= 0 ? smooth(clamp01((st.x - st.c.l) / (st.h * 0.6))) * smooth(clamp01((st.c.r - st.x) / (st.h * 0.6))) : 0;
+    setWake(wo > 0.01 ? st.k : -1, wo, st.inside);
+    // the head going in at the left edge, the feet clearing the right edge
+    const edge = st.inside < 0 ? 2 : st.x + st.front < st.c.l ? 0 : st.x - st.back > st.c.r ? 2 : 1;
+    if (tun.edge && tun.edge.k === st.k && tun.edge.e !== edge) {
+      if ((tun.edge.e === 0) !== (edge === 0)) portalBurst(st.c.l, st.c, st.h, true);
+      if ((tun.edge.e === 2) !== (edge === 2)) portalBurst(st.c.r, st.c, st.h, false);
+    }
+    tun.edge = { k: st.k, e: edge };
+  }
+  function setWake(k, wo, frac) {
+    if (tun.wake >= 0 && tun.wake !== k) {
+      const T = tunnels[tun.wake];
+      T.wake.style.setProperty('--wo', '0');
+      T.wake.classList.remove('is-on');
+      T.wo = 0;
+    }
+    if (k >= 0 && tun.wake !== k) tunnels[k].wake.classList.add('is-on');
+    tun.wake = k;
+    if (k < 0) return;
+    const T = tunnels[k];
+    const wx = Math.round(frac * T.li.offsetWidth);
+    if (Math.abs(wo - T.wo) > 0.02 || wx !== T.wx) {
+      T.wo = wo;
+      T.wx = wx;
+      T.wake.style.setProperty('--wo', wo.toFixed(2));
+      T.wake.style.setProperty('--wx', `${wx}px`);
+    }
+  }
+  function portalBurst(x, c, h, inward) {
+    setFace('surprised', 0.6);
+    const H = h * view.wpp;
+    const o = toWorld(x, c.cy, 0, new THREE.Vector3());
+    const R = c.h * 0.32 * view.wpp; // half the portal's height
+    for (let n = 0; n < 30; n++) {
+      const a = (Math.random() * 2 - 1) * Math.PI * 0.5;
+      const y = Math.sin(a) * R, xx = Math.cos(a) * H * 0.2;
+      // in: drawn off the rim toward the heart and into the card; out: thrown clear
+      const sp = H * (0.4 + Math.random() * 0.6);
+      spawn(o.x - xx * (inward ? 1 : -1), o.y + y, o.z,
+        inward ? sp * 0.7 : sp, inward ? -y * 1.6 : y * 0.5 + H * 0.05, (Math.random() - 0.5) * H * 0.2,
+        inward ? 0.35 + Math.random() * 0.25 : 0.6 + Math.random() * 0.5, 0.6);
+    }
+  }
+  // Off the tunnel (a jump away, a resize to the dock): portals and wake back at rest.
+  // Leaving from behind a card, it stays behind that card until it is clear of it.
+  function leaveTunnel() {
+    tun.carry = tun.mask && !view.dock ? { k: tun.maskK, until: time + 1.6 } : null;
+    tunnels.forEach((T) => {
+      if (T.near[0]) { T.near[0] = false; T.pin.classList.remove('is-near'); }
+      if (T.near[1]) { T.near[1] = false; T.pout.classList.remove('is-near'); }
+    });
+    setWake(-1, 0, 0);
+    tun.mask = null;
+    tun.hidden = false;
+    tun.edge = null;
+  }
+  // Behind the card: the whole body is masked by its box (after gripCard, which owns
+  // the mask everywhere else).
+  function maskTunnel() {
+    let c = tun.mask;
+    if (!c && tun.carry) {
+      const box = cardBox(tun.carry.k);
+      const cy = at.y - at.h * BODY_C, r = at.h * 0.7;
+      const clear = at.x + r < box.l || at.x - r > box.r || cy + r < box.t || cy - r > box.b;
+      if (clear || time > tun.carry.until || view.dock) tun.carry = null;
+      else c = box;
+    }
+    shared.uClipAll.value = c ? 1 : 0;
+    if (!c) return;
+    const [ox, oy] = clientToCanvas(c.l, c.t);
+    const pr = renderer.getPixelRatio();
+    shared.uCardOn.value = 1;
+    shared.uCardRect.value.set(ox * pr, (view.h - oy - c.h) * pr, (ox + c.w) * pr, (view.h - oy) * pr);
+  }
+
   // A pose change that can't be continuous (a journey taking over mid-way, a new
   // target): blend from where everything was over a quarter of a second.
-  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
+  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
   function snapRig() {
     snap.t = 0;
     snap.k = 0;
     Object.assign(snap.at, { x: at.x, y: at.y, h: at.h, yaw: at.yaw });
+    snap.tilt = tilt.rotation.x;
     snap.pp.copy(pivot.position);
     snap.pr.set(pivot.rotation.x, pivot.rotation.y, pivot.rotation.z);
     snap.ps.copy(pivot.scale);
@@ -1256,6 +1580,7 @@ export async function start({ reduced = false } = {}) {
       snap.pr.y + wrapPi(pivot.rotation.y - snap.pr.y) * k,
       snap.pr.z + (pivot.rotation.z - snap.pr.z) * k);
     pivot.scale.lerpVectors(snap.ps, pivot.scale, k);
+    setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k);
     rigBones.forEach((b, i) => {
       b.quaternion.copy(qSnap.copy(snap.q[i]).slerp(b.quaternion, k));
       b.position.lerpVectors(snap.p[i], b.position, k);
@@ -1341,13 +1666,17 @@ export async function start({ reduced = false } = {}) {
   }
 
   // Lantern motes: a slow orbit around the feet and knees. Falling, they become the
-  // wind: streaming up past the body, faster while the scroll moves.
-  let windW = 0, windT = 0;
-  function stepMotes(dt, air) {
+  // wind: streaming up past the body, faster while the scroll moves. Flying level
+  // through the tunnels, the wind comes from ahead and streams back along it.
+  let windW = 0, windT = 0, windA = Math.PI / 2;
+  function stepMotes(dt, air, level) {
     const vis = 1 - shared.uDissolve.value;
     const s = root.scale.x;
     windW += (air - windW) * damp(4, dt);
     windT += dt * (0.5 + Math.min(1.4, Math.abs(scrollV) / 1100));
+    // (which way the wind streams: up, or back along a body facing right)
+    windA += (Math.PI / 2 + (Math.PI / 2) * level - windA) * damp(5, dt);
+    const dx = Math.cos(windA), dy = Math.sin(windA);
     for (let i = 0; i < N_MOTE; i++) {
       const j = N_TRANSIT + N_POOL + i;
       const a = motePhase[i * 3] + time * motePhase[i * 3 + 1] * 0.55;
@@ -1358,8 +1687,11 @@ export async function start({ reduced = false } = {}) {
       if (windW > 0.01) {
         const f = (motePhase[i * 3 + 2] + windT * (0.8 + motePhase[i * 3 + 1])) % 1;
         const wr = modelH * (0.28 + 0.4 * ((i * 0.618) % 1)) * s;
-        x += (Math.cos(motePhase[i * 3]) * wr - x) * windW;
-        yy += ((f * 1.7 - 0.35) * modelH * s - yy) * windW;
+        // along the wind from below the body to beyond it, spread across it, round the
+        // middle of the body
+        const a = (f * 1.7 - 0.85) * modelH * s, c = Math.cos(motePhase[i * 3]) * wr;
+        x += (a * dx + c * dy - x) * windW;
+        yy += (BODY_C * modelH * s + a * dy - c * dx - yy) * windW;
         z += (Math.sin(motePhase[i * 3]) * wr * 0.6 - z) * windW;
         alpha += (0.55 * Math.sin(Math.PI * f) - alpha) * windW;
       }
@@ -1393,7 +1725,7 @@ export async function start({ reduced = false } = {}) {
   }
 
   
-  function aimHead(dt, now) {
+  function aimHead(dt, now, level) {
     if (!headBone) return;
     const t = dbg.noLook ? null : lookTarget(now);
     let yaw = 0, pitch = 0;
@@ -1408,10 +1740,11 @@ export async function start({ reduced = false } = {}) {
       yaw = Math.abs(a) <= 1.05 ? a : Math.sign(a) * 1.05 * (1 - smooth(clamp01((Math.abs(a) - 1.05) / (Math.PI - 1.05))));
       pitch = clamp(-Math.atan2(tgtW.y, Math.hypot(tgtW.x, tgtW.z)), -0.5, 0.6);
     }
-    // running, it watches where it goes; cheering, it looks up at the card it points
-    // to, then out at the visitor for the thumbs-up
-    yaw *= 1 - runner.run * 0.85;
-    pitch *= 1 - runner.run * 0.6;
+    // running or flying, it watches where it goes; cheering, it looks up at the card it
+    // points to, then out at the visitor for the thumbs-up
+    const runW = Math.max(runner.run, trans && trans.kind === 'enter' ? trans.sp : 0, level);
+    yaw *= 1 - runW * 0.85;
+    pitch *= 1 - runW * 0.6;
     const cw = cheerWeight();
     if (cw > 0) {
       yaw += (-at.yaw * 0.8 * cheer.mix - yaw) * cw;
@@ -1487,19 +1820,23 @@ export async function start({ reduced = false } = {}) {
   //   pitch   upper body lean (+ forward)
   //   thigh   where the knee points from the hip; shin: where the ankle points
   //   kick    legs pedalling in the air;  flat: feet kept flat (else on the shins)
-  //   clap / up / seat / push: where the hands go (weights; none = the clip's arms)
-  //     clap  in front of the chest, meeting and parting
+  //   up / back / scull / seat / push: where the hands go (weights; none = the clip's arms)
   //     up    raised and flailing, in the air
+  //     back  swept back along the body: flying level, head first like a dart
+  //     scull out in front, paddling slowly, to hold itself at a portal
   //     seat  on the card beside the hips;  push: on the card in front, to get up
+  // The time tunnels: hover (at a portal, legs paddling) and fly (level, legs trailing);
+  // the lean that lays it level is the tilt (see setTilt), not part of the pose.
   const POSE = {
-    air: { pitch: -0.1, thigh: [0.4, -0.62, 0.62], shin: [0.2, -0.6, -0.75], kick: 1, flat: 0, clap: 0, up: 1, seat: 0, push: 0 },
-    fall: { pitch: -0.06, thigh: [0.42, -0.6, 0.62], shin: [0.18, -0.55, -0.8], kick: 0.8, flat: 0, clap: 1, up: 0, seat: 0, push: 0 },
-    seat: { pitch: -0.14, thigh: [0.17, -0.06, 1], shin: [0.13, -0.16, 1], kick: 0, flat: 0, clap: 0, up: 0, seat: 1, push: 0 },
-    crouch: { pitch: 0.32, thigh: [0.2, -0.5, 0.85], shin: [0.06, -0.92, -0.38], kick: 0, flat: 1, clap: 0, up: 0, seat: 0.5, push: 0 },
-    push: { pitch: 0.45, thigh: [0.22, -0.32, 0.92], shin: [0.06, -0.96, -0.28], kick: 0, flat: 1, clap: 0, up: 0, seat: 0, push: 1 },
+    air: { pitch: -0.1, thigh: [0.4, -0.62, 0.62], shin: [0.2, -0.6, -0.75], kick: 1, flat: 0, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
+    hover: { pitch: 0.06, thigh: [0.16, -0.86, 0.42], shin: [0.08, -0.92, -0.3], kick: 0.45, flat: 0, up: 0, back: 0, scull: 1, seat: 0, push: 0 },
+    fly: { pitch: -0.12, thigh: [0.1, -1, -0.12], shin: [0.07, -1, -0.22], kick: 0.3, flat: 0, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
+    seat: { pitch: -0.14, thigh: [0.17, -0.06, 1], shin: [0.13, -0.16, 1], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 1, push: 0 },
+    crouch: { pitch: 0.32, thigh: [0.2, -0.5, 0.85], shin: [0.06, -0.92, -0.38], kick: 0, flat: 1, up: 0, back: 0, scull: 0, seat: 0.5, push: 0 },
+    push: { pitch: 0.45, thigh: [0.22, -0.32, 0.92], shin: [0.06, -0.96, -0.28], kick: 0, flat: 1, up: 0, back: 0, scull: 0, seat: 0, push: 1 },
   };
-  const POSE_KEYS = ['pitch', 'kick', 'flat', 'clap', 'up', 'seat', 'push'];
-  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, clap: 0, up: 0, seat: 0, push: 0 }; }
+  const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'scull', 'seat', 'push'];
+  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 0, push: 0 }; }
   function mixPose(out, a, b, k) {
     for (const key of POSE_KEYS) out[key] = a[key] + (b[key] - a[key]) * k;
     for (let j = 0; j < 3; j++) {
@@ -1537,9 +1874,6 @@ export async function start({ reduced = false } = {}) {
       leg.foot.updateMatrixWorld(true);
     }
   }
-  // claps: a phase that runs on (faster while the timeline moves, and in a burst when
-  // a new card comes round)
-  const clap = { ph: 0, burst: 0, mid: new THREE.Vector3() };
   function applyPose(P, w) {
     if (w < 0.001) return;
     model.updateMatrixWorld(true);
@@ -1555,13 +1889,11 @@ export async function start({ reduced = false } = {}) {
     }
     plantFeet(w, P.flat);
     // hands
-    const sum = P.clap + P.up + P.seat + P.push;
+    const sum = P.up + P.back + P.scull + P.seat + P.push;
     if (sum < 1e-3) return;
     const Hm = modelH;
     rigHips.getWorldPosition(vHip);
     model.worldToLocal(vHip);
-    // apart (wide enough to clear the body), and snapping together at each whole phase
-    const sep = 0.06 + 0.44 * Math.pow(Math.sin(Math.PI * (clap.ph % 1)), 0.6);
     arms.forEach((arm, i) => {
       const s = armSide[i];
       arm[0].getWorldPosition(vS);
@@ -1570,19 +1902,18 @@ export async function start({ reduced = false } = {}) {
       vPo.set(0, 0, 0);
       const fl = Math.sin(time * 5.2 + i * 2.4);
       const add = (k, x, y, z, px, py, pz) => { vT.x += k * x; vT.y += k * y; vT.z += k * z; vPo.x += k * px; vPo.y += k * py; vPo.z += k * pz; };
-      if (P.clap) add(P.clap, s * sep * 0.5 * Hm, vS.y + 0.04 * Hm, vS.z + 0.34 * Hm, s, -1, 0.1);
       if (P.up) add(P.up, vS.x + s * 0.16 * Hm, vS.y + (0.3 + 0.06 * fl) * Hm, vS.z + 0.06 * Hm, s, 0.15, -0.5);
+      if (P.back) add(P.back, vS.x + s * (0.1 + 0.01 * fl) * Hm, vS.y - 0.34 * Hm, vS.z - 0.14 * Hm, s, 0.2, 1);
+      if (P.scull) {
+        const sc = Math.sin(time * 2.6 + i * Math.PI);
+        add(P.scull, vS.x + s * (0.18 + 0.05 * sc) * Hm, vS.y - (0.07 - 0.06 * sc) * Hm, vS.z + (0.2 + 0.04 * sc) * Hm, s, -0.6, -0.4);
+      }
       if (P.seat) add(P.seat, vHip.x + s * 0.32 * Hm, vHip.y + 0.03 * Hm, vHip.z - 0.12 * Hm, s * 0.5, 0.1, -1);
       if (P.push) add(P.push, vHip.x + s * 0.24 * Hm, vHip.y - 0.14 * Hm, vHip.z + 0.2 * Hm, s, 0.1, -0.6);
       vT.divideScalar(sum);
       model.localToWorld(vT);
       reach(arm, vT, Math.min(1, sum) * w, vPo.lengthSq() > 1e-6 ? vPo.normalize().transformDirection(model.matrixWorld) : null);
     });
-    if (P.clap > 0.5) {
-      arms[0][2].getWorldPosition(clap.mid);
-      arms[1][2].getWorldPosition(vT);
-      clap.mid.add(vT).multiplyScalar(0.5);
-    }
   }
   // the lowest point of the body down onto the floor (the anchor), weighted
   const vPin = new THREE.Vector3();
@@ -1594,31 +1925,15 @@ export async function start({ reduced = false } = {}) {
     pivot.position.y -= low * w;
     pivot.updateMatrixWorld(true);
   }
-  function applyRig(dt) {
+  function applyRig() {
     if (!rigOK || reduced || view.dock) return;
-    if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); pinToFloor(1); return; } // QA
-    const inVortex = vortexOn();
+    if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); if (dbg.pose !== 'fly' && dbg.pose !== 'hover') pinToFloor(1); return; } // QA
     if (jr.on && jr.pose) {
       applyPose(jr.pose, jr.w);
       pinToFloor(jr.pin);
       if (jr.hop) { pivot.position.y += jr.hop; pivot.updateMatrixWorld(true); }
-    } else if (inVortex && !(trans && trans.kind === 'send')) {
-      applyPose(POSE.fall, 1);
     }
     blendSnap();
-    // a clap: a few sparks where the hands meet
-    const clapping = inVortex && (!jr.on || jr.pose.clap > 0.5) && shared.uDissolve.value < 0.3;
-    const rate = 2.1 + Math.min(1.3, Math.abs(scrollV) / 900) + clap.burst * 1.6;
-    clap.burst = Math.max(0, clap.burst - dt * 0.8);
-    const before = Math.floor(clap.ph);
-    clap.ph += dt * rate;
-    if (clapping && Math.floor(clap.ph) !== before) {
-      const H = at.h * view.wpp;
-      for (let n = 0; n < 7; n++) {
-        const a = Math.random() * TAU;
-        spawn(clap.mid.x, clap.mid.y, clap.mid.z + H * 0.03, Math.cos(a) * H * 0.35, Math.sin(a) * H * 0.35 + H * 0.1, H * 0.1, 0.35 + Math.random() * 0.3, 0.6);
-      }
-    }
   }
 
   // world -> canvas px (inverse of toWorld)
@@ -1718,7 +2033,7 @@ export async function start({ reduced = false } = {}) {
       }
       // the stride keeps pace with the cards
       if (current === actions.run) actions.run.setEffectiveTimeScale(clamp(0.75 + speed * 0.55, 0.85, 1.9));
-    } else if (baseName === 'run') {
+    } else if (baseName === 'run' && !(trans && trans.kind === 'enter')) {
       setBase((SECTIONS[section] || SECTIONS.inicio).base);
     }
     // a new card in the middle: point up at it, then a thumbs-up
@@ -1787,11 +2102,8 @@ export async function start({ reduced = false } = {}) {
     if (section === 'historia') {
       const item = $('.tl-item.is-focus .tl-card') || $('.tl-item.is-focus');
       if (item && item !== focusKey) {
-        // a new card in front: a nod, or (falling down the vortex) a burst of claps
-        if (focusKey && !scrub.mid) {
-          if (vortexOn()) { clap.burst = 1; setFace('surprised', 0.7); }
-          else react('yes');
-        }
+        // a new card in front: a nod (flying through the tunnels, the flight says it all)
+        if (focusKey && !scrub.mid && !tunnelOn()) react('yes');
         focusKey = item;
       }
       focusTarget = item;
@@ -1970,12 +2282,14 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
-  let floatW = 1, yawLocked = false;
+  let floatW = 1;
   function update(dt, now) {
     time += dt;
     shared.uTime.value = time;
     const wasOn = jr.on;
-    jr.on = false; // a journey claims the frame again below
+    jr.on = false; // a journey (or the tunnels) claims the frame again below
+    jr.tun = false;
+    tun.drove = false;
     if (snap.t < 1) { snap.t = Math.min(1, snap.t + dt / 0.28); snap.k = smooth(snap.t); }
 
     // scroll velocity -> lean (the guide is dragged by the current)
@@ -1990,6 +2304,7 @@ export async function start({ reduced = false } = {}) {
     stepScrub(dt, now);
     stepRunner(dt);
 
+    if (!trans && !jr.on && tunnelOn()) stepTunnel(dt, now);
     if (!trans && !jr.on) {
       goal = anchorFor(section);
       if (reduced) {
@@ -2010,17 +2325,13 @@ export async function start({ reduced = false } = {}) {
         if (goal.floor) { at.y = goal.y; vel.y = 0; }
         const k = damp(2.6, dt);
         at.h += (goal.h - at.h) * k;
-        // Down the vortex it turns with the timeline, so it keeps up closely. Those turns
-        // are continuous: once it is on the same turn, follow them without wrapping (a
-        // fast scroll would otherwise send it the short way round, backwards).
-        if (goal.vortex) {
-          if (!yawLocked) at.yaw = goal.yaw + wrapPi(at.yaw - goal.yaw);
-          at.yaw += (goal.yaw - at.yaw) * damp(9, dt);
-        } else at.yaw += wrapPi(goal.yaw - at.yaw) * k;
+        at.yaw += wrapPi(goal.yaw - at.yaw) * k;
       }
     }
-    yawLocked = !trans && !jr.on && !reduced && !!(goal && goal.vortex);
     stepTransit(dt);
+    // (off the tunnels: portals and wake at rest, nothing behind the cards)
+    if (tun.active && !tun.drove) leaveTunnel();
+    tun.active = tun.drove;
     // A journey just handed back (lean, drift and the float return, the pin lets go):
     // blend from its last frame instead of jumping.
     if (wasOn && !jr.on && !reduced && !view.dock) snapRig();
@@ -2028,14 +2339,17 @@ export async function start({ reduced = false } = {}) {
 
     // float, lean, turn toward what it looks at
     const cfg = SECTIONS[section] || SECTIONS.inicio;
-    const inVortex = vortexOn();
-    const floating = cfg.float && !reduced && !inVortex;
-    // (the float eases out for a journey and back in after it)
-    floatW += ((floating && !jr.on && !(trans && trans.kind === 'hop') ? 1 : 0) - floatW) * (reduced ? 1 : damp(2.2, dt));
+    const floating = cfg.float && !reduced;
+    // (the float eases out for a journey and back in after it; at a portal it bobs,
+    // flying level it doesn't)
+    const floatT = floating && (!jr.on || jr.tun) && !(trans && (trans.kind === 'hop' || trans.kind === 'enter')) ? (jr.tun ? 1 - jr.fly : 1) : 0;
+    floatW += (floatT - floatW) * (reduced ? 1 : damp(2.2, dt));
     // the scroll drives a journey, so no lean or drift into it
     const calm = jr.on ? 0 : 1;
-    // airborne: buffeted by the fall (in flight, and all the way down the vortex)
-    const air = jr.on ? jr.air : inVortex && !trans ? 1 : 0;
+    // airborne: buffeted by the fall (and a little, flying through the tunnels)
+    const air = jr.on ? jr.air : 0;
+    // flying level: how much (the wind of it streams back past the body)
+    const level = jr.on ? clamp01(jr.tilt / TILT.fly) : 0;
     // Adrift: layered slow sines (never quite repeating), a body that trails its own
     // motion like something pushed through water, and the scroll current on top.
     const hpx = Math.max(at.h, 1);
@@ -2055,11 +2369,12 @@ export async function start({ reduced = false } = {}) {
       + tug.x * 0.25 * grip.w; // leans back with the jolt on the card
     // (on the cards the scroll moves the deck, not the guide: no lean into the current)
     pivot.rotation.x = calm * (onFloor ? 0 : lean * 0.3 + driftY) + fw * 0.03 * Math.sin(time * 0.53 + 1.7)
-      + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : 0);
+      + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : trans && trans.kind === 'enter' ? trans.pitch : 0);
     pivot.rotation.y = at.yaw + look.yaw * 0.35 + fw * 0.06 * Math.sin(time * 0.31);
     if (dbg.yaw != null) pivot.rotation.y = dbg.yaw;
     const sq = jr.on ? jr.squash : 0;
     pivot.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
+    setTilt(jr.on ? jr.tilt : 0);
 
     // Bones the current clip doesn't animate keep last frame's offsets: undo them first.
     for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
@@ -2067,15 +2382,16 @@ export async function start({ reduced = false } = {}) {
     else if (!mixer.time) mixer.update(0.5);
     for (const r of restPose) { r.q.copy(r.bone.quaternion); r.p.copy(r.bone.position); }
     model.updateMatrixWorld(true);
-    applyRig(dt);
+    applyRig();
     // The Running clip bounds high: keep most of each stride down on the card.
     const wRun = actions.run && actions.run.isRunning() ? actions.run.getEffectiveWeight() : 0;
     if (!jr.on && wRun > 0.01 && soles.length) {
       pivot.position.y -= (soleY() - footRest) * 0.75 * wRun;
       pivot.updateMatrixWorld(true);
     }
-    aimHead(dt, now);
+    aimHead(dt, now, level);
     gripCard(dt);
+    maskTunnel();
     applyCheer(dt);
     updateSeatMark();
 
@@ -2091,15 +2407,16 @@ export async function start({ reduced = false } = {}) {
 
     shed(dt);
     stepPool(dt);
-    stepMotes(dt, air);
+    stepMotes(dt, Math.max(air, level), level);
     pGeo.attributes.position.needsUpdate = true;
     pGeo.attributes.aAlpha.needsUpdate = true;
 
-    // the clickable area follows the body
-    const visible = shared.uDissolve.value < 0.6;
-    const w = at.h * 0.5, hh = at.h * 0.95;
+    // the clickable area follows the body (lying along it, flying level; none while it
+    // is behind a card)
+    const visible = shared.uDissolve.value < 0.6 && !tun.hidden;
+    const w = at.h * (0.5 + 0.45 * level), hh = at.h * (0.95 - 0.55 * level);
     const off = view.dock ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
-    hit.style.transform = `translate(${(off.left + at.x - w / 2).toFixed(1)}px, ${(off.top + at.y - hh).toFixed(1)}px)`;
+    hit.style.transform = `translate(${(off.left + at.x - w / 2).toFixed(1)}px, ${(off.top + at.y - at.h * BODY_C - hh / 2).toFixed(1)}px)`;
     hit.style.width = `${w.toFixed(0)}px`;
     hit.style.height = `${hh.toFixed(0)}px`;
     hit.style.visibility = visible ? 'visible' : 'hidden';
@@ -2128,7 +2445,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
   return window.__avatar;
 }
 
@@ -2160,7 +2477,7 @@ function abyssalize(source, shared) {
         varying vec3 vDPos;
         uniform float uDissolve; uniform float uTime; uniform float uNoiseScale; uniform float uHeight;
         uniform vec3 uRim; uniform vec3 uEdge;
-        uniform float uClip; uniform float uCardOn; uniform vec4 uCardRect;
+        uniform float uClip; uniform float uClipAll; uniform float uCardOn; uniform vec4 uCardRect;
         float aHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float aNoise(vec3 x) {
           vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -2172,7 +2489,7 @@ function abyssalize(source, shared) {
       .replace(
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
-        if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
+        if ((uClip + uClipAll) * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
         if (uDissolve > 0.001) {
           vec3 q = vDPos * uNoiseScale;
