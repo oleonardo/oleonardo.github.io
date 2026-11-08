@@ -2,7 +2,8 @@
  * Leonardo de Oliveira · Abissal
  * avatar-scene.js: the guide. A small 3D character that lives in the particle sea,
  * follows the visitor with its eyes, reacts to scroll and clicks, and moves between
- * the sections by dissolving into motes and re-forming where the reader is.
+ * the sections in plain sight: it jumps, falls and lands on its backside on the next
+ * section's card, then gets up. Through the timeline it falls down the vortex.
  *
  * Proof of concept: the model is a CC0 placeholder (RobotExpressive by Tomás Laulhé)
  * that will be swapped for Léo's own avatar. Everything that depends on the model
@@ -55,7 +56,7 @@ const CLIPS = {
 // What the guide does in each section of the page.
 const SECTIONS = {
   inicio: { base: 'idle', greet: 'wave', float: true },
-  historia: { base: 'idle', greet: 'yes', float: true },
+  historia: { base: 'idle', greet: 'yes', float: true }, // (on desktop it falls down the vortex instead)
   projetos: { base: 'idle', greet: 'thumbs', float: false },
   contato: { base: 'idle', greet: 'wave', float: true },
 };
@@ -75,6 +76,9 @@ const FOV = 30;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const clamp01 = (v) => clamp(v, 0, 1);
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const smooth = (x) => x * x * (3 - 2 * x);
+const TAU = Math.PI * 2;
+const wrapPi = (a) => a - TAU * Math.round(a / TAU);
 const damp = (k, dt) => 1 - Math.exp(-k * dt);
 
 export async function start({ reduced = false } = {}) {
@@ -224,7 +228,6 @@ export async function start({ reduced = false } = {}) {
     return low;
   }
 
-  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone)])].filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone() }));
 
   // Measure the model once to map "pixels tall" to a scale.
   model.updateMatrixWorld(true);
@@ -236,6 +239,46 @@ export async function start({ reduced = false } = {}) {
   // how high the soles sit when standing (model space): the run is pinned to it
   const footRest = soles.length ? soleY() : 0;
   shared.uHeight.value = modelH;
+
+  // Rig for the poses the clips don't have: the take-off, the fall with the claps,
+  // landing on its backside and getting up. A pose is a set of aims in model space
+  // (forward +z, up +y, x mirrored per side), so it doesn't depend on the bones' own
+  // axes. The feet are free IK targets in this rig; in these poses they ride on the
+  // shins instead, the way they hang in the bind pose.
+  const nodeByBare = {};
+  model.traverse((o) => {
+    const k = bare(o.name);
+    if (!nodeByBare[k] || (o.isBone && !nodeByBare[k].isBone)) nodeByBare[k] = o;
+  });
+  model.updateMatrixWorld(true);
+  const sideOf = (o) => Math.sign(model.worldToLocal(o.getWorldPosition(new THREE.Vector3())).x) || 1;
+  const rigBody = bonesByName.Body || null;
+  const rigHips = bonesByName.Hips || null;
+  const legs = [['UpperLeg.L', 'LowerLeg.L', 'LowerLeg.L_end', 'Foot.L'], ['UpperLeg.R', 'LowerLeg.R', 'LowerLeg.R_end', 'Foot.R']]
+    .map((c) => c.map((n) => nodeByBare[bare(n)]))
+    .filter((c) => c.every(Boolean))
+    .map(([upper, lower, end, foot]) => ({
+      upper, lower, end, foot,
+      side: sideOf(upper),
+      rel: new THREE.Matrix4().copy(lower.matrixWorld).invert().multiply(foot.matrixWorld), // foot on the shin
+      flatQ: model.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(foot.getWorldQuaternion(new THREE.Quaternion())), // flat, in model space
+    }));
+  const armSide = arms.map((a) => sideOf(a[0]));
+  const rigOK = !!(rigBody && rigHips && legs.length === 2 && arms.length === 2);
+  const rigBones = rigOK ? [...new Set([rigBody, rigHips, ...legs.flatMap((l) => [l.upper, l.lower, l.foot]), ...arms.flat()])] : [];
+  // A sparse cloud of points on the rigid parts: whatever is lowest touches the floor.
+  const floorPts = [];
+  for (const o of meshes) {
+    if (o.isSkinnedMesh || bare(o.name) === bare(MODEL.face.mesh)) continue;
+    const a = o.geometry.attributes.position;
+    const step = Math.max(1, Math.ceil(a.count / 90));
+    for (let i = 0; i < a.count; i += step) floorPts.push([o, new THREE.Vector3().fromBufferAttribute(a, i)]);
+  }
+
+  // Bones posed on top of the clips: reset to the clean clip pose before every update
+  // (bones a clip doesn't animate would otherwise keep last frame's offsets).
+  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone), ...rigBones])]
+    .filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
   // Animation
   const mixer = new THREE.AnimationMixer(model);
@@ -261,7 +304,7 @@ export async function start({ reduced = false } = {}) {
     next.clampWhenFinished = !!once;
     // A clip's first play saves the bones' current pose as their "original": make
     // sure that is the clean animated pose, not the arms bent around the card.
-    for (const r of restPose) r.bone.quaternion.copy(r.q);
+    for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
     next.play();
     if (current && current !== next) current.crossFadeTo(next, dur, false);
     current = next;
@@ -369,7 +412,7 @@ export async function start({ reduced = false } = {}) {
     motePhase[i * 3 + 2] = Math.random(); // height
   }
 
-  const dbg = { noLook: false, timeScale: 1 };
+  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null };
   const v3 = new THREE.Vector3();
   function sampleSurface(intoWorld, intoRel) {
     root.updateMatrixWorld(true);
@@ -402,6 +445,9 @@ export async function start({ reduced = false } = {}) {
     projects: $$('.project'),
     deck: $('#deck'),
     workStage: $('.work-stage'),
+    storySec: $('#historia'),
+    storyStage: $('.story-stage'),
+    tlItems: $$('.tl-item'),
   };
 
   // Contact shadow + lantern spill under its feet on the card it stands on. It lives
@@ -417,7 +463,7 @@ export async function start({ reduced = false } = {}) {
   // translate3d(x, 0, z) rotateY(ry) scale(s), inside the deck's perspective.
   const DECK_RE = /translate3d\(([-\d.]+)px,\s*0(?:px)?,\s*([-\d.]+)px\)\s*rotateY\(([-\d.]+)deg\)\s*scale\(([\d.]+)\)/;
   let deckPersp = 1600, barBottom = 68;
-  function deckFloor() {
+  function deckFloor(live) {
     if (!nodes.deck || !nodes.projects.length) return null;
     const d = nodes.deck.getBoundingClientRect();
     const ox = d.left + d.width / 2, oy = d.top + d.height / 2;
@@ -441,12 +487,12 @@ export async function start({ reduced = false } = {}) {
     if (!best) return null;
     // Where a card's top sits at rest while the deck holds still on screen. It sizes
     // the guide (as tall as fits under the top bar), and it is as high as it goes:
-    // once the deck scrolls away it stays put and evaporates instead of riding up.
+    // once the deck scrolls away it stays put and jumps off instead of riding up.
     const stageTop = nodes.workStage ? nodes.workStage.getBoundingClientRect().top : 0;
     const restTop = oy - stageTop - nodes.projects[0].offsetHeight / 2;
     const h = clamp(restTop - barBottom + 6, view.h * 0.12, 200); // (the model box has headroom over the head)
-    // (reduced motion has no evaporating: it stays on its card wherever that goes)
-    return { node: best.node, u: best.u, x: ox, y: (reduced ? best.y : Math.max(best.y, restTop)) + 1, h };
+    // (on a journey, and with reduced motion, it is on the card wherever that goes)
+    return { node: best.node, u: best.u, x: ox, y: (reduced || live ? best.y : Math.max(best.y, restTop)) + 1, h };
   }
 
   function frontCard() {
@@ -459,20 +505,47 @@ export async function start({ reduced = false } = {}) {
     return best;
   }
 
+  // The timeline: it falls down the vortex in the middle of the screen, in the gap
+  // under the card in front (app.js turns the cards on a ring of radius 360px around
+  // the spine). The spot rests there until the stage is pinned, and rides up with the
+  // stage when the section scrolls away. It turns once around for every card.
+  let storyPersp = 2000, storyCardH = 0;
+  const VORTEX_YAW = -0.15; // facing, at the first card (one more turn per card after it)
+  const vortexMode = () => !reduced && !view.dock && !!nodes.storyStage && nodes.tlItems.length > 1;
+  const vortexOn = () => section === 'historia' && vortexMode();
+  function storyPos() {
+    const sec = nodes.storySec;
+    if (!sec) return 0;
+    const r = sec.getBoundingClientRect();
+    return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * (nodes.tlItems.length - 1);
+  }
+  function vortexSpot() {
+    const r = nodes.storyStage.getBoundingClientRect();
+    if (r.height < 10 || !storyCardH) return null;
+    const top = Math.min(r.top, 0);
+    const cardBottom = top + r.height / 2 + (storyCardH / 2) * (storyPersp / Math.max(1, storyPersp - 360));
+    const gap = top + r.height - cardBottom;
+    const h = clamp(gap * 0.82, view.h * 0.12, 230);
+    const f = storyPos(), n = Math.floor(f);
+    return { x: r.left + r.width / 2, y: cardBottom + gap * 0.5 + h * 0.4, h, yaw: VORTEX_YAW + TAU * (n + smooth(f - n)), vortex: true };
+  }
+
   // Running state, kept here because the deck anchor reads its heading.
   const runner = { f: -1, v: 0, dir: 1, run: 0, on: false, still: 0, yaw: -0.1, idx: -1 };
 
-  function anchorFor(id) {
+  function anchorFor(id, live) {
     const W = view.w, H = view.h;
     if (view.dock) return { x: W / 2, y: H * 0.98, h: H * 0.9, yaw: -0.25 };
     switch (id) {
       case 'historia': {
+        const v = vortexMode() && vortexSpot();
+        if (v) return v;
         const r = nodes.rail ? nodes.rail.getBoundingClientRect() : null;
         const h = Math.min(H * 0.3, 270);
         return { x: Math.max(r ? r.left + 64 : 0, h * 0.4), y: H * 0.94, h, yaw: 0.55 };
       }
       case 'projetos': {
-        const floor = deckFloor();
+        const floor = deckFloor(live);
         if (floor) return { x: floor.x, y: floor.y, h: floor.h, yaw: runner.yaw, floor };
         const h = Math.min(H * 0.18, 170);
         const r = frontCard();
@@ -496,6 +569,8 @@ export async function start({ reduced = false } = {}) {
   function resize() {
     scrubReset();
     if (nodes.deck) deckPersp = parseFloat(getComputedStyle(nodes.deck).perspective) || 1600;
+    if (nodes.storyStage) storyPersp = parseFloat(getComputedStyle(nodes.storyStage).perspective) || 2000;
+    storyCardH = Math.max(0, ...nodes.tlItems.map((n) => n.offsetHeight));
     const bar = $('.topbar');
     if (bar) barBottom = bar.getBoundingClientRect().bottom;
     view.dock = mqDock.matches;
@@ -512,6 +587,7 @@ export async function start({ reduced = false } = {}) {
     view.wpp = (2 * CAM_Z * Math.tan(THREE.MathUtils.degToRad(FOV / 2))) / view.h;
     pMat.uniforms.uPx.value = view.dpr;
     goal = anchorFor(section);
+    if (view.dock && trans && trans.kind === 'hop') trans = null;
     if (!trans) snapTo(goal);
     dirty = true;
   }
@@ -589,15 +665,17 @@ export async function start({ reduced = false } = {}) {
     const cfg = SECTIONS[id] || SECTIONS.inicio;
     if (reduced || view.dock) {
       // No journey: a puff in place (dock) or a plain cut (reduced motion).
+      if (trans && trans.kind === 'hop') trans = null;
       snapTo(goal);
       setBase(cfg.base);
       if (!reduced && prev !== id) { puff(); greet(id, cfg.greet); }
       dirty = true;
       return;
     }
-    if (trans && trans.phase !== 'in') {
+    if (trans && trans.kind !== 'hop' && trans.phase !== 'in' && !fromScatter) {
+      // the first appearance or a send, still in mist: bend it toward the new spot
       if (id !== 'contato') abandonSend();
-      trans.toId = id; // retarget mid-flight: the motes just bend toward the new spot
+      trans.toId = id;
       return;
     }
     placeRoot();
@@ -615,40 +693,45 @@ export async function start({ reduced = false } = {}) {
       }
       trans = { phase: 'travel', t: 0, toId: id, fromH: goal.h };
       shared.uDissolve.value = 1;
-    } else if (scrub.mist) {
-      takeOverMist(id, prev);
+      for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
+      seedCtrl();
+      dirty = true;
       return;
-    } else {
-      sampleSurface(tStart, tRel);
-      trans = { phase: 'out', t: 0, toId: id, fromH: at.h, from: prev };
     }
-    for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
-    seedCtrl();
-    dirty = true;
+    hopTo(id, prev);
   }
 
-  // A timed journey taking over from a scrubbed one, mid-mist: pick the 'out' phase
-  // up at the body's current dissolve, with the motes where they are now, so
-  // nothing pops back solid or vanishes.
-  function takeOverMist(id, prev) {
-    const d = shared.uDissolve.value;
-    let lo = 0, hi = 1;
-    for (let n = 0; n < 14; n++) { const m = (lo + hi) / 2; if (ease(m) < d) lo = m; else hi = m; }
-    const H = at.h * view.wpp;
-    for (let i = 0; i < N_TRANSIT; i++) {
-      tDelay[i] = Math.random() * SPREAD;
-      const own = clamp01((lo - tDelay[i] * 0.8) / 0.6);
-      const x = pPos[i * 3], y = pPos[i * 3 + 1], z = pPos[i * 3 + 2];
-      const f = flow(x / H, y / H, z / H + phase[i * 3], time);
-      const dd = own * own * H * 0.18;
-      tStart[i * 3] = x - f[0] * dd;
-      tStart[i * 3 + 1] = y - f[1] * dd - own * H * 0.06;
-      tStart[i * 3 + 2] = z - f[2] * dd;
-    }
-    scrub.mist = false;
+  // A timed journey (menu links, leaps, a retarget): the same jump, fall and landing
+  // as the scrolled ones, run by the clock from wherever the guide is right now.
+  function hopTo(id, prev) {
+    const airborne = trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid ? jr.air > 0.5 : prev === 'historia' && vortexMode();
+    if (trans && trans.kind === 'send') settleSend(null);
+    const sk = airborne ? 'fall' : 'stand';
+    const ek = endKind(id);
+    const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw };
+    const B = anchorFor(id, true);
+    const dist = Math.hypot(B.x - A.x, clamp(B.y, 0, view.h) - A.y);
+    const tk = sk === 'stand' ? 0.32 : 0;
+    const tf = 0.75 + Math.min(dist / 2200, 0.55);
+    const ts = ek === 'butt' ? 0.45 : 0;
+    const tg = ek === 'butt' ? 1.0 : ek === 'feet' ? 0.45 : 0;
+    const dur = tk + tf + ts + tg;
+    // Whose spot is it on? Still crouching, or only just sprung off (it crouches again
+    // only while low over that spot): the one it was leaving. In mid-air: none, so it
+    // keeps the snapshot. Nearly or fully down: the one it was heading to.
+    const pq = trans && trans.kind === 'hop' ? trans.t / trans.dur : -1;
+    const from = pq < 0 ? prev
+      : pq < trans.ph.T0 ? trans.from
+      : sk === 'fall' ? null
+      : pq < (trans.ph.T0 + trans.ph.L) / 2 ? trans.from
+      : prev;
+    snapRig();
+    trans = { kind: 'hop', phase: 'travel', t: 0, dur, toId: id, from, A, sk, ek, vBase: ek === 'fall' ? B.yaw : undefined, ph: { T0: tk / dur, L: (tk + tf) / dur, S: (tk + tf + ts) / dur } };
+    jr.lastP = -1;
+    scrub.mid = false;
     scrub.on = false;
-    trans = { phase: 'out', t: lo * OUT, toId: id, fromH: at.h, from: prev };
-    seedCtrl();
+    pAlpha.fill(0, 0, N_TRANSIT);
+    shared.uDissolve.value = 0;
     dirty = true;
   }
 
@@ -748,6 +831,33 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
+    if (trans.kind === 'hop') {
+      const p = clamp01(trans.t / trans.dur);
+      const B = anchorFor(trans.toId, true);
+      // while the page is still scrolling there, aim for the part of it on screen
+      if (p < trans.ph.L) B.y = clamp(B.y, B.h * 0.9, view.h * 0.97);
+      goal = B;
+      // crouching for the take-off it stays on its card, which may already be moving
+      if (p < trans.ph.T0 && trans.from && trans.from !== trans.toId) {
+        const S = anchorFor(trans.from, true);
+        trans.A.x = S.x;
+        trans.A.y = clamp(S.y, S.h * 0.9, view.h * 0.97);
+        // (its card, while it really stands on it: not once the card slid off screen)
+        trans.A.floor = S.floor && Math.abs(trans.A.y - S.y) < 0.5 ? S.floor : null;
+      }
+      if (trans.phase === 'travel' && p >= trans.ph.L) {
+        trans.phase = 'in';
+        setBase((SECTIONS[trans.toId] || SECTIONS.inicio).base);
+      }
+      journeyAt(trans.A, B, p, trans.sk, trans.ek, trans.ph, trans.vBase);
+      if (p >= 1) {
+        const toId = trans.toId;
+        trans = null;
+        if (toId === 'historia') setBase((SECTIONS[toId] || SECTIONS.inicio).base);
+        greet(toId, (SECTIONS[toId] || SECTIONS.inicio).greet);
+      }
+      return;
+    }
     const H = (trans.kind === 'send' ? trans.fromH : at.h) * view.wpp; // one body height in world units
     // A send happens beside the form: motes fade out at the card's left edge, as if
     // they slipped behind it, so none drift over the fields.
@@ -890,14 +1000,14 @@ export async function start({ reduced = false } = {}) {
   // Journeys scrubbed by the scroll
   // ---------------------------------------------------------------------------
   // Between two sections the journey is a pure function of the scroll position:
-  // scroll down and the guide evaporates, drifts and condenses at the next spot;
+  // scroll down and the guide jumps (or falls) to the next spot and lands there;
   // scroll back and it all plays in reverse. u is a continuous section index:
   // whole numbers are plateaus (solid at that section), fractions are partway.
   // Time-based journeys (first appearance, menu jumps, the send) take over while
   // they run and hand back here when they're done.
   const ORDER = $$('main > section').map((el) => el.id).filter((id) => SECTIONS[id]);
   const ZONE = 0.3; // half-length of a journey, in viewport heights
-  const scrub = { on: false, u: 0, mist: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
+  const scrub = { on: false, u: 0, mid: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
   // section tops are cached: drop them whenever the layout changes
   if ('ResizeObserver' in window && document.querySelector('main')) {
     new ResizeObserver(() => { scrub.tops = null; }).observe(document.querySelector('main'));
@@ -923,13 +1033,15 @@ export async function start({ reduced = false } = {}) {
       // stands on the deck, so it sets off as soon as the deck starts to scroll away.
       let b = tops[i + 1] - vh * 0.45;
       if (ORDER[i] === 'projetos') b = Math.min(b, tops[i + 1] - vh + z);
+      // Into the timeline it lands in the vortex just as the stage pins (before that
+      // the card in front is still rising through the spot it falls to).
+      if (ORDER[i + 1] === 'historia' && vortexMode()) b = Math.max(b, tops[i + 1] - z);
       z = Math.max(24, Math.min(z, maxS - b));
       if (sy <= b - z) return i;
       if (sy < b + z) return i + (sy - (b - z)) / (2 * z);
     }
     return ORDER.length - 1;
   }
-  const sA = new THREE.Vector3(), sB = new THREE.Vector3();
   function stepScrub(dt, now) {
     if (jumping && now - scrub.scrolledAt > 320 && !trans) { jumping = false; scrub.leap = false; }
     // a leap (keyboard, scrollbar) keeps steering toward the section under the scroll
@@ -940,8 +1052,7 @@ export async function start({ reduced = false } = {}) {
     if (!scrubbing()) {
       if (scrub.on) {
         scrub.on = false;
-        if (scrub.mist && !trans) { pAlpha.fill(0, 0, N_TRANSIT); shared.uDissolve.value = 0; }
-        scrub.mist = false;
+        scrub.mid = false;
       }
       return;
     }
@@ -970,7 +1081,7 @@ export async function start({ reduced = false } = {}) {
     const onward = ORDER[Math.floor(t)] === 'projetos' && nodes.workStage && nodes.workStage.getBoundingClientRect().top < -40;
     let target = idle ? (onward ? Math.ceil(t) : Math.round(t)) : t;
     // Once it has settled ahead, scrolling on the same way doesn't pull it back into
-    // the mist: it waits there for the scroll to catch up.
+    // the air: it waits there for the scroll to catch up.
     if (!idle && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
     if (!idle && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
     scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
@@ -981,66 +1092,175 @@ export async function start({ reduced = false } = {}) {
     let p = clamp01(scrub.u - i);
     const side = p < 0.5 ? ORDER[i] : ORDER[i + 1];
     if (side !== section) {
-      // the body crosses over while it is all mist
+      // halfway there it belongs to the next section (its clips, what it looks at)
       section = side;
       focusKey = null;
       goal = anchorFor(section);
-      snapTo(goal);
       setBase((SECTIONS[section] || SECTIONS.inicio).base);
     }
     if (p < 1e-3 || p > 1 - 1e-3) {
-      if (scrub.mist || shared.uDissolve.value > 0) {
-        scrub.mist = false;
-        pAlpha.fill(0, 0, N_TRANSIT);
-        shared.uDissolve.value = 0;
-      }
+      scrub.mid = false;
       if (scrub.greeted !== section) {
         scrub.greeted = section;
         greet(section, (SECTIONS[section] || SECTIONS.inicio).greet);
       }
       return;
     }
-    if (!scrub.mist) {
-      // the shape the mist leaves from and gathers into
-      scrub.mist = true;
-      placeRoot();
-      sampleSurface(null, tRel);
+    // In between, the body travels in plain sight, as a pure function of the scroll.
+    if (!scrub.mid) {
+      scrub.mid = true;
+      jr.lastP = -1;
+      snapRig();
     }
-    // the body: evaporates over the first third, condenses over the last
-    shared.uDissolve.value = ease(clamp01(Math.min(p, 1 - p) / 0.32));
-    // the mist: from the body at one spot to the body at the other (both live)
-    const aA = section === ORDER[i] ? at : anchorFor(ORDER[i]);
-    const aB = section === ORDER[i + 1] ? at : anchorFor(ORDER[i + 1]);
-    toWorld(aA.x, aA.y, 0, sA);
-    toWorld(aB.x, aB.y, 0, sB);
-    const kA = (aA.h * view.wpp) / modelH, kB = (aB.h * view.wpp) / modelH;
-    const H = Math.max(aA.h, aB.h) * view.wpp;
-    const dist = sA.distanceTo(sB);
-    const lift = Math.max(dist * 0.28, H * 0.35);
-    const TAU = Math.PI * 2;
-    for (let j = 0; j < N_TRANSIT; j++) {
-      const p0 = phase[j * 3], p1 = phase[j * 3 + 1], p2 = phase[j * 3 + 2];
-      const r0 = p0 / TAU, r1 = p1 / TAU, r2 = p2 / TAU;
-      const rx = tRel[j * 3], ry = tRel[j * 3 + 1], rz = tRel[j * 3 + 2];
-      const Sx = sA.x + rx * kA, Sy = sA.y + ry * kA, Sz = sA.z + rz * kA;
-      const Ex = sB.x + rx * kB, Ey = sB.y + ry * kB, Ez = sB.z + rz * kB;
-      const own = clamp01((p - 0.22 * r0) / 0.18); // has left the body
-      const back = clamp01((1 - p - 0.22 * r1) / 0.18); // not yet gathered into the far body
-      const q = ease(clamp01((p - 0.12 - 0.16 * r0) / 0.62));
-      // evaporating, the current carries it a little before the journey takes it
-      const fl = flow(Sx / H, Sy / H, Sz / H + p0, time);
-      const ev = own * (1 - q) * H * 0.16;
-      const ax = Sx + fl[0] * ev, ay = Sy + fl[1] * ev + own * (1 - q) * H * 0.05, az = Sz + fl[2] * ev;
-      const cx = (Sx + Ex) / 2 + (r1 - 0.5) * dist * 0.12;
-      const cy = (Sy + Ey) / 2 + lift * (0.75 + 0.4 * r2);
-      const cz = (r0 - 0.3) * dist * 0.15;
-      const u1 = 1 - q;
-      const billow = Math.sin(Math.PI * q) * H * 0.2;
-      pPos[j * 3] = u1 * u1 * ax + 2 * u1 * q * cx + q * q * Ex + billow * Math.sin(q * 4.2 + p0 + time * 0.7);
-      pPos[j * 3 + 1] = u1 * u1 * ay + 2 * u1 * q * cy + q * q * Ey + billow * 0.7 * Math.sin(q * 3.4 + p1 + time * 0.55);
-      pPos[j * 3 + 2] = u1 * u1 * az + 2 * u1 * q * cz + q * q * Ez + billow * 0.6 * Math.sin(q * 2.7 + p2);
-      pAlpha[j] = 0.8 * Math.min(own, back) * (0.85 + 0.15 * Math.sin(Math.PI * q));
+    const idA = ORDER[i], idB = ORDER[i + 1];
+    const sk = startKind(idA), ek = endKind(idB);
+    // (the vortex's facing where this zone meets it: its first card from above, its last
+    // from below; see journeyAt)
+    const vBase = ek === 'fall' ? VORTEX_YAW : sk === 'fall' ? VORTEX_YAW + TAU * (nodes.tlItems.length - 1) : undefined;
+    journeyAt(anchorFor(idA, true), anchorFor(idB, true), p, sk, ek, scrubPhases(sk, ek), vBase);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Journeys in plain sight
+  // ---------------------------------------------------------------------------
+  // From spot A to spot B at progress p (0..1), the same whether the scroll scrubs it
+  // or a clock runs it:
+  //   take-off  (off a floor) a crouch and a spring
+  //   flight    an arc from A to B (out of the vortex it just keeps falling)
+  //   landing   into the vortex it keeps falling; anywhere else it lands on its
+  //             backside on the card, bounces, shakes its head and gets up
+  // sk (start): 'stand' | 'fall'      ek (end): 'fall' | 'feet' | 'butt'
+  const startKind = (id) => (id === 'historia' && vortexMode() ? 'fall' : 'stand');
+  const endKind = (id) => (id === 'historia' && vortexMode() ? 'fall' : id === 'inicio' ? 'feet' : 'butt');
+  function scrubPhases(sk, ek) {
+    const T0 = sk === 'stand' ? 0.14 : 0;
+    const L = ek === 'fall' ? 1 : ek === 'feet' ? 0.8 : 0.58;
+    return { T0, L, S: ek === 'butt' ? L + 0.12 : L };
+  }
+  // what a journey asks of the frame: pose (and its weight over the clips), floor
+  // pinning, airborne-ness, body lean, squash, a little bounce, the card it sits on
+  const jr = { on: false, w: 0, pin: 0, air: 0, pitch: 0, squash: 0, hop: 0, pose: null, floor: null, lastP: -1 };
+  function journeyAt(A, B, p, sk, ek, ph, vBase) {
+    const { T0, L, S } = ph;
+    jr.on = true;
+    vel.x = vel.y = 0;
+    const q = clamp01((p - T0) / Math.max(1e-4, L - T0)); // flight progress
+    const kq = smooth(q);
+    const fallEnd = ek === 'fall';
+
+    // where: still at A for the take-off, an arc in flight, then B
+    if (p < T0) { at.x = A.x; at.y = A.y; }
+    else if (p < L || fallEnd) {
+      at.x = A.x + (B.x - A.x) * kq;
+      const ky = sk === 'fall' ? q * q : fallEnd ? kq : q;
+      const apex = sk === 'stand' ? Math.max(A.h, B.h) * 0.32 + Math.max(0, A.y - B.y) * 0.25 : 0;
+      at.y = A.y + (B.y - A.y) * ky - apex * Math.sin(Math.PI * q);
+    } else { at.x = B.x; at.y = B.y; }
+    at.h = p < T0 ? A.h : A.h + (B.h - A.h) * kq;
+    // it lands three-quarters on (so the sit reads), then turns to its spot
+    const landYaw = ek === 'butt' ? 0.62 : B.yaw;
+    // The vortex end turns once per card while the page scrolls through the timeline,
+    // so its yaw has no fixed turn to wrap against: take off its whole turns from where
+    // the journey meets it (vBase) once, and the turn in flight stays continuous.
+    const vEnd = vBase === undefined ? null : fallEnd ? 'B' : sk === 'fall' ? 'A' : null;
+    if (vEnd === 'B') at.yaw = A.yaw + (B.yaw - TAU * Math.round((vBase - A.yaw) / TAU) - A.yaw) * kq;
+    else if (vEnd === 'A' && p < L) at.yaw = A.yaw + (landYaw + TAU * Math.round((vBase - landYaw) / TAU) - A.yaw) * kq;
+    else at.yaw = p < L || fallEnd
+      ? A.yaw + wrapPi(landYaw - A.yaw) * kq
+      : landYaw + wrapPi(B.yaw - landYaw) * smooth(clamp01((p - S) / Math.max(1e-4, 1 - S)));
+    if (snap.k < 1) {
+      at.x = snap.at.x + (at.x - snap.at.x) * snap.k;
+      at.y = snap.at.y + (at.y - snap.at.y) * snap.k;
+      at.h = snap.at.h + (at.h - snap.at.h) * snap.k;
+      at.yaw = snap.at.yaw + wrapPi(at.yaw - snap.at.yaw) * snap.k;
     }
+
+    // how: airborne in flight, pinned to the floor at both ends, leaning back into
+    // the landing, squashed by the bump
+    jr.air = (sk === 'fall' ? 1 : smooth(clamp01(q / 0.12))) * (fallEnd ? 1 : 1 - smooth(clamp01((q - 0.82) / 0.18)));
+    jr.pin = Math.max(sk === 'stand' ? 1 - smooth(clamp01(q / 0.25)) : 0, fallEnd ? 0 : smooth(clamp01((q - 0.55) / 0.45)));
+    jr.pitch = 0;
+    if (sk === 'stand' && p < T0) jr.pitch += 0.16 * Math.sin(Math.PI * p / T0);
+    if (ek === 'butt') jr.pitch -= 0.45 * smooth(clamp01((q - 0.5) / 0.5)) * (1 - smooth(clamp01((p - L) / Math.max(1e-4, (S - L) * 0.6))));
+    jr.squash = 0;
+    jr.hop = 0;
+    if (sk === 'stand' && p < T0) jr.squash = 0.07 * Math.sin(Math.PI * p / T0);
+    if (!fallEnd && p >= L) {
+      const e = clamp01((p - L) / Math.max(1e-4, (ek === 'butt' ? S : 1) - L));
+      jr.squash = (ek === 'butt' ? 0.2 : 0.1) * Math.sin(Math.PI * Math.min(1, e * 2.4)) * (1 - e);
+      if (ek === 'butt' && e > 0.42) jr.hop = modelH * 0.045 * Math.sin(Math.PI * clamp01((e - 0.42) / 0.4));
+    }
+
+    // the pose, over the clips
+    const P = jr.pose || (jr.pose = newPose());
+    let w = 1;
+    if (p < T0) {
+      mixPose(P, POSE.crouch, POSE.crouch, 0);
+      w = smooth(clamp01(p / Math.max(1e-4, T0 * 0.7)));
+    } else if (p < L || fallEnd) {
+      // springing off (or carrying on falling), arms up in flight
+      if (sk === 'fall') mixPose(P, POSE.fall, POSE.air, smooth(clamp01(q / 0.35)));
+      else mixPose(P, POSE.crouch, POSE.air, smooth(clamp01(q / 0.2)));
+      // and ready for what's coming: the vortex, the feet, or the backside
+      const ready = smooth(clamp01((q - 0.62) / 0.38));
+      if (ready > 0) mixPose(P, P, fallEnd ? POSE.fall : ek === 'feet' ? POSE.crouch : POSE.seat, ready);
+    } else if (ek === 'butt') {
+      const g = clamp01((p - S) / Math.max(1e-4, 1 - S)); // getting up
+      if (g < 0.4) mixPose(P, POSE.seat, POSE.push, smooth(g / 0.4));
+      else mixPose(P, POSE.push, POSE.crouch, smooth(clamp01((g - 0.4) / 0.35)));
+      w = 1 - smooth(clamp01((g - 0.72) / 0.28));
+    } else {
+      mixPose(P, POSE.crouch, POSE.crouch, 0);
+      w = 1 - smooth(clamp01((p - L) / Math.max(1e-4, 1 - L)));
+    }
+    jr.w = w;
+    // (the card under it: the one it takes off from, then the one it lands on)
+    jr.floor = !fallEnd && p >= L - 0.02 && B.floor ? B.floor : sk === 'stand' && p < T0 && A.floor ? A.floor : null;
+    // the bump: once, on the way down
+    if (!fallEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
+    jr.lastP = p;
+  }
+  function touchdown(ek) {
+    setFace('surprised', 1);
+    if (ek === 'butt') shakeT = 0.25; // a dazed little head shake
+    // dust off the card around it
+    root.updateMatrixWorld(true);
+    const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
+    const H = at.h * view.wpp;
+    for (let n = 0; n < 34; n++) {
+      const a = Math.random() * TAU, sp = H * (0.35 + Math.random() * 0.45);
+      spawn(c.x + Math.cos(a) * H * 0.12, c.y + H * 0.02, c.z + Math.sin(a) * H * 0.08,
+        Math.cos(a) * sp, H * (0.05 + Math.random() * 0.12), Math.sin(a) * sp * 0.4, 0.5 + Math.random() * 0.5, 0.5);
+    }
+  }
+
+  // A pose change that can't be continuous (a journey taking over mid-way, a new
+  // target): blend from where everything was over a quarter of a second.
+  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
+  function snapRig() {
+    snap.t = 0;
+    snap.k = 0;
+    Object.assign(snap.at, { x: at.x, y: at.y, h: at.h, yaw: at.yaw });
+    snap.pp.copy(pivot.position);
+    snap.pr.set(pivot.rotation.x, pivot.rotation.y, pivot.rotation.z);
+    snap.ps.copy(pivot.scale);
+    rigBones.forEach((b, i) => { snap.q[i].copy(b.quaternion); snap.p[i].copy(b.position); });
+  }
+  const qSnap = new THREE.Quaternion();
+  function blendSnap() {
+    if (snap.k >= 1) return;
+    const k = snap.k;
+    pivot.position.lerpVectors(snap.pp, pivot.position, k);
+    pivot.rotation.set(
+      snap.pr.x + (pivot.rotation.x - snap.pr.x) * k,
+      snap.pr.y + wrapPi(pivot.rotation.y - snap.pr.y) * k,
+      snap.pr.z + (pivot.rotation.z - snap.pr.z) * k);
+    pivot.scale.lerpVectors(snap.ps, pivot.scale, k);
+    rigBones.forEach((b, i) => {
+      b.quaternion.copy(qSnap.copy(snap.q[i]).slerp(b.quaternion, k));
+      b.position.lerpVectors(snap.p[i], b.position, k);
+    });
+    pivot.updateMatrixWorld(true);
   }
 
   // Mist pool: one ring buffer for click puffs, the wake trail and anything that sheds.
@@ -1120,19 +1340,33 @@ export async function start({ reduced = false } = {}) {
     pool.live = alive;
   }
 
-  // Lantern motes: a slow orbit around the feet and knees
-  function stepMotes() {
+  // Lantern motes: a slow orbit around the feet and knees. Falling, they become the
+  // wind: streaming up past the body, faster while the scroll moves.
+  let windW = 0, windT = 0;
+  function stepMotes(dt, air) {
     const vis = 1 - shared.uDissolve.value;
     const s = root.scale.x;
+    windW += (air - windW) * damp(4, dt);
+    windT += dt * (0.5 + Math.min(1.4, Math.abs(scrollV) / 1100));
     for (let i = 0; i < N_MOTE; i++) {
       const j = N_TRANSIT + N_POOL + i;
       const a = motePhase[i * 3] + time * motePhase[i * 3 + 1] * 0.55;
       const r = modelH * (0.3 + 0.12 * Math.sin(time * 0.7 + i)) * s;
       const y = modelH * (0.05 + 0.5 * motePhase[i * 3 + 2] + 0.04 * Math.sin(time * 1.3 + i * 2.1)) * s;
-      pPos[j * 3] = root.position.x + Math.cos(a) * r;
-      pPos[j * 3 + 1] = root.position.y + y;
-      pPos[j * 3 + 2] = root.position.z + Math.sin(a) * r * 0.6;
-      pAlpha[j] = vis * (0.25 + 0.35 * (0.5 + 0.5 * Math.sin(time * 2 + i))) * (Math.sin(a) > -0.2 ? 1 : 0.35);
+      let x = Math.cos(a) * r, yy = y, z = Math.sin(a) * r * 0.6;
+      let alpha = (0.25 + 0.35 * (0.5 + 0.5 * Math.sin(time * 2 + i))) * (Math.sin(a) > -0.2 ? 1 : 0.35);
+      if (windW > 0.01) {
+        const f = (motePhase[i * 3 + 2] + windT * (0.8 + motePhase[i * 3 + 1])) % 1;
+        const wr = modelH * (0.28 + 0.4 * ((i * 0.618) % 1)) * s;
+        x += (Math.cos(motePhase[i * 3]) * wr - x) * windW;
+        yy += ((f * 1.7 - 0.35) * modelH * s - yy) * windW;
+        z += (Math.sin(motePhase[i * 3]) * wr * 0.6 - z) * windW;
+        alpha += (0.55 * Math.sin(Math.PI * f) - alpha) * windW;
+      }
+      pPos[j * 3] = root.position.x + x;
+      pPos[j * 3 + 1] = root.position.y + yy;
+      pPos[j * 3 + 2] = root.position.z + z;
+      pAlpha[j] = vis * alpha;
     }
   }
 
@@ -1170,7 +1404,8 @@ export async function start({ reduced = false } = {}) {
       // into the root's turned frame
       pivot.getWorldQuaternion(qRoot);
       tgtW.applyQuaternion(qTmp.copy(qRoot).invert());
-      yaw = clamp(Math.atan2(tgtW.x, tgtW.z), -1.05, 1.05);
+      const a = Math.atan2(tgtW.x, tgtW.z);
+      yaw = Math.abs(a) <= 1.05 ? a : Math.sign(a) * 1.05 * (1 - smooth(clamp01((Math.abs(a) - 1.05) / (Math.PI - 1.05))));
       pitch = clamp(-Math.atan2(tgtW.y, Math.hypot(tgtW.x, tgtW.z)), -0.5, 0.6);
     }
     // running, it watches where it goes; cheering, it looks up at the card it points
@@ -1226,7 +1461,7 @@ export async function start({ reduced = false } = {}) {
   // then lay the forearm onto the target.
   const kS = new THREE.Vector3(), kE = new THREE.Vector3(), kH = new THREE.Vector3();
   const kDir = new THREE.Vector3(), kPole = new THREE.Vector3(), kTo = new THREE.Vector3();
-  function reach(arm, target, w) {
+  function reach(arm, target, w, pole) {
     const [upper, lower, hand] = arm;
     upper.getWorldPosition(kS);
     lower.getWorldPosition(kE);
@@ -1237,12 +1472,153 @@ export async function start({ reduced = false } = {}) {
     kDir.divideScalar(full);
     const d = clamp(full, Math.abs(a - b) + 1e-5, (a + b) * 0.995);
     const alpha = Math.acos(clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1));
-    kPole.set(-0.35, -1, -0.45);
+    if (pole) kPole.copy(pole);
+    else kPole.set(-0.35, -1, -0.45);
     kPole.addScaledVector(kDir, -kPole.dot(kDir)).normalize();
     kTo.copy(kS).addScaledVector(kDir, a * Math.cos(alpha)).addScaledVector(kPole, a * Math.sin(alpha));
     swing(upper, lower, kTo, w);
     kTo.copy(kS).addScaledVector(kDir, d);
     swing(lower, hand, kTo, w);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rig poses: aims in model space, applied over whatever the clips did
+  // ---------------------------------------------------------------------------
+  //   pitch   upper body lean (+ forward)
+  //   thigh   where the knee points from the hip; shin: where the ankle points
+  //   kick    legs pedalling in the air;  flat: feet kept flat (else on the shins)
+  //   clap / up / seat / push: where the hands go (weights; none = the clip's arms)
+  //     clap  in front of the chest, meeting and parting
+  //     up    raised and flailing, in the air
+  //     seat  on the card beside the hips;  push: on the card in front, to get up
+  const POSE = {
+    air: { pitch: -0.1, thigh: [0.4, -0.62, 0.62], shin: [0.2, -0.6, -0.75], kick: 1, flat: 0, clap: 0, up: 1, seat: 0, push: 0 },
+    fall: { pitch: -0.06, thigh: [0.42, -0.6, 0.62], shin: [0.18, -0.55, -0.8], kick: 0.8, flat: 0, clap: 1, up: 0, seat: 0, push: 0 },
+    seat: { pitch: -0.14, thigh: [0.17, -0.06, 1], shin: [0.13, -0.16, 1], kick: 0, flat: 0, clap: 0, up: 0, seat: 1, push: 0 },
+    crouch: { pitch: 0.32, thigh: [0.2, -0.5, 0.85], shin: [0.06, -0.92, -0.38], kick: 0, flat: 1, clap: 0, up: 0, seat: 0.5, push: 0 },
+    push: { pitch: 0.45, thigh: [0.22, -0.32, 0.92], shin: [0.06, -0.96, -0.28], kick: 0, flat: 1, clap: 0, up: 0, seat: 0, push: 1 },
+  };
+  const POSE_KEYS = ['pitch', 'kick', 'flat', 'clap', 'up', 'seat', 'push'];
+  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, clap: 0, up: 0, seat: 0, push: 0 }; }
+  function mixPose(out, a, b, k) {
+    for (const key of POSE_KEYS) out[key] = a[key] + (b[key] - a[key]) * k;
+    for (let j = 0; j < 3; j++) {
+      out.thigh[j] = a.thigh[j] + (b.thigh[j] - a.thigh[j]) * k;
+      out.shin[j] = a.shin[j] + (b.shin[j] - a.shin[j]) * k;
+    }
+    return out;
+  }
+  const vD = new THREE.Vector3(), vT = new THREE.Vector3(), vS = new THREE.Vector3(), vHip = new THREE.Vector3(), vPo = new THREE.Vector3();
+  const mFoot = new THREE.Matrix4(), mInv = new THREE.Matrix4(), pF = new THREE.Vector3(), qF = new THREE.Quaternion(), sF = new THREE.Vector3(), qFlat = new THREE.Quaternion();
+  function modelDir(x, y, z, out) { return out.set(x, y, z).normalize().transformDirection(model.matrixWorld); }
+  // turn a bone about a world axis
+  function turnBone(bone, axis, angle) {
+    qSw.setFromAxisAngle(axis, angle);
+    bone.parent.updateWorldMatrix(true, false);
+    bone.parent.getWorldQuaternion(qParent);
+    qSw.premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
+    bone.quaternion.premultiply(qSw);
+    bone.updateMatrixWorld(true);
+  }
+  // the feet ride on the shins (and are kept flat on a floor), weighted
+  function plantFeet(w, flat) {
+    for (const leg of legs) {
+      leg.lower.updateWorldMatrix(true, false);
+      leg.foot.parent.updateWorldMatrix(true, false);
+      mFoot.multiplyMatrices(leg.lower.matrixWorld, leg.rel).premultiply(mInv.copy(leg.foot.parent.matrixWorld).invert());
+      mFoot.decompose(pF, qF, sF);
+      if (flat > 0) {
+        model.getWorldQuaternion(qFlat).multiply(leg.flatQ);
+        leg.foot.parent.getWorldQuaternion(qTmp);
+        qF.slerp(qFlat.premultiply(qTmp.invert()), flat);
+      }
+      leg.foot.position.lerp(pF, w);
+      leg.foot.quaternion.slerp(qF, w);
+      leg.foot.updateMatrixWorld(true);
+    }
+  }
+  // claps: a phase that runs on (faster while the timeline moves, and in a burst when
+  // a new card comes round)
+  const clap = { ph: 0, burst: 0, mid: new THREE.Vector3() };
+  function applyPose(P, w) {
+    if (w < 0.001) return;
+    model.updateMatrixWorld(true);
+    // the upper body leans (the legs are re-aimed below, so they don't lean with it)
+    if (P.pitch) turnBone(rigBody, modelDir(1, 0, 0, vD), P.pitch * w);
+    for (const leg of legs) {
+      const s = leg.side;
+      const kick = P.kick * Math.sin(time * 4.4 + (s > 0 ? 0 : Math.PI));
+      leg.upper.getWorldPosition(vT).add(modelDir(P.thigh[0] * s, P.thigh[1], P.thigh[2] + 0.22 * kick, vD));
+      swing(leg.upper, leg.lower, vT, w);
+      leg.lower.getWorldPosition(vT).add(modelDir(P.shin[0] * s, P.shin[1], P.shin[2] + 0.3 * kick, vD));
+      swing(leg.lower, leg.end, vT, w);
+    }
+    plantFeet(w, P.flat);
+    // hands
+    const sum = P.clap + P.up + P.seat + P.push;
+    if (sum < 1e-3) return;
+    const Hm = modelH;
+    rigHips.getWorldPosition(vHip);
+    model.worldToLocal(vHip);
+    // apart (wide enough to clear the body), and snapping together at each whole phase
+    const sep = 0.06 + 0.44 * Math.pow(Math.sin(Math.PI * (clap.ph % 1)), 0.6);
+    arms.forEach((arm, i) => {
+      const s = armSide[i];
+      arm[0].getWorldPosition(vS);
+      model.worldToLocal(vS);
+      vT.set(0, 0, 0);
+      vPo.set(0, 0, 0);
+      const fl = Math.sin(time * 5.2 + i * 2.4);
+      const add = (k, x, y, z, px, py, pz) => { vT.x += k * x; vT.y += k * y; vT.z += k * z; vPo.x += k * px; vPo.y += k * py; vPo.z += k * pz; };
+      if (P.clap) add(P.clap, s * sep * 0.5 * Hm, vS.y + 0.04 * Hm, vS.z + 0.34 * Hm, s, -1, 0.1);
+      if (P.up) add(P.up, vS.x + s * 0.16 * Hm, vS.y + (0.3 + 0.06 * fl) * Hm, vS.z + 0.06 * Hm, s, 0.15, -0.5);
+      if (P.seat) add(P.seat, vHip.x + s * 0.32 * Hm, vHip.y + 0.03 * Hm, vHip.z - 0.12 * Hm, s * 0.5, 0.1, -1);
+      if (P.push) add(P.push, vHip.x + s * 0.24 * Hm, vHip.y - 0.14 * Hm, vHip.z + 0.2 * Hm, s, 0.1, -0.6);
+      vT.divideScalar(sum);
+      model.localToWorld(vT);
+      reach(arm, vT, Math.min(1, sum) * w, vPo.lengthSq() > 1e-6 ? vPo.normalize().transformDirection(model.matrixWorld) : null);
+    });
+    if (P.clap > 0.5) {
+      arms[0][2].getWorldPosition(clap.mid);
+      arms[1][2].getWorldPosition(vT);
+      clap.mid.add(vT).multiplyScalar(0.5);
+    }
+  }
+  // the lowest point of the body down onto the floor (the anchor), weighted
+  const vPin = new THREE.Vector3();
+  function pinToFloor(w) {
+    if (w < 0.001 || !floorPts.length) return;
+    root.updateMatrixWorld(true);
+    let low = Infinity;
+    for (const [o, pt] of floorPts) low = Math.min(low, root.worldToLocal(vPin.copy(pt).applyMatrix4(o.matrixWorld)).y);
+    pivot.position.y -= low * w;
+    pivot.updateMatrixWorld(true);
+  }
+  function applyRig(dt) {
+    if (!rigOK || reduced || view.dock) return;
+    if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); pinToFloor(1); return; } // QA
+    const inVortex = vortexOn();
+    if (jr.on && jr.pose) {
+      applyPose(jr.pose, jr.w);
+      pinToFloor(jr.pin);
+      if (jr.hop) { pivot.position.y += jr.hop; pivot.updateMatrixWorld(true); }
+    } else if (inVortex && !(trans && trans.kind === 'send')) {
+      applyPose(POSE.fall, 1);
+    }
+    blendSnap();
+    // a clap: a few sparks where the hands meet
+    const clapping = inVortex && (!jr.on || jr.pose.clap > 0.5) && shared.uDissolve.value < 0.3;
+    const rate = 2.1 + Math.min(1.3, Math.abs(scrollV) / 900) + clap.burst * 1.6;
+    clap.burst = Math.max(0, clap.burst - dt * 0.8);
+    const before = Math.floor(clap.ph);
+    clap.ph += dt * rate;
+    if (clapping && Math.floor(clap.ph) !== before) {
+      const H = at.h * view.wpp;
+      for (let n = 0; n < 7; n++) {
+        const a = Math.random() * TAU;
+        spawn(clap.mid.x, clap.mid.y, clap.mid.z + H * 0.03, Math.cos(a) * H * 0.35, Math.sin(a) * H * 0.35 + H * 0.1, H * 0.1, 0.35 + Math.random() * 0.3, 0.6);
+      }
+    }
   }
 
   // world -> canvas px (inverse of toWorld)
@@ -1271,7 +1647,7 @@ export async function start({ reduced = false } = {}) {
       cardStyled = false;
     }
     const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
-    const on = !!(here && goal.grip && near && !trans && !scrub.mist && !oneShot && arms.length);
+    const on = !!(here && goal.grip && near && !trans && !scrub.mid && !oneShot && arms.length);
     // a pull asked for while it was arriving or waving: take hold quickly, then pull
     // (asked from afar, it pulls on arrival, as long as the field still has focus)
     if (tugAsked && (performance.now() - tugAsked > 6000 || !formFocused())) tugAsked = 0;
@@ -1280,7 +1656,11 @@ export async function start({ reduced = false } = {}) {
     // The left arm is behind the card whenever the guide stands at it (holding it,
     // waving, dancing, or dissolving on the way out), never flipping sides mid-view:
     // whatever of that arm overlaps the card is hidden.
-    const atCard = card && !view.dock && (here ? goal && goal.grip : trans && trans.phase === 'out' && trans.from === 'contato');
+    // (not while it flies in or away: then the whole arm stays in view)
+    const hopFlying = trans && trans.kind === 'hop' && trans.phase === 'travel';
+    const atCard = card && !view.dock && (here
+      ? goal && goal.grip && !hopFlying && (!jr.on || jr.air < 0.3)
+      : trans && trans.from === 'contato' && (trans.phase === 'out' || (hopFlying && jr.air < 0.3)));
     shared.uCardOn.value = atCard ? 1 : 0;
     if (!card || view.dock || (!atCard && grip.w < 0.01)) return;
     const r = card.getBoundingClientRect();
@@ -1312,7 +1692,7 @@ export async function start({ reduced = false } = {}) {
     return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * Math.max(0, nodes.projects.length - 1);
   }
   function stepRunner(dt) {
-    const here = section === 'projetos' && !view.dock && !reduced && !trans && !scrub.mist && !!nodes.deck;
+    const here = section === 'projetos' && !view.dock && !reduced && !trans && !scrub.mid && !!nodes.deck;
     const f = deckPos();
     const v = runner.f < 0 ? 0 : (f - runner.f) / Math.max(dt, 1e-3);
     runner.f = f;
@@ -1353,7 +1733,6 @@ export async function start({ reduced = false } = {}) {
   const CHEER_END = 2.1;
   const cheer = { t: -1, mix: 0, w: 0 };
   const qPose = new THREE.Quaternion();
-  const smooth = (x) => x * x * (3 - 2 * x);
   function startCheer() {
     if (reduced || !cheerBones.length) return;
     if (cheer.t < 0) { cheer.t = 0; cheer.mix = 0; }
@@ -1366,9 +1745,9 @@ export async function start({ reduced = false } = {}) {
   function applyCheer(dt) {
     if (cheer.t < 0) return;
     cheer.t += dt;
-    // Eased, never cut: leaving into the mist (or a new card halfway down) moves the
-    // arm there, it doesn't snap.
-    const away = section !== 'projetos' || !!trans || scrub.mist;
+    // Eased, never cut: jumping off (or a new card halfway down) moves the arm
+    // there, it doesn't snap.
+    const away = section !== 'projetos' || !!trans || scrub.mid;
     const shape = smooth(clamp01(cheer.t / 0.28)) * (1 - smooth(clamp01((cheer.t - 1.75) / 0.3)));
     const target = away || cheer.t >= CHEER_END ? 0 : shape;
     cheer.w += (target - cheer.w) * damp(away ? 9 : 16, dt);
@@ -1381,8 +1760,9 @@ export async function start({ reduced = false } = {}) {
   }
 
   function updateSeatMark() {
-    const floor = goal && goal.floor;
-    const on = !!floor && section === 'projetos' && !trans && !scrub.mist && shared.uDissolve.value < 0.2;
+    // standing on a video card, or landed on one at the end of a journey
+    const floor = jr.on ? jr.floor : goal && goal.floor;
+    const on = !!floor && (jr.on || (section === 'projetos' && !trans && !scrub.mid)) && shared.uDissolve.value < 0.2;
     const host = floor ? floor.node.querySelector('.project-card') || floor.node : null;
     if (host && host !== seatHost) {
       seatHost = host;
@@ -1407,7 +1787,11 @@ export async function start({ reduced = false } = {}) {
     if (section === 'historia') {
       const item = $('.tl-item.is-focus .tl-card') || $('.tl-item.is-focus');
       if (item && item !== focusKey) {
-        if (focusKey && !scrub.mist) react('yes');
+        // a new card in front: a nod, or (falling down the vortex) a burst of claps
+        if (focusKey && !scrub.mid) {
+          if (vortexOn()) { clap.burst = 1; setFace('surprised', 0.7); }
+          else react('yes');
+        }
         focusKey = item;
       }
       focusTarget = item;
@@ -1586,9 +1970,13 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
+  let floatW = 1, yawLocked = false;
   function update(dt, now) {
     time += dt;
     shared.uTime.value = time;
+    const wasOn = jr.on;
+    jr.on = false; // a journey claims the frame again below
+    if (snap.t < 1) { snap.t = Math.min(1, snap.t + dt / 0.28); snap.k = smooth(snap.t); }
 
     // scroll velocity -> lean (the guide is dragged by the current)
     const sy = window.scrollY;
@@ -1602,7 +1990,7 @@ export async function start({ reduced = false } = {}) {
     stepScrub(dt, now);
     stepRunner(dt);
 
-    if (!trans) {
+    if (!trans && !jr.on) {
       goal = anchorFor(section);
       if (reduced) {
         snapTo(goal);
@@ -1622,45 +2010,67 @@ export async function start({ reduced = false } = {}) {
         if (goal.floor) { at.y = goal.y; vel.y = 0; }
         const k = damp(2.6, dt);
         at.h += (goal.h - at.h) * k;
-        at.yaw += (goal.yaw - at.yaw) * k;
+        // Down the vortex it turns with the timeline, so it keeps up closely. Those turns
+        // are continuous: once it is on the same turn, follow them without wrapping (a
+        // fast scroll would otherwise send it the short way round, backwards).
+        if (goal.vortex) {
+          if (!yawLocked) at.yaw = goal.yaw + wrapPi(at.yaw - goal.yaw);
+          at.yaw += (goal.yaw - at.yaw) * damp(9, dt);
+        } else at.yaw += wrapPi(goal.yaw - at.yaw) * k;
       }
     }
+    yawLocked = !trans && !jr.on && !reduced && !!(goal && goal.vortex);
     stepTransit(dt);
+    // A journey just handed back (lean, drift and the float return, the pin lets go):
+    // blend from its last frame instead of jumping.
+    if (wasOn && !jr.on && !reduced && !view.dock) snapRig();
     placeRoot();
 
     // float, lean, turn toward what it looks at
     const cfg = SECTIONS[section] || SECTIONS.inicio;
-    const floating = cfg.float && !reduced;
+    const inVortex = vortexOn();
+    const floating = cfg.float && !reduced && !inVortex;
+    // (the float eases out for a journey and back in after it)
+    floatW += ((floating && !jr.on && !(trans && trans.kind === 'hop') ? 1 : 0) - floatW) * (reduced ? 1 : damp(2.2, dt));
+    // the scroll drives a journey, so no lean or drift into it
+    const calm = jr.on ? 0 : 1;
+    // airborne: buffeted by the fall (in flight, and all the way down the vortex)
+    const air = jr.on ? jr.air : inVortex && !trans ? 1 : 0;
     // Adrift: layered slow sines (never quite repeating), a body that trails its own
     // motion like something pushed through water, and the scroll current on top.
     const hpx = Math.max(at.h, 1);
     const driftX = clamp(vel.x / (hpx * 3.2), -0.32, 0.32);
     const driftY = clamp(vel.y / (hpx * 4.5), -0.25, 0.25);
-    if (floating) {
-      pivot.position.x = modelH * (0.035 * Math.sin(time * 0.37) + 0.018 * Math.sin(time * 0.83 + 1.3));
-      pivot.position.y = modelH * (0.04 + 0.028 * Math.sin(time * 1.05) + 0.016 * Math.sin(time * 0.47 + 2.1)) - lean * modelH * 0.06;
-      pivot.position.z = modelH * 0.03 * Math.sin(time * 0.29 + 0.7);
-      pivot.rotation.z = 0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4) + driftX;
-    } else {
-      pivot.position.set(0, 0, 0);
-      // a little hop of excitement as it points up (standing; running it is in the air anyway)
-      if (cheer.t >= 0 && cheer.t < 0.34) pivot.position.y = modelH * 0.07 * Math.sin((Math.PI * cheer.t) / 0.34) * (1 - runner.run) * Math.min(1, cheer.w * 2);
-      pivot.rotation.z = goal && goal.floor ? 0 : driftX * 0.5;
-    }
-    pivot.rotation.z += tug.x * 0.25 * grip.w; // leans back with the jolt on the card
+    const fw = floatW;
+    pivot.position.set(
+      fw * modelH * (0.035 * Math.sin(time * 0.37) + 0.018 * Math.sin(time * 0.83 + 1.3)) + air * modelH * 0.03 * Math.sin(time * 1.9),
+      fw * (modelH * (0.04 + 0.028 * Math.sin(time * 1.05) + 0.016 * Math.sin(time * 0.47 + 2.1)) - lean * modelH * 0.06) + air * modelH * 0.025 * Math.sin(time * 2.7 + 1),
+      fw * modelH * 0.03 * Math.sin(time * 0.29 + 0.7));
+    // a little hop of excitement as it points up (standing; running it is in the air anyway)
+    if (!floating && cheer.t >= 0 && cheer.t < 0.34) pivot.position.y += modelH * 0.07 * Math.sin((Math.PI * cheer.t) / 0.34) * (1 - runner.run) * Math.min(1, cheer.w * 2);
+    const onFloor = goal && goal.floor;
+    pivot.rotation.z = fw * (0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4))
+      + calm * (floating ? driftX : onFloor ? 0 : driftX * 0.5)
+      + air * (0.07 * Math.sin(time * 2.3) + 0.03 * Math.sin(time * 5.1 + 0.6))
+      + tug.x * 0.25 * grip.w; // leans back with the jolt on the card
     // (on the cards the scroll moves the deck, not the guide: no lean into the current)
-    pivot.rotation.x = goal && goal.floor ? 0 : lean * 0.3 + driftY + (floating ? 0.03 * Math.sin(time * 0.53 + 1.7) : 0);
-    pivot.rotation.y = at.yaw + look.yaw * 0.35 + (floating ? 0.06 * Math.sin(time * 0.31) : 0);
+    pivot.rotation.x = calm * (onFloor ? 0 : lean * 0.3 + driftY) + fw * 0.03 * Math.sin(time * 0.53 + 1.7)
+      + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : 0);
+    pivot.rotation.y = at.yaw + look.yaw * 0.35 + fw * 0.06 * Math.sin(time * 0.31);
+    if (dbg.yaw != null) pivot.rotation.y = dbg.yaw;
+    const sq = jr.on ? jr.squash : 0;
+    pivot.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
 
-    // Bones the current clip doesn't animate keep last frame's look offset: undo it first.
-    for (const r of restPose) r.bone.quaternion.copy(r.q);
+    // Bones the current clip doesn't animate keep last frame's offsets: undo them first.
+    for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
     if (!reduced) mixer.update(dt);
     else if (!mixer.time) mixer.update(0.5);
-    for (const r of restPose) r.q.copy(r.bone.quaternion);
+    for (const r of restPose) { r.q.copy(r.bone.quaternion); r.p.copy(r.bone.position); }
     model.updateMatrixWorld(true);
+    applyRig(dt);
     // The Running clip bounds high: keep most of each stride down on the card.
     const wRun = actions.run && actions.run.isRunning() ? actions.run.getEffectiveWeight() : 0;
-    if (wRun > 0.01 && soles.length) {
+    if (!jr.on && wRun > 0.01 && soles.length) {
       pivot.position.y -= (soleY() - footRest) * 0.75 * wRun;
       pivot.updateMatrixWorld(true);
     }
@@ -1681,7 +2091,7 @@ export async function start({ reduced = false } = {}) {
 
     shed(dt);
     stepPool(dt);
-    stepMotes();
+    stepMotes(dt, air);
     pGeo.attributes.position.needsUpdate = true;
     pGeo.attributes.aAlpha.needsUpdate = true;
 
@@ -1718,7 +2128,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mist: scrub.mist, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
+  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
   return window.__avatar;
 }
 
