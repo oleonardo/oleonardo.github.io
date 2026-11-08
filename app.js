@@ -114,6 +114,11 @@
   const projectNames = el.projects.map((p) => $('.project-title', p).textContent.trim());
 
   const layout = { vw: 0, vh: 0, desktop: true, story: { top: 0, h: 1 }, work: { top: 0, h: 1 }, contact: { top: 0, h: 1 } };
+  // With the guide on a desktop the deck reaches its last card early and holds it while
+  // the stage is still pinned: the guide runs off the end of it (avatar-scene.js,
+  // DECK_DWELL, the same share of the viewport).
+  const DECK_DWELL = 0.4;
+  const deckHold = () => (layout.desktop && doc.classList.contains('has-ledge') ? DECK_DWELL * layout.vh : 0);
 
   function measure() {
     const sy = window.scrollY;
@@ -297,7 +302,7 @@
     const matrix = workIn * (1 - contactIn);
 
     const storyT = clamp01((y - L.story.top) / Math.max(1, L.story.h - vh));
-    const workT = clamp01((y - L.work.top) / Math.max(1, L.work.h - vh));
+    const workT = clamp01((y - L.work.top) / Math.max(1, L.work.h - vh - deckHold()));
     const k1 = reduced ? 1 : 1 - Math.exp(-dt * 7);
     const k2 = reduced ? 1 : 1 - Math.exp(-dt * 16);
     s.storyP += (storyT - s.storyP) * k1;
@@ -585,21 +590,53 @@
   // Projects: centre a side card first, open the active one.
   function scrollToProject(i) {
     const L = layout;
-    const top = L.work.top + (M > 1 ? i / (M - 1) : 0) * (L.work.h - L.vh);
+    const top = L.work.top + (M > 1 ? i / (M - 1) : 0) * (L.work.h - L.vh - deckHold());
     window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
+  }
+
+  // The guide makes a show of opening a case: a few hops on the card, one big jump,
+  // and the card gives way under it; the case opens from there. Without the guide on
+  // that card (phones, reduced motion, mid-journey) it opens straight away, and a second
+  // click opens it at once.
+  let caseShow = null;
+  function openCase(node) {
+    const guide = window.avatarGuide;
+    if (caseShow) {
+      if (guide && guide.caseNow) guide.caseNow();
+      return;
+    }
+    const show = guide && guide.caseJump ? guide.caseJump(node) : null;
+    if (!show) {
+      openProject(node.dataset.project, node);
+      return;
+    }
+    caseShow = node;
+    show.then((go) => {
+      caseShow = null;
+      if (go) openProject(node.dataset.project, node);
+    });
+  }
+  // (off to another case meanwhile: the show stops and nothing opens)
+  function stopCaseShow(node) {
+    const guide = window.avatarGuide;
+    if (caseShow && caseShow !== node && guide && guide.caseStop) guide.caseStop();
   }
 
   el.projects.forEach((node, i) => {
     const btn = $('.project-open', node);
     btn.addEventListener('click', () => {
+      stopCaseShow(node);
       if (layout.desktop && !node.classList.contains('is-active')) {
         scrollToProject(i);
         return;
       }
-      openProject(node.dataset.project, node);
+      openCase(node);
     });
     btn.addEventListener('focus', () => {
-      if (layout.desktop && !node.classList.contains('is-active')) scrollToProject(i);
+      if (layout.desktop && !node.classList.contains('is-active')) {
+        stopCaseShow(node);
+        scrollToProject(i);
+      }
     });
   });
 
@@ -609,6 +646,7 @@
     const next = Math.max(0, Math.min(M - 1, activeProject + (e.key === 'ArrowRight' ? 1 : -1)));
     if (next === activeProject) return;
     e.preventDefault();
+    stopCaseShow(el.projects[next]);
     scrollToProject(next);
     $('.project-open', el.projects[next]).focus({ preventScroll: true });
   });
