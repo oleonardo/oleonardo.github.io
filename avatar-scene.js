@@ -2,9 +2,10 @@
  * Leonardo de Oliveira · Abissal
  * avatar-scene.js: the guide. A small 3D character that lives in the particle sea,
  * follows the visitor with its eyes, reacts to scroll and clicks, and moves between
- * the sections in plain sight: it jumps, falls and lands on its backside on the next
- * section's card, then gets up. Through the timeline every card is a time tunnel: it
- * flies in at one end, behind the card, and out of the portal at the other.
+ * the sections in plain sight on its jetpack: it flies in and lands at the hero on its
+ * rockets, then flies from section to section and sets down on its feet. Through the
+ * timeline every card is a time tunnel: it flies in at one end, behind the card, and
+ * out of the portal at the other.
  *
  * Proof of concept: the model is a CC0 placeholder (RobotExpressive by Tomás Laulhé)
  * that will be swapped for Léo's own avatar. Everything that depends on the model
@@ -56,7 +57,7 @@ const CLIPS = {
 
 // What the guide does in each section of the page.
 const SECTIONS = {
-  inicio: { base: 'idle', greet: 'wave', float: true },
+  inicio: { base: 'idle', greet: 'wave', float: false }, // (it lands on the hero's floor and stands there)
   historia: { base: 'idle', greet: 'yes', float: true }, // (on desktop it flies through the cards instead)
   projetos: { base: 'idle', greet: 'thumbs', float: false },
   contato: { base: 'idle', greet: 'wave', float: true },
@@ -524,6 +525,87 @@ export async function start({ reduced = false } = {}) {
   scene.add(jetPoints);
   const jp = { vel: new Float32Array(N_JET * 3), life: new Float32Array(N_JET), age: new Float32Array(N_JET).fill(1e9), a0: new Float32Array(N_JET), s0: new Float32Array(N_JET), next: 0, live: 0, carry: 0 };
 
+  // Dust: the jets' blast on the hero's floor. Where the exhaust meets the ground it
+  // spreads out flat every way at once, a ring of dust and spent heat rolling outward,
+  // slowing and billowing up a little as it slows, hot near the jets and cooling to the
+  // sea-light as it goes. It lives in the scene's own perspective (the near side lower
+  // and bigger, the far side behind the body), and a glow on the floor marks where the
+  // blast hits. (The floor is the plane under the hero's spot, at its distance.)
+  const N_DUST = 640;
+  const dGeo = new THREE.BufferGeometry();
+  const dPos = new Float32Array(N_DUST * 3);
+  const dAlpha = new Float32Array(N_DUST);
+  const dSize = new Float32Array(N_DUST);
+  const dHeat = new Float32Array(N_DUST);
+  dGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3).setUsage(THREE.DynamicDrawUsage));
+  dGeo.setAttribute('aAlpha', new THREE.BufferAttribute(dAlpha, 1).setUsage(THREE.DynamicDrawUsage));
+  dGeo.setAttribute('aSize', new THREE.BufferAttribute(dSize, 1).setUsage(THREE.DynamicDrawUsage));
+  dGeo.setAttribute('aHeat', new THREE.BufferAttribute(dHeat, 1).setUsage(THREE.DynamicDrawUsage));
+  const dMat = new THREE.ShaderMaterial({
+    uniforms: { uPx: pMat.uniforms.uPx, uCam: { value: CAM_Z }, uAmber: { value: AMBER }, uTeal: { value: TEAL } },
+    vertexShader: /* glsl */ `
+      attribute float aAlpha; attribute float aSize; attribute float aHeat;
+      uniform float uPx; uniform float uCam;
+      varying float vAlpha; varying float vHeat;
+      void main() {
+        vAlpha = aAlpha; vHeat = aHeat;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = aAlpha > 0.002 ? aSize * uPx * uCam / max(1.0, -mv.z) : 0.0; // (nearer, bigger)
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uAmber; uniform vec3 uTeal;
+      varying float vAlpha; varying float vHeat;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.04, d);
+        a = a * a * vAlpha;
+        if (a < 0.003) discard;
+        vec3 hot = mix(uAmber, vec3(1.0, 0.93, 0.8), smoothstep(0.75, 1.0, vHeat));
+        vec3 c = mix(uTeal * 0.85, hot, smoothstep(0.08, 0.6, vHeat));
+        gl_FragColor = vec4(c, a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const dustPoints = new THREE.Points(dGeo, dMat);
+  dustPoints.frustumCulled = false;
+  dustPoints.renderOrder = 1;
+  scene.add(dustPoints);
+  const glowMat = new THREE.ShaderMaterial({
+    uniforms: { uI: { value: 0 }, uAmber: { value: AMBER } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      uniform float uI; uniform vec3 uAmber;
+      varying vec2 vUv;
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        float a = pow(max(0.0, 1.0 - r), 2.4) * uI;
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(mix(uAmber, vec3(1.0, 0.95, 0.86), smoothstep(0.6, 1.0, 1.0 - r)), a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const glowDisk = new THREE.Mesh(new THREE.CircleGeometry(1, 48), glowMat);
+  glowDisk.rotation.x = -Math.PI / 2; // lying on the floor
+  glowDisk.renderOrder = 1;
+  glowDisk.frustumCulled = false;
+  glowDisk.visible = false;
+  scene.add(glowDisk);
+  const dust = {
+    vel: new Float32Array(N_DUST * 3), life: new Float32Array(N_DUST), age: new Float32Array(N_DUST).fill(1e9),
+    a0: new Float32Array(N_DUST), s0: new Float32Array(N_DUST), h0: new Float32Array(N_DUST),
+    next: 0, live: 0, carry: 0, on: false, floor: 0, H: 1, glow: 0, light: 0,
+    hit: new THREE.Vector3(), push: new THREE.Vector3(),
+  };
+
   // Transit state (sampled from the skinned surface, so motes leave from the body)
   const tStart = new Float32Array(N_TRANSIT * 3);
   const tRel = new Float32Array(N_TRANSIT * 3); // position relative to the root, in model units
@@ -673,7 +755,7 @@ export async function start({ reduced = false } = {}) {
   // are laid out facing right, the way the page reads; scrolled back up they run
   // backward, so it turns round to face left instead of flying backward. m: 0 as laid
   // out, 1 turned round (see stepHeading).
-  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false };
+  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false, along: NaN };
   // Which arm reaches out ahead in flight: the one on the visitor's side (the right
   // arm flying right, the left one turned round), so the big head doesn't hide it.
   const leadOf = (s) => (s < 0 ? 1 - head.m : head.m);
@@ -889,7 +971,7 @@ export async function start({ reduced = false } = {}) {
     toWorld(at.x, at.y, 0, root.position);
     root.scale.setScalar(s);
     lantern.position.set(0, modelH * 0.1, modelH * 0.35);
-    lantern.intensity = 7 * s * s * (1 - shared.uDissolve.value * 0.8);
+    lantern.intensity = (7 + 26 * dust.light) * s * s * (1 - shared.uDissolve.value * 0.8); // (and the blast on the floor lights it from below)
     // while it travels as mist the motes keep the body's size, even into a small stop
     pMat.uniforms.uScale.value = clamp((trans && trans.kind === 'send' ? trans.fromH : at.h) / 260, 0.55, 1.4);
     root.updateMatrixWorld(true);
@@ -964,7 +1046,7 @@ export async function start({ reduced = false } = {}) {
   // as the scrolled ones, run by the clock from wherever the guide is right now.
   function hopTo(id, prev, skForce) {
     // (flying through a tunnel it sets off from there, still in the air)
-    const airborne = trans && (trans.kind === 'hop' || trans.kind === 'enter') ? jr.air > 0.5 : scrub.mid && jr.air > 0.5;
+    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && jr.air > 0.5;
     if (trans && trans.kind === 'send') settleSend(null);
     // (off the end of the last case it springs from where it is on the card, or drops
     // from where it hangs past it: not from the deck's middle)
@@ -999,111 +1081,275 @@ export async function start({ reduced = false } = {}) {
     dirty = true;
   }
 
-  // The first appearance at the hero: it comes in flying flat out from beyond the right
-  // edge, small and far off, loops the loop twice as it swoops in closer, then pulls up
-  // over its spot, rights itself and sets down on it on the jets, braking hard in a
-  // flare of dust, and turns to the visitor and waves. The path is a flight through
-  // timed keys (flightPath: x, y and size, the size standing for how far off it is); it
-  // flies head first along it, upside down over the top of each loop. Scrolling or a
-  // menu link meanwhile turns it straight into a journey from wherever it is.
-  const ENTER = { land: 0.7, turn: 0.35 }; // the set-down and the turn to the visitor, in seconds
+  // The first appearance at the hero, flown for real. The guide is a rigid body on a
+  // jetpack: gravity pulls it down, the air drags on it, and the jets push along its own
+  // long axis (the only force it controls), building up and dying down in a few
+  // hundredths of a second; it turns that axis with inertia (a damped spring with a top
+  // rate), never in an instant. The flight plan is a smooth path, one quintic per axis
+  // from beyond the right edge (far off and high) to a gate over its spot, then one
+  // straight down onto it, timed so the push it asks for stays well within what the jets
+  // can give. The flight computer follows it the way a lander does: it points the thrust
+  // where the path's acceleration (a moment ahead), gravity and drag say, plus whatever
+  // the closed loop has to correct. So it leans into the dive, flares back to brake and
+  // rights itself over the spot because the physics needs it to; nothing else turns it.
+  // Over the spot it sinks on the jets at a walking pace, the blast hitting the ground and
+  // raising a ring of dust (see stepDust), and touches down on its feet, the knees taking
+  // the weight; then the jets cut and it turns to the visitor and waves. Scrolling or a
+  // menu link meanwhile turns it into a journey from wherever it is.
+  // Units: body heights and seconds, from its spot (y up from the floor, z toward the
+  // camera), drawn through the camera's own perspective.
+  const FLIGHT = {
+    G: 4.4, // gravity (a body this size, at the site's pace)
+    drag: 0.08, // air drag, quadratic, per body height
+    tMax: 2.4, tMin: 0.25, // the thrust's range, in g
+    spool: 0.07, // how fast the thrust follows the throttle (s)
+    wn: 10, zeta: 0.85, wMax: 5, // turning its axis: natural frequency, damping, top rate (rad/s)
+    cone: 1.05, // the most it leans off upright (rad)
+    kp: 9, kd: 6.5, lead: 0.15, // following the path: stiffness, damping, and how far ahead it leans for a push (s)
+    step: 1 / 240, // the physics step (s)
+    gate: 0.4, vGate: 0.75, touch: 0.28, // the descent: from this high over the spot, sinking this fast, down to this at the touchdown
+    from: { x: 1.07, y: 0.3, k: 0.46 }, // where it comes in: beyond the right edge, a third down, far off (under half its size)
+    pace: [1.7, 1.6, 1.2], // its speed coming in (across, down, toward us), as shares of the average to the gate
+    lean: 0.75, // leaning into the dive as it comes in (rad)
+    settle: 0.5, turn: 0.45, // down: the knees taking the weight, then the turn to the visitor (s)
+  };
+  const fHelp = { P: [0, 0, 0], V: [0, 0, 0], A: [0, 0, 0], S: [0, 0, 0], c: [0, 0, 0], uc: [0, 1, 0] };
+  // the camera's distance from the spot's plane, in body heights
+  const flightDr = (h) => view.h / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2))) / h;
+  function flightFrom(B, sx, sy, k) {
+    const h = B.h;
+    return [((sx - view.w / 2) / k + view.w / 2 - B.x) / h, (B.y - ((sy - view.h / 2) / k + view.h / 2)) / h, flightDr(h) * (1 - 1 / k)];
+  }
+  // where a point of the flight is drawn: screen x, y, and how big (its scale)
+  function flightTo(B, p, out) {
+    const Dr = flightDr(B.h), k = Dr / Math.max(0.05, Dr - p[2]);
+    out[0] = view.w / 2 + (B.x + p[0] * B.h - view.w / 2) * k;
+    out[1] = view.h / 2 + (B.y - p[1] * B.h - view.h / 2) * k;
+    out[2] = k;
+    return out;
+  }
+  // the plan at time t: position, velocity, acceleration (quintic Hermite between keys)
+  function planAt(keys, t, P, V, A) {
+    const last = keys[keys.length - 1];
+    if (t >= last.t) {
+      for (let j = 0; j < 3; j++) { P[j] = last.p[j] + last.v[j] * (t - last.t); V[j] = last.v[j]; A[j] = 0; }
+      return;
+    }
+    t = Math.max(t, keys[0].t);
+    let i = 0;
+    while (keys[i + 1].t < t) i++;
+    const a = keys[i], b = keys[i + 1], T = b.t - a.t, s = (t - a.t) / T;
+    const s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+    const h0 = 1 - 10 * s3 + 15 * s4 - 6 * s5, h1 = s - 6 * s3 + 8 * s4 - 3 * s5, h2 = 0.5 * s2 - 1.5 * s3 + 1.5 * s4 - 0.5 * s5;
+    const h3 = 0.5 * s3 - s4 + 0.5 * s5, h4 = -4 * s3 + 7 * s4 - 3 * s5, h5 = 10 * s3 - 15 * s4 + 6 * s5;
+    const d0 = -30 * s2 + 60 * s3 - 30 * s4, d1 = 1 - 18 * s2 + 32 * s3 - 15 * s4, d2 = s - 4.5 * s2 + 6 * s3 - 2.5 * s4;
+    const d3 = 1.5 * s2 - 4 * s3 + 2.5 * s4, d4 = -12 * s2 + 28 * s3 - 15 * s4, d5 = 30 * s2 - 60 * s3 + 30 * s4;
+    const e0 = -60 * s + 180 * s2 - 120 * s3, e1 = -36 * s + 96 * s2 - 60 * s3, e2 = 1 - 9 * s + 18 * s2 - 10 * s3;
+    const e3 = 3 * s - 12 * s2 + 10 * s3, e4 = -24 * s + 84 * s2 - 60 * s3, e5 = 60 * s - 180 * s2 + 120 * s3;
+    for (let j = 0; j < 3; j++) {
+      const p0 = a.p[j], v0 = a.v[j] * T, a0 = a.a[j] * T * T, p1 = b.p[j], v1 = b.v[j] * T, a1 = b.a[j] * T * T;
+      P[j] = h0 * p0 + h1 * v0 + h2 * a0 + h3 * a1 + h4 * v1 + h5 * p1;
+      V[j] = (d0 * p0 + d1 * v0 + d2 * a0 + d3 * a1 + d4 * v1 + d5 * p1) / T;
+      A[j] = (e0 * p0 + e1 * v0 + e2 * a0 + e3 * a1 + e4 * v1 + e5 * p1) / (T * T);
+    }
+  }
+  // The plan: in at a share of the average pace toward the gate, leaning into the dive;
+  // at the gate upright (no push but the one against gravity), sinking at vGate; on the
+  // spot sinking at the touchdown pace. The time to the gate is the shortest that keeps
+  // the thrust it asks for under 85% of the most and over 1.6x the least, and the lean
+  // under 80% of the most.
+  function flightPlan(B) {
+    const F = FLIGHT, fr = F.from;
+    const p0 = flightFrom(B, fr.x * view.w, fr.y * view.h, fr.k);
+    const gate = [0, BODY_C + F.gate, 0];
+    const T2 = (2 * F.gate) / (F.vGate + F.touch);
+    const make = (T1) => {
+      const v0 = p0.map((x, j) => (F.pace[j] * (gate[j] - x)) / T1);
+      const hz = Math.hypot(v0[0], v0[2]) || 1, push = Math.tan(F.lean) * F.G;
+      return [
+        { t: 0, p: p0, v: v0, a: [(push * v0[0]) / hz, 0, (push * v0[2]) / hz] },
+        { t: T1, p: gate, v: [0, -F.vGate, 0], a: [0, 0, 0] },
+        { t: T1 + T2, p: [0, BODY_C, 0], v: [0, -F.touch, 0], a: [0, (0.5 * (F.vGate - F.touch)) / T2, 0] },
+      ];
+    };
+    const { P, V, A } = fHelp;
+    let T1 = 1.6, keys = make(T1);
+    for (; T1 < 4; T1 += 0.05) {
+      keys = make(T1);
+      let worst = 0;
+      for (let t = 0; t <= T1; t += 0.02) {
+        planAt(keys, t, P, V, A);
+        const up = A[1] + F.G, thrust = Math.hypot(A[0], up, A[2]);
+        worst = Math.max(worst, up <= 0 ? 9 : 0, thrust / (F.tMax * 0.85 * F.G), (F.tMin * 1.6 * F.G) / thrust, Math.atan2(Math.hypot(A[0], A[2]), up) / (F.cone * 0.8));
+      }
+      if (worst <= 1) break;
+    }
+    return keys;
+  }
+  // what the flight computer asks for now: the thrust's direction (fHelp.uc) and size
+  function flightCommand(E) {
+    const F = FLIGHT, { P, V, A, S, c, uc } = fHelp;
+    planAt(E.keys, E.ft + F.lead, S, S, A); // the push the path asks for, a moment ahead
+    planAt(E.keys, E.ft, P, V, S); // where it should be now, and how fast
+    const sp = Math.hypot(E.v[0], E.v[1], E.v[2]);
+    for (let j = 0; j < 3; j++) c[j] = A[j] + F.kp * (P[j] - E.p[j]) + F.kd * (V[j] - E.v[j]) + (j === 1 ? F.G : 0) + F.drag * sp * E.v[j];
+    let m = Math.hypot(c[0], c[1], c[2]);
+    if (m < 1e-6) { uc[0] = 0; uc[1] = 1; uc[2] = 0; m = 0; } else { uc[0] = c[0] / m; uc[1] = c[1] / m; uc[2] = c[2] / m; }
+    const cc = Math.cos(F.cone);
+    if (uc[1] < cc) {
+      // (beyond the most it leans: as far as it goes that way, with what that axis can give)
+      const hz = Math.hypot(uc[0], uc[2]) || 1, sn = Math.sin(F.cone);
+      uc[0] = (uc[0] / hz) * sn; uc[2] = (uc[2] / hz) * sn; uc[1] = cc;
+      m = Math.max(0, c[0] * uc[0] + c[1] * uc[1] + c[2] * uc[2]);
+    }
+    return clamp(m, F.tMin * F.G, F.tMax * F.G);
+  }
+  function flightStep(E, dt) {
+    const F = FLIGHT, uc = fHelp.uc, u = E.u, w = E.w;
+    const Tc = flightCommand(E);
+    // turning: a damped spring pulling its axis toward the command, with a top rate and
+    // no spin about the axis itself
+    const dot = clamp(u[0] * uc[0] + u[1] * uc[1] + u[2] * uc[2], -1, 1);
+    let ax = u[1] * uc[2] - u[2] * uc[1], ay = u[2] * uc[0] - u[0] * uc[2], az = u[0] * uc[1] - u[1] * uc[0];
+    const sn = Math.hypot(ax, ay, az), ang = Math.acos(dot);
+    if (sn > 1e-9) { ax /= sn; ay /= sn; az /= sn; } else ax = ay = az = 0;
+    const k2 = F.wn * F.wn, c2 = 2 * F.zeta * F.wn;
+    w[0] += (k2 * ang * ax - c2 * w[0]) * dt;
+    w[1] += (k2 * ang * ay - c2 * w[1]) * dt;
+    w[2] += (k2 * ang * az - c2 * w[2]) * dt;
+    const wu = w[0] * u[0] + w[1] * u[1] + w[2] * u[2];
+    w[0] -= wu * u[0]; w[1] -= wu * u[1]; w[2] -= wu * u[2];
+    const wm = Math.hypot(w[0], w[1], w[2]);
+    if (wm > F.wMax) { w[0] *= F.wMax / wm; w[1] *= F.wMax / wm; w[2] *= F.wMax / wm; }
+    const nx = u[0] + (w[1] * u[2] - w[2] * u[1]) * dt, ny = u[1] + (w[2] * u[0] - w[0] * u[2]) * dt, nz = u[2] + (w[0] * u[1] - w[1] * u[0]) * dt;
+    const nl = Math.hypot(nx, ny, nz);
+    u[0] = nx / nl; u[1] = ny / nl; u[2] = nz / nl;
+    // the thrust: throttled back while its axis is well off the command, lagging the throttle
+    const align = clamp01((u[0] * uc[0] + u[1] * uc[1] + u[2] * uc[2] - 0.3) / 0.65);
+    E.T += (Math.max(F.tMin * F.G, Tc * smooth(align)) - E.T) * (1 - Math.exp(-dt / F.spool));
+    // and Newton: thrust along its axis, gravity, drag
+    const sp = Math.hypot(E.v[0], E.v[1], E.v[2]);
+    for (let j = 0; j < 3; j++) {
+      E.v[j] += (E.T * u[j] - (j === 1 ? F.G : 0) - F.drag * sp * E.v[j]) * dt;
+      E.p[j] += E.v[j] * dt;
+    }
+    E.ft += dt;
+  }
   function enterFlying(id) {
     goal = anchorFor(id);
-    const G = goal, h = G.h, W = view.w, H = view.h;
-    const gx = G.x, gy = G.y - h * BODY_C; // its middle, standing on the spot
-    const keys = [[0, W + h * 0.5, H * 0.22, 0.5], [0.45, W * 0.62, H * 0.42, 0.62]];
-    // two loops, each as eight keys round a circle: in at the bottom flying left, up the
-    // near side, over the top flying right and down the far side (the second smaller,
-    // higher and nearer)
-    const loop = (t0, dur, cx, cy, r, s0, s1) => {
-      for (let n = 1; n <= 8; n++) {
-        const a = Math.PI / 2 + (n / 8) * TAU, u = n / 8;
-        keys.push([t0 + dur * u, cx + Math.cos(a) * r * 1.15, cy + Math.sin(a) * r, s0 + (s1 - s0) * u]);
-      }
+    const B = goal;
+    const keys = flightPlan(B);
+    const E = {
+      kind: 'enter', phase: 'fly', t: 0, ft: 0, acc: 0, toId: id, keys,
+      p: keys[0].p.slice(), v: keys[0].v.slice(), u: [0, 1, 0], w: [0, 0, 0], T: FLIGHT.G,
+      yaw: 0, downT: 0, sink: 0, sinkV: 0, sp: 0, pitch: 0, from: [0, 0],
     };
-    const r1 = Math.min(H * 0.2, W * 0.13), r2 = r1 * 0.7;
-    loop(0.45, 0.85, Math.min(W * 0.62, gx - h * 0.4), H * 0.42 - r1, r1, 0.62, 0.8);
-    loop(1.3, 0.7, Math.min(W * 0.66, gx - h * 0.3), H * 0.4 - r1 - r2 * 0.6, r2, 0.8, 0.92);
-    const tHigh = 2.0 + 0.5, tDown = tHigh + ENTER.land;
-    keys.push([tHigh - 0.2, gx - h * 0.35, Math.max(barBottom + h * 0.6, gy - h * 0.95), 0.97]); // (pulling up over the spot)
-    keys.push([tHigh, gx, gy - h * 0.55, 1]); // (hanging over it, upright)
-    keys.push([tDown, gx, gy, 1]); // (down on it)
-    const x0 = keys[0], c0 = [x0[1], x0[2]];
-    Object.assign(at, { x: c0[0], y: c0[1] + h * x0[3] * BODY_C, h: h * x0[3], yaw: -YAW.fly });
+    // it comes in already steering: its axis on the first command
+    E.T = flightCommand(E);
+    E.u = fHelp.uc.slice();
+    E.yaw = Math.atan2(E.v[0], E.v[2]);
+    trans = E;
+    flightDraw(E, B);
     vel.x = vel.y = 0;
-    trans = { kind: 'enter', phase: 'fly', t: 0, toId: id, path: flightPath(keys, 0, 0), tHigh, tDown, th: 0, lastTh: null, sp: 0, pitch: 0, hit: false };
     shared.uDissolve.value = 0;
     pAlpha.fill(0, 0, N_TRANSIT);
     baseName = (SECTIONS[id] || SECTIONS.inicio).base;
     floatW = 0;
     dirty = true;
   }
+  const fS = [0, 0, 0];
+  // the body where the physics has it: its middle on screen (the root is at its feet), its
+  // size, facing, and the lean and bank that point its axis where it is
+  function flightDraw(E, B) {
+    const s = flightTo(B, E.p, fS), size = B.h * s[2];
+    at.x = s[0];
+    at.y = s[1] + size * BODY_C;
+    at.h = size;
+    at.yaw = E.yaw;
+    const yaw = E.yaw + look.yaw * 0.35; // (the pivot's turn, as update() sets it)
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const u = E.u;
+    jr.tilt = Math.atan2(u[0] * fx + u[2] * fz, u[1]);
+    jr.bank = -Math.asin(clamp(u[0] * fz - u[2] * fx, -1, 1));
+  }
   function stepEnter(dt) {
-    const E = trans;
+    const E = trans, F = FLIGHT;
     const B = anchorFor(E.toId);
     goal = B;
-    const h = B.h;
-    const p = pathAt(E.path, E.t, fP);
-    const sc = Math.exp(-p[2]), size = h * sc; // (how near: the path is drawn at the spot's distance)
-    const D = view.h / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)));
-    const v = flightVel(E.path, Math.min(E.t, E.tHigh), D, fV);
-    // Head first along the path: the lean is the way it flies, from flat out to the
-    // left (a loop takes it right round), unwound so a loop is a whole turn; the last
-    // leg it rights itself (to the nearest upright), hanging on the jets to set down.
-    const landing = clamp01((E.t - (E.tHigh - 0.45)) / 0.55);
-    if (landing <= 0 && Math.hypot(v[0], v[1]) > h * 0.2) {
-      const th = Math.atan2(v[1], -v[0]);
-      if (E.lastTh != null) E.th += wrapPi(th - E.lastTh);
-      E.lastTh = th;
+    if (E.phase === 'fly') {
+      E.acc += dt;
+      while (E.acc >= F.step && E.phase === 'fly') {
+        E.acc -= F.step;
+        flightStep(E, F.step);
+        // touchdown: the feet (half a body below its middle, along its axis) on the floor
+        if (E.ft > E.keys[1].t && (E.p[1] - BODY_C * E.u[1] <= 0 || E.ft > E.keys[2].t + 1.5)) {
+          E.phase = 'down';
+          E.downT = 0;
+          E.vTouch = -E.v[1];
+          E.from = [E.p[0], E.p[2]];
+          dustBurst(1);
+        }
+      }
+    } else E.downT += dt;
+    const sp = Math.hypot(E.v[0], E.v[1], E.v[2]);
+    const hz = Math.hypot(E.v[0], E.v[2]);
+    const down = E.phase === 'down';
+    const g = down ? clamp01(E.downT / F.settle) : 0; // down: the knees taking the weight
+    const tn = down ? clamp01((E.downT - F.settle * 0.4) / F.turn) : 0; // and turning to the visitor
+    // Facing: the way it flies (with the turn's inertia), held while it hangs nearly still;
+    // over the spot, round to the visitor.
+    const desc = clamp01((E.ft - E.keys[1].t + 0.3) / 0.6);
+    let want = hz > 0.35 ? Math.atan2(E.v[0], E.v[2]) : E.yaw;
+    want = want + wrapPi(B.yaw - want) * Math.max(smooth(desc) * 0.6, smooth(tn));
+    E.yaw += clamp(wrapPi(want - E.yaw) * damp(down ? 6 : 4, dt), -3 * dt, 3 * dt);
+    if (down) {
+      // on its feet: the axis settles upright, the body on the spot (the last few pixels
+      // of the path's error taken up as it settles), the jets dying out
+      const k = smooth(g);
+      E.p[0] = E.from[0] * (1 - k);
+      E.p[2] = E.from[1] * (1 - k);
+      E.p[1] = BODY_C;
+      const r = damp(10, dt);
+      E.u[0] += (0 - E.u[0]) * r; E.u[2] += (0 - E.u[2]) * r; E.u[1] = Math.sqrt(Math.max(0, 1 - E.u[0] * E.u[0] - E.u[2] * E.u[2]));
+      E.T *= Math.exp(-dt / 0.12);
+      E.v[0] = E.v[1] = E.v[2] = 0;
     }
-    const flat = TILT.fly + E.th;
-    const upright = Math.round(flat / TAU) * TAU;
-    const tiltA = flat + (upright - flat) * smooth(landing);
-    const down = clamp01((E.t - E.tHigh) / (E.tDown - E.tHigh));
-    const P = jr.pose || (jr.pose = newPose());
-    mixPose(P, POSE.fly, POSE.hover, smooth(landing));
-    if (down > 0.6) mixPose(P, P, POSE.crouch, smooth((down - 0.6) / 0.4));
-    const landed = E.t >= E.tDown;
-    const g = landed ? clamp01((E.t - E.tDown) / ENTER.turn) : 0; // down: absorbing it, turning to the visitor
-    if (landed && g > 0) mixPose(P, POSE.crouch, POSE.stand, smooth(g));
-    at.x = p[0] * sc;
-    at.y = p[1] * sc + size * BODY_C;
-    at.h = size;
-    // (facing left as it flies, round to the visitor once it is down)
-    at.yaw = -YAW.fly + (B.yaw + YAW.fly) * smooth(clamp01((E.t - E.tDown + 0.1) / (ENTER.turn + 0.1)));
+    flightDraw(E, B);
+    if (down) jr.tilt *= 1 - smooth(g);
     vel.x = vel.y = 0;
     jr.on = true;
-    jr.w = landed ? 1 - smooth(clamp01((g - 0.4) / 0.6)) : 1;
-    jr.pin = landed ? 1 : smooth(clamp01((down - 0.8) / 0.2));
-    jr.air = (1 - smooth(landing)) * 0.5 + 0.2 * (1 - down);
-    jr.tilt = landed ? 0 : tiltA;
-    jr.spin = jr.bank = 0;
+    jr.spin = 0;
     jr.fly = 0;
     jr.pitch = 0;
     jr.hop = 0;
-    jr.squash = landed ? 0.14 * Math.sin(Math.PI * Math.min(1, g * 2.2)) * (1 - g) : 0;
     jr.floor = null;
-    // the jets: flat out all the way in, braking hard to hang over the spot, a flare as
-    // it sets down, then off
-    jr.jet = landed ? 0.6 * (1 - smooth(clamp01(g / 0.4))) : 1.3 - 0.4 * smooth(landing) + 0.5 * smooth(clamp01((down - 0.5) / 0.4));
-    if (E.t >= E.tDown && !E.hit) { E.hit = true; touchdown('feet'); flare(); }
-    // it looks where it is going, then at the visitor
-    [glance.x, glance.y] = landed ? [view.w / 2, view.h / 2] : [at.x - h * 2, at.y - size * BODY_C + (E.t < E.tHigh ? v[1] * 0.3 : 0)];
+    jr.air = 0;
+    // the pose: flying into the dive, arms swept back; braking or hanging on the jets,
+    // upright with the arms out to steer; legs bent ready for the touchdown, then the
+    // knees taking the weight and straightening up
+    const P = jr.pose || (jr.pose = newPose());
+    const fwd = jr.tilt; // (leaning forward: pushing on; back: braking)
+    const dive = smooth(clamp01((sp - 1.6) / 1.8)) * smooth(clamp01(fwd / 0.35));
+    E.sp = dive;
+    mixPose(P, POSE.hover, POSE.fly, dive * 0.85);
+    const ready = smooth(clamp01((E.ft - E.keys[1].t) / Math.max(0.1, E.keys[2].t - E.keys[1].t)));
+    if (!down && ready > 0) mixPose(P, P, POSE.crouch, ready * 0.75);
+    if (down) mixPose(P, POSE.crouch, POSE.stand, smooth(clamp01((g - 0.25) / 0.75)));
+    jr.w = down ? 1 - smooth(clamp01((E.downT - F.settle) / F.turn)) : 1;
+    jr.pin = down ? smooth(clamp01(E.downT / 0.08)) : 0;
+    // the touchdown's give: the knees bend with how fast it came down, and spring back
+    jr.squash = down ? clamp(E.vTouch / 0.3, 0.4, 1.4) * 0.12 * Math.sin(Math.PI * Math.min(1, g * 1.6)) * (1 - g) : 0;
+    // the jets: the flame follows the thrust (hovering on 1 g, a full flame)
+    jr.jet = clamp(0.2 + (E.T / F.G) * 0.8, 0, 1.5);
+    // it looks the way it is going, then at the visitor
+    if (!down || g < 0.3) {
+      const s = flightTo(B, [E.p[0] + E.v[0] * 0.5, E.p[1] + E.v[1] * 0.5 + 0.35, E.p[2] + E.v[2] * 0.5], fS);
+      [glance.x, glance.y] = [s[0], s[1]];
+    } else [glance.x, glance.y] = [view.w / 2, view.h / 2];
     glance.until = performance.now() + 150;
-    if (E.t >= E.tDown + ENTER.turn) {
+    if (down && E.downT >= F.settle + F.turn) {
       trans = null;
       greet(E.toId, (SECTIONS[E.toId] || SECTIONS.inicio).greet);
-    }
-  }
-  // the blast of the landing: smoke rolling out from under its feet
-  function flare() {
-    root.updateMatrixWorld(true);
-    const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
-    const H = at.h * view.wpp;
-    for (let n = 0; n < 40; n++) {
-      const a = Math.random() * TAU, sp = H * (0.5 + Math.random() * 0.7);
-      spawn(c.x + Math.cos(a) * H * 0.1, c.y + H * 0.02, c.z + Math.sin(a) * H * 0.08,
-        Math.cos(a) * sp, H * (0.08 + Math.random() * 0.2), Math.sin(a) * sp * 0.4, 0.7 + Math.random() * 0.7, 0.5);
     }
   }
 
@@ -1519,11 +1765,13 @@ export async function start({ reduced = false } = {}) {
   }
 
   // Into the timeline (scrubbed by the scroll, like the pass itself): off its spot on the
-  // jets and flat out to the left, off the left edge of the screen, and in from the right
-  // edge at that same pace, over the first card and down to its portal, braking to hover
-  // there (the pass takes over from that hover). Both legs are cubics matched in pace at
-  // the edges, so the flight never lurches; scrolled back, it is the same way in reverse.
-  const CROSS = { T0: 0.1, L1: 0.42 }; // the lift-off's share of the zone, and the leg out to the left edge's
+  // jets and flat out to the left, straight off the left edge of the screen; out of sight
+  // it brakes hard and turns round, and comes back in by that same edge, flying right to
+  // the first card's portal and braking to hover there, facing it (the pass takes over
+  // from that hover). Out it speeds up evenly and in it brakes evenly, at one pace at the
+  // edge both ways (the legs share the zone by their lengths), so the flight never
+  // lurches. Scrolled back, it is the same way in reverse.
+  const CROSS = { T0: 0.1, LT: 0.07 }; // the lift-off's share of the zone, and the turn's out of sight (of the rest)
   function heroCross(p, idB) {
     const A = anchorFor('inicio', true), B = anchorFor(idB, true);
     const P = jr.pose || (jr.pose = newPose());
@@ -1542,46 +1790,52 @@ export async function start({ reduced = false } = {}) {
       jr.air = jr.tilt = jr.fly = 0;
       jr.pitch = 0.16 * Math.sin(Math.PI * u);
       jr.squash = 0.07 * Math.sin(Math.PI * u);
-      jr.jet = 0.35 * smooth(u);
+      jr.jet = 0.4 * smooth(u);
       jr.lastP = p;
+      head.along = 0;
       return;
     }
     const q = (p - CROSS.T0) / (1 - CROSS.T0);
-    const W = view.w, L1 = CROSS.L1, L2 = 1 - L1;
-    const xOff = -A.h * 0.9, xIn = W + B.h * 0.9; // clear of the edges
-    const D1 = Math.max(1, A.x - xOff), D2 = Math.max(1, xIn - B.x);
-    const cruise = Math.min(1.6 * D2 / L2, 2.4 * D1 / L1); // px per unit of the zone
+    // the legs: out to just past the left edge, and back in from there to the portal
+    const D1 = Math.max(1, A.x + A.h * 0.9), D2 = Math.max(1, B.x + B.h * 0.9);
+    const LT = CROSS.LT, L1 = ((1 - LT) * D1) / (D1 + D2), L2 = 1 - LT - L1, back = L1 + LT;
+    const cruise = (2 * (D1 + D2)) / (1 - LT); // px per unit of the zone, at the edge
+    const h = A.h + (B.h - A.h) * smooth(clamp01(q / 0.9));
+    const xOff = -h * 0.9; // clear of the edge
     const herm = (p0, v0, p1, v1, u) => {
       const u2 = u * u, u3 = u2 * u;
       return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (3 * u2 - 2 * u3) * p1 + (u3 - u2) * v1;
     };
-    // its height: up off the spot to a cruise over the first card, down to the portal
-    const c = cardBox(0);
-    const yC = Math.max(barBottom + B.h, Math.min(A.y, c.t - B.h * 0.25));
-    const h = A.h + (B.h - A.h) * smooth(clamp01(q / 0.75));
-    let x, y;
-    if (q < L1) {
-      x = herm(A.x, 0, xOff, -cruise * L1, q / L1);
-      y = A.y + (yC - A.y) * smooth(clamp01(q / (L1 * 0.8)));
-    } else {
-      x = herm(xIn, -cruise * L2, B.x, 0, (q - L1) / L2);
-      y = yC + (B.y - yC) * smooth(clamp01((q - L1 - L2 * 0.45) / (L2 * 0.55)));
-    }
-    // flat out in between: head first to the left, the jets burning hard; righting
-    // itself to the hover at the portal, turned to face it
-    const up = smooth(clamp01(q / 0.15)), endK = smooth(clamp01((q - 0.8) / 0.2));
+    let x;
+    if (q < L1) x = herm(A.x, 0, xOff, -cruise * L1, q / L1);
+    else if (q < back) x = herm(xOff, -cruise * LT, xOff, cruise * LT, (q - L1) / LT); // (out of sight: a hard brake and back)
+    else x = herm(xOff, cruise * L2, B.x, 0, (q - back) / L2);
+    // its height: up off the spot to fly level with the portal (as the stage rises
+    // into place), and onto the portal at the end
+    const yL = Math.min(A.y - A.h * 0.15, Math.max(B.y, barBottom + h * 0.7));
+    let y = A.y + (yL - A.y) * smooth(clamp01(q / (L1 * 0.5)));
+    y += (B.y - y) * smooth(clamp01((q - back) / L2));
+    // flat out in between: head first to the left, the jets burning hard; turned round
+    // out of sight; head first back in, righting itself to the hover at the portal
+    const up = smooth(clamp01(q / 0.15)), turn = smooth(clamp01((q - L1) / LT));
+    const endK = smooth(clamp01((q - (1 - L2 * 0.52)) / (L2 * 0.52)));
     const fly = up * (1 - endK);
     let yaw = A.yaw + wrapPi(-YAW.fly - A.yaw) * up;
-    yaw += wrapPi(B.yaw - yaw) * endK;
+    yaw += (YAW.fly - yaw) * turn;
+    yaw += (B.yaw - yaw) * endK;
+    head.along = Math.hypot(x - at.x, y - at.y) * (p < jr.lastP ? -1 : 1); // (see stepHeading)
     Object.assign(at, { x, y, h, yaw });
     snapAt();
-    jr.pin = 0;
+    const lift = smooth(clamp01(q / 0.2)); // (up out of the crouch, the feet letting go of the floor)
+    jr.pin = 1 - lift;
     jr.air = 0.45 * fly;
     jr.tilt = up * (TILT.fly + (TILT.hover - TILT.fly) * endK);
     jr.fly = fly;
-    jr.jet = 0.4 + 0.6 * fly + 0.4 * smooth(clamp01((q - 0.15) / 0.1)) * (1 - smooth(clamp01((q - 0.7) / 0.1)));
-    mixPose(P, POSE.hover, POSE.fly, fly);
-    [glance.x, glance.y] = [x - h * 2 * (fly > 0.5 ? 1 : -1), y - h * 0.6];
+    jr.jet = 0.4 + 0.6 * fly + 0.4 * smooth(clamp01((q - 0.1) / 0.1)) * (1 - turn);
+    mixPose(P, POSE.crouch, POSE.hover, lift);
+    if (fly > 0) mixPose(P, P, POSE.fly, fly);
+    const dir = fly > 0.5 && q < L1 + LT / 2 ? -1 : 1; // (it looks the way it flies, then at the portal)
+    [glance.x, glance.y] = [x + h * 2 * dir, y - h * 0.6];
     glance.until = performance.now() + 150;
     jr.lastP = p;
   }
@@ -1810,9 +2064,14 @@ export async function start({ reduced = false } = {}) {
     // which way it goes: through the tunnels, along the pass (the cards slide round the
     // ring under it, and it wraps round the screen's edges); anywhere else, on screen
     let v = 0;
+    const along = Number.isFinite(head.along);
     if (tun.drove) {
       if (head.wasTun && Number.isFinite(head.pg)) v = (head.g - head.pg) * head.gw;
       head.pg = head.g;
+    } else if (along) {
+      // (into the timeline: how far it went along the flight as laid out, back if negative;
+      // the flight turns round by itself out of sight, so on screen it never runs backward)
+      v = head.along;
     } else {
       const dx = Number.isFinite(head.x) ? at.x - head.x : 0;
       v = Math.abs(dx) < view.w * 0.3 ? dx : 0;
@@ -1821,7 +2080,7 @@ export async function start({ reduced = false } = {}) {
     head.x = at.x;
     head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
     if (flyW < 0.25 || reduced || view.dock || (trans && (trans.kind === 'case' || trans.kind === 'enter'))) head.to = 0;
-    else if (Math.abs(head.vx) > at.h * 0.5) head.to = (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
+    else if (Math.abs(head.vx) > at.h * 0.5) head.to = along ? (head.vx > 0 ? 0 : 1) : (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
     head.m += (head.to - head.m) * damp(6, dt);
     if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
     if (dbg.head != null) head.m = head.to = dbg.head; // (QA: pin the heading)
@@ -1835,6 +2094,7 @@ export async function start({ reduced = false } = {}) {
     at.yaw = snap.at.yaw + wrapPi(at.yaw - snap.at.yaw) * snap.k;
   }
   function touchdown(ek) {
+    if (section === 'inicio') dustBurst(0.6);
     setFace('surprised', 1);
     if (ek === 'butt') shakeT = 0.25; // a dazed little head shake
     // dust off the card around it
@@ -2128,6 +2388,15 @@ export async function start({ reduced = false } = {}) {
       jp.vel[i * 3] *= drag; jp.vel[i * 3 + 1] = jp.vel[i * 3 + 1] * drag + H * 0.5 * dt; // spent exhaust drifts up, like bubbles
       jp.vel[i * 3 + 2] *= drag;
       jPos[i * 3] += jp.vel[i * 3] * dt; jPos[i * 3 + 1] += jp.vel[i * 3 + 1] * dt; jPos[i * 3 + 2] += jp.vel[i * 3 + 2] * dt;
+      if (dust.on && jPos[i * 3 + 1] < dust.floor && jp.vel[i * 3 + 1] < 0) {
+        // (exhaust reaching the hero's floor splashes out flat along it)
+        const vy = -jp.vel[i * 3 + 1], hx = jp.vel[i * 3], hz = jp.vel[i * 3 + 2], hl = Math.hypot(hx, hz);
+        const a = hl > vy * 0.15 ? Math.atan2(hz, hx) + (Math.random() - 0.5) * 1.6 : Math.random() * TAU;
+        jPos[i * 3 + 1] = dust.floor;
+        jp.vel[i * 3] = hx * 0.5 + Math.cos(a) * vy * 0.8;
+        jp.vel[i * 3 + 2] = hz * 0.5 + Math.sin(a) * vy * 0.8;
+        jp.vel[i * 3 + 1] = vy * 0.08;
+      }
       jHeat[i] = 1 - k;
       jSize[i] = jp.s0[i] * (0.55 + 1.3 * k);
       jAlpha[i] = jp.a0[i] * Math.min(1, jp.age[i] / 0.04) * Math.pow(1 - k, 1.3);
@@ -2138,6 +2407,124 @@ export async function start({ reduced = false } = {}) {
     jGeo.attributes.aSize.needsUpdate = true;
     jGeo.attributes.aHeat.needsUpdate = true;
     jGeo.attributes.aClip.needsUpdate = true;
+  }
+
+  // Where the blast meets the hero's floor: along each nozzle's axis from its mouth. Within
+  // reach it raises dust, more the nearer and the harder the jets push, and lights the
+  // floor there (and, a little, the body from below).
+  const dV = new THREE.Vector3(), dD = new THREE.Vector3();
+  function dustSpawn(x, y, z, vx, vy, vz, life, alpha, size, heat) {
+    const i = dust.next;
+    dust.next = (dust.next + 1) % N_DUST;
+    dPos[i * 3] = x; dPos[i * 3 + 1] = y; dPos[i * 3 + 2] = z;
+    dust.vel[i * 3] = vx; dust.vel[i * 3 + 1] = vy; dust.vel[i * 3 + 2] = vz;
+    dust.life[i] = life;
+    dust.age[i] = 0;
+    dust.a0[i] = alpha;
+    dust.s0[i] = size;
+    dust.h0[i] = heat;
+    dust.live = N_DUST;
+  }
+  // the touchdown: a ring blown out from under its feet all at once
+  function dustBurst(k) {
+    if (!dust.on || reduced) return;
+    root.updateMatrixWorld(true);
+    const c = dV.set(0, 0, 0).applyMatrix4(root.matrixWorld);
+    const H = dust.H;
+    for (let n = 0; n < 110 * k; n++) {
+      const a = Math.random() * TAU, sp = H * (1.4 + Math.random() * 1.6) * k;
+      const r = H * (0.08 + Math.random() * 0.1);
+      dustSpawn(c.x + Math.cos(a) * r, dust.floor + H * 0.01, c.z + Math.sin(a) * r, Math.cos(a) * sp, H * (0.04 + Math.random() * 0.1), Math.sin(a) * sp,
+        1.0 + Math.random() * 1.1, 0.3 + Math.random() * 0.2, 18 + Math.random() * 22, 0.5 + 0.45 * Math.random());
+    }
+    dust.glow = Math.max(dust.glow, 0.9 * k);
+  }
+  function stepDust(dt) {
+    // the floor: under the hero's spot, while the guide is there
+    dust.on = section === 'inicio' && !reduced && !view.dock && rigOK;
+    let I = 0;
+    if (dust.on) {
+      const B = anchorFor('inicio');
+      dust.floor = (view.h / 2 - B.y) * view.wpp;
+      dust.H = Math.max(at.h * view.wpp, 1e-3);
+      if (jet.group && jet.thrust > 0.04 && shared.uDissolve.value < 0.5) {
+        let n = 0, reach = 0;
+        dust.hit.set(0, 0, 0);
+        dust.push.set(0, 0, 0);
+        for (const m of jet.nozzles) {
+          m.getWorldPosition(dV);
+          dD.setFromMatrixColumn(m.matrixWorld, 1).normalize().negate(); // out of the mouth
+          if (dD.y > -0.3) continue; // (not pointing at the floor)
+          const s = (dust.floor - dV.y) / dD.y; // how far down its axis the floor is
+          if (s < 0) continue;
+          dust.hit.addScaledVector(dD, s).add(dV);
+          dust.push.x += dD.x; dust.push.z += dD.z;
+          reach += s;
+          n++;
+        }
+        if (n) {
+          dust.hit.divideScalar(n);
+          dust.push.divideScalar(n);
+          reach /= n;
+          const R = 1.9 * dust.H; // the blast's reach
+          I = Math.pow(clamp01(1 - reach / R), 2.4) * Math.min(1.5, jet.thrust * 1.35);
+        }
+      }
+    }
+    // the floor's glow follows the blast (and a flash on the touchdown fades out)
+    dust.glow = Math.max(I * 0.8, dust.glow * Math.exp(-dt / 0.35));
+    dust.light = dust.glow;
+    glowDisk.visible = dust.glow > 0.01;
+    if (glowDisk.visible) {
+      glowDisk.position.set(dust.hit.x, dust.floor + dust.H * 0.002, dust.hit.z);
+      glowDisk.scale.setScalar(dust.H * (0.4 + 0.45 * Math.min(1, dust.glow)));
+      glowMat.uniforms.uI.value = Math.min(1, dust.glow) * 0.9;
+    }
+    if (I > 0.03) {
+      dust.carry += 460 * Math.min(1.2, I) * dt;
+      const H = dust.H;
+      while (dust.carry >= 1) {
+        dust.carry -= 1;
+        const a = Math.random() * TAU;
+        const sp = H * (0.9 + Math.random() * 1.7) * (0.45 + 0.55 * Math.min(1, I));
+        // flat out along the floor every way, more of it the way the jets lean
+        const vx = Math.cos(a) * sp + dust.push.x * sp * 0.9, vz = Math.sin(a) * sp + dust.push.z * sp * 0.9;
+        const r = H * 0.06 * Math.random();
+        if (Math.random() < 0.14) {
+          // grit: a hot spark skipping out fast and low
+          dustSpawn(dust.hit.x, dust.floor + H * 0.01, dust.hit.z, vx * 1.9, H * (0.05 + 0.25 * Math.random()), vz * 1.9,
+            0.35 + Math.random() * 0.35, 0.7, 4 + Math.random() * 3, 0.95);
+          continue;
+        }
+        dustSpawn(dust.hit.x + Math.cos(a) * r, dust.floor + H * 0.01, dust.hit.z + Math.sin(a) * r, vx, H * (0.02 + 0.1 * Math.random()), vz,
+          0.8 + Math.random() * 1.0, (0.24 + 0.2 * Math.random()) * (0.55 + 0.45 * Math.min(1, I)), 16 + Math.random() * 20, 0.4 + 0.6 * Math.random() * Math.min(1, I));
+      }
+    } else dust.carry = 0;
+    if (!dust.live) return;
+    const drag = Math.exp(-2.6 * dt);
+    let alive = 0;
+    for (let i = 0; i < N_DUST; i++) {
+      dust.age[i] += dt;
+      const k = dust.age[i] / dust.life[i];
+      if (k >= 1) { dAlpha[i] = 0; continue; }
+      alive++;
+      const H = dust.H;
+      dust.vel[i * 3] *= drag;
+      dust.vel[i * 3 + 2] *= drag;
+      // slowing down, it billows up a little
+      dust.vel[i * 3 + 1] = dust.vel[i * 3 + 1] * drag + H * 0.3 * dt * smooth(k);
+      dPos[i * 3] += dust.vel[i * 3] * dt;
+      dPos[i * 3 + 1] = Math.max(dust.floor, dPos[i * 3 + 1] + dust.vel[i * 3 + 1] * dt);
+      dPos[i * 3 + 2] += dust.vel[i * 3 + 2] * dt;
+      dHeat[i] = dust.h0[i] * (1 - k) * (1 - k);
+      dSize[i] = dust.s0[i] * (0.6 + 2.4 * k);
+      dAlpha[i] = dust.a0[i] * Math.min(1, dust.age[i] / 0.05) * Math.pow(1 - k, 1.4);
+    }
+    dust.live = alive;
+    dGeo.attributes.position.needsUpdate = true;
+    dGeo.attributes.aAlpha.needsUpdate = true;
+    dGeo.attributes.aSize.needsUpdate = true;
+    dGeo.attributes.aHeat.needsUpdate = true;
   }
 
   // Moving within a section: the body sheds a faint wake that the current takes away
@@ -3160,6 +3547,7 @@ export async function start({ reduced = false } = {}) {
     jr.spin = jr.bank = 0;
     jr.tun = false;
     tun.drove = false;
+    head.along = NaN;
     if (!ledge.drove) ledge.lastP = -1;
     ledge.was = ledge.drove;
     ledge.drove = false;
@@ -3304,6 +3692,7 @@ export async function start({ reduced = false } = {}) {
     shed(dt);
     stepPool(dt);
     stepJet(dt);
+    stepDust(dt);
     stepMotes(dt, Math.max(air, level), level);
     pGeo.attributes.position.needsUpdate = true;
     pGeo.attributes.aAlpha.needsUpdate = true;
