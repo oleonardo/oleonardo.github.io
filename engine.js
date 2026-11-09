@@ -323,20 +323,28 @@ uniform mat4 uProj;
 uniform mat4 uView;
 uniform float uRot;
 uniform float uScale;
+varying float vA;
 void main() {
   float c = cos(uRot);
   float s = sin(uRot);
   vec3 p = vec3(aPos.x * c + aPos.z * s, aPos.y, -aPos.x * s + aPos.z * c);
   vec4 mv = uView * vec4(p, 1.0);
   gl_Position = uProj * mv;
-  gl_PointSize = max(1.0, 0.05 * uScale / max(-mv.z, 0.1));
+  float dist = -mv.z;
+  // Dust, a pixel or two across. The field turns slowly, and one drifting right past the
+  // camera would otherwise grow into a big grey square: capped, and faded out up close.
+  gl_PointSize = clamp(0.05 * uScale / max(dist, 0.1), 1.0, 0.006 * uScale);
+  vA = smoothstep(1.5, 4.0, dist);
 }
 `;
 
   const STAR_FS = `
 precision mediump float;
+varying float vA;
 void main() {
-  gl_FragColor = vec4(0.26, 0.29, 0.32, 1.0);
+  vec2 q = gl_PointCoord - 0.5;
+  if (dot(q, q) > 0.25) discard; // (round, not square)
+  gl_FragColor = vec4(vec3(0.26, 0.29, 0.32) * vA, 1.0);
 }
 `;
 
