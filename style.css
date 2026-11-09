@@ -1462,7 +1462,8 @@ html.is-locked .topbar {
   }
 
   html.is-detail .work-stage {
-    transform: translateX(-14vw);
+    /* shoved aside by the guide, the way it flew in (avatar-scene.js sets the push) */
+    transform: translateX(var(--guide-push, -14vw));
     opacity: 0;
   }
 
@@ -2416,6 +2417,19 @@ html.vt .work-stage {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.6s var(--ease-out);
+  /* its own layer in the View Transitions (opening and closing a case): drawn live,
+     above the page and the scene's backdrop, so the guide flies out over the opening
+     and back in over the closing instead of freezing in the snapshot */
+  view-transition-name: guide;
+}
+
+::view-transition-old(guide) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(guide) {
+  animation: none;
 }
 
 .has-avatar .avatar-stage {
@@ -2450,10 +2464,11 @@ html.vt .work-stage {
   outline-offset: 4px;
 }
 
-/* Out of the way while a phone keyboard is up or a video scene is open. */
-html.is-detail .avatar-stage,
+/* Out of the way while a phone keyboard is up or a video scene is open (opening a
+   case it is still flying off the screen: the stage stays up until it is gone). */
+html.is-detail .avatar-stage:not(.is-exit),
 html.is-detail .avatar-hit,
-html:has(dialog[open]) .avatar-stage,
+html:has(dialog[open]) .avatar-stage:not(.is-exit),
 html:has(dialog[open]) .avatar-hit,
 html:has(.terminal-form :focus) .avatar-stage.is-dock,
 html:has(.terminal-form :focus) .avatar-hit.is-dock {
