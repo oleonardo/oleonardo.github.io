@@ -637,12 +637,13 @@ export async function start({ reduced = false } = {}) {
 
   // The timeline: every card is a time tunnel, with a portal at each end. It follows the
   // scroll straight through: at the left portal of the card in front, it dives in, glides
-  // behind the card, and out of the right portal it swoops down into the next card's left
-  // portal (the two portals line up as the ring turns), in one unbroken flight. Stopped
-  // anywhere, it stays right there, inside the card too. Out of the last one it falls
-  // onto the video cases instead (see tunnelExit). Positions come from the cards' live
-  // rects: app.js turns them on a ring around the spine, and their vertical edges stay
-  // vertical on screen, so the box is exact where it matters, at the ends.
+  // behind the card, shoots out of the right portal and across the screen, and comes
+  // flying back in from the left to the next card's portal, in one unbroken flight (its
+  // pace eases from leg to leg, never jumping). Stopped anywhere, it stays right there.
+  // Out of the last one it falls onto the video cases instead (see tunnelExit).
+  // Positions come from the cards' live rects: app.js turns them on a ring around the
+  // spine, and their vertical edges stay vertical on screen, so the box is exact where it
+  // matters, at the ends.
   let storyPersp = 2000, storyCardH = 0;
   const tunnelMode = () => !reduced && !view.dock && !!nodes.storyStage && tunnels.length > 1;
   const tunnelOn = () => section === 'historia' && tunnelMode();
@@ -658,9 +659,9 @@ export async function start({ reduced = false } = {}) {
     return { li, card: li.querySelector('.tl-card') || li, pin: mk('tl-portal is-in', 4), pout: mk('tl-portal is-out', 4), wake: mk('tl-wake', 0), near: [false, false], wo: -1, wx: -1 };
   }) : [];
   // (the legs of a pass, as the fraction of a card's scroll where each one ends: into the
-  // left portal, through the card, and the swoop to the next card's portal ends on it;
-  // out of the last card it only clears its right portal, by last)
-  const TUN = { dive: 0.16, inside: 0.6, last: 0.7 };
+  // left portal, through the card, off the right edge of the screen, and in from the left
+  // to the next card's portal; out of the last card it only clears its right portal, by last)
+  const TUN = { dive: 0.15, inside: 0.46, off: 0.73, last: 0.6 };
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
   let PORTAL = 0.033; // half a portal's width, in card widths (read from .tl-portal's --pw on resize)
@@ -725,7 +726,7 @@ export async function start({ reduced = false } = {}) {
     const xIn = c.l + h * 0.55; // just inside: the feet past the left edge
     const xOut = c.r - h * 0.65; // the head at the right edge, still hidden
     const glide = (xOut - xIn) / (TUN.inside - TUN.dive); // its pace through the card
-    let x, y = c.cy, swoop = -1, clear = false;
+    let x, y = c.cy;
     if (ph < TUN.dive) {
       // from rest at the portal, speeding up into it until it reaches the glide's pace
       const u = ph / TUN.dive, D = xIn - hoverX(c, h), v = glide * TUN.dive;
@@ -736,31 +737,27 @@ export async function start({ reduced = false } = {}) {
       // out of the last card: clear of the portal, where the fall takes over
       x = xOut + (c.r + c.w * PORTAL + h * 0.5 - xOut) * clamp01((ph - TUN.inside) / (TUN.last - TUN.inside));
     } else {
-      // Out of the right portal and round, down into the next card's left portal, on one
-      // curve: as the ring turns the two portals come to sit one above the other, so it
-      // shoots out, bends down past the card's edge and comes round to settle at the next
-      // portal, where the next pass starts. It never leaves the screen.
-      swoop = (ph - TUN.inside) / (1 - TUN.inside);
+      // Across the screen: out of the right portal speeding up to a cruise, off the right
+      // edge, and in from the left edge at that same cruise, braking at the next portal.
+      // Each leg is a cubic matched in pace at its ends, so the flight never lurches.
+      const L1 = TUN.off - TUN.inside, L2 = 1 - TUN.off;
       const c2 = cardBox(k + 1);
-      const x3 = hoverX(c2, h), y3 = c2.cy;
-      const P = [xOut, c.cy, c.r + h * 1.4, c.cy, x3 + h * 0.15, y3 - h * 0.75, x3, y3];
-      const curve = (u) => {
-        const e = 0.5 * u + 2 * u * u - 1.5 * u * u * u; // out of the portal at speed, braking at the next one
-        const i = 1 - e;
-        const b0 = i * i * i, b1 = 3 * i * i * e, b2 = 3 * i * e * e, b3 = e * e * e;
-        return [b0 * P[0] + b1 * P[2] + b2 * P[4] + b3 * P[6], b0 * P[1] + b1 * P[3] + b2 * P[5] + b3 * P[7]];
+      const xEnd = view.w + h * 0.9, x0 = -h * 0.9, x1 = hoverX(c2, h);
+      const D1 = Math.max(1, xEnd - xOut), D2 = Math.max(1, x1 - x0);
+      const cruise = Math.min(1.6 * D2 / L2, 2.4 * D1 / L1); // px per unit of the card's scroll
+      const herm = (p0, v0, p1, v1, u) => {
+        const u2 = u * u, u3 = u2 * u;
+        return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (3 * u2 - 2 * u3) * p1 + (u3 - u2) * v1;
       };
-      [x, y] = curve(swoop);
-      // (behind the card until its whole body has cleared the edge once: coming round,
-      // it passes in front of it)
-      for (let n = 0; n <= 10 && !clear; n++) {
-        const q = curve(swoop * n / 10);
-        clear = q[0] - h * 0.5 > c.r || n === 10 && swoop > 0.5;
+      if (ph < TUN.off) {
+        x = herm(xOut, glide * L1, xEnd, cruise * L1, (ph - TUN.inside) / L1);
+      } else {
+        x = herm(x0, cruise * L2, x1, 0, (ph - TUN.off) / L2);
+        y = c2.cy;
       }
     }
-    // (level in flight; upright again, the jets braking, as it comes round to the portal)
-    const fly = smooth(clamp01(ph / 0.07)) * (swoop < 0 ? 1 : 1 - smooth(clamp01((swoop - 0.3) / 0.7)));
-    const inLeg = (ph < TUN.inside || exiting || (swoop >= 0 && !clear));
+    const fly = smooth(clamp01(ph / 0.07)) * (exiting ? 1 : 1 - smooth(clamp01((ph - 0.86) / 0.14)));
+    const inLeg = ph < TUN.off || exiting;
     // how far it reaches ahead (the head, the fist under its chin) and behind (the
     // feet), upright or flying level; to the right and left (front, back) as it faces
     const ahead = h * (0.3 + 0.28 * fly), behind = h * (0.3 + 0.22 * fly);
@@ -768,7 +765,7 @@ export async function start({ reduced = false } = {}) {
     // behind the card (any part of it, or all of it)
     const over = inLeg && x + front > c.l && x - back < c.r;
     const hidden = inLeg && x - back > c.l && x + front < c.r;
-    return { k, ph, swoop, x, cy: y, h, c, fly, front, back, tilt: TILT.hover + (TILT.fly - TILT.hover) * fly, yaw: YAW.hover + (YAW.fly - YAW.hover) * fly, over, hidden, inside: inLeg ? clamp01((x - c.l) / Math.max(1, c.r - c.l)) : -1 };
+    return { k, ph, x, cy: y, h, c, fly, front, back, tilt: TILT.hover + (TILT.fly - TILT.hover) * fly, yaw: YAW.hover + (YAW.fly - YAW.hover) * fly, over, hidden, inside: inLeg ? clamp01((x - c.l) / Math.max(1, c.r - c.l)) : -1 };
   }
 
   // Running state, kept here because the deck anchor reads its heading.
@@ -1418,8 +1415,8 @@ export async function start({ reduced = false } = {}) {
     const onward = ORDER[Math.floor(t)] === 'projetos' && nodes.workStage && nodes.workStage.getBoundingClientRect().top < -40;
     const onLedge = ORDER[Math.floor(t)] === 'projetos' && ledgeMode();
     if (onLedge && f > LEDGE.edge && scrub.u - Math.floor(t) >= LEDGE.edge - 1e-3) {
-      // Gravity: run off the end of the last case, it falls on the clock (faster only
-      // if the scroll runs ahead) and stays down in the next section, until the scroll
+      // Run off the end of the last case, it flies down on the clock (faster only
+      // if the scroll runs ahead) and stays in the next section, until the scroll
       // takes it back onto the card.
       const li = Math.floor(t);
       const s = (scrub.u - li - LEDGE.edge) / (1 - LEDGE.edge); // through the fall
@@ -1490,10 +1487,10 @@ export async function start({ reduced = false } = {}) {
 
   // Off the last video case: the deck holds its last card a while (app.js, under
   // html.has-ledge) and it runs on to the end of the card, the scroll pacing its run.
-  // The moment its feet leave the card there is nothing under it: arms up, legs
-  // dangling, turned to the visitor (no running on thin air), and gravity takes it. It
-  // drops into the next section on the clock, whatever the scroll does then (see
-  // stepScrub), landing on its backside like everywhere else: it never hangs in the air.
+  // The moment its feet leave the card the jets kick in: turned to the visitor (no
+  // running on thin air), it flies down into the next section on the clock, whatever
+  // the scroll does then (see stepScrub), and sets down on its feet: it never hangs in
+  // the air.
   const DECK_DWELL = 0.4; // the hold, in viewport heights (the same in app.js)
   const ledgeMode = () => !reduced && !view.dock && !!nodes.deck && nodes.projects.length > 1;
   const lastCase = () => { const n = nodes.projects[nodes.projects.length - 1]; return n.querySelector('.project-card') || n; };
@@ -1508,7 +1505,7 @@ export async function start({ reduced = false } = {}) {
     const xEdge = r.right + h * 0.08; // where its feet leave the card
     const YAW_RUN = 1.15, YAW_LOOK = 0.15; // facing its way, and (nearly) the visitor
     if (p > LEDGE.edge) {
-      // Off the edge: it drops (y goes as the square of the time, see journeyAt),
+      // Off the edge: the jets carry it (an even flight, see journeyAt),
       // carried on a little by its run, down beside the case to the next section's
       // spot (while the case is held there, just off its right side: see anchorFor).
       // Whatever of it overlaps the case is hidden behind it (drawn by maskTunnel).
@@ -1523,9 +1520,8 @@ export async function start({ reduced = false } = {}) {
       jr.w *= smooth(clamp01(s / 0.06));
       if (baseName !== 'idle') { baseName = 'idle'; if (!oneShot) fadeTo('idle', 0.12); }
       if (q < 1) {
-        setFace('surprised', 1);
-        // a look down into the drop, then at where it is going
-        [glance.x, glance.y] = q < 0.45 ? [at.x + h * 0.2, at.y + h * 3] : [at.x, at.y - h * 0.75];
+        // (it looks where it is flying to)
+        [glance.x, glance.y] = [at.x, at.y - h * 0.75];
         glance.until = performance.now() + 150;
       }
       ledge.carry = card;
@@ -1587,10 +1583,13 @@ export async function start({ reduced = false } = {}) {
   //   take-off  (off a floor) a crouch and a spring
   //   flight    an arc from A to B (setting off in the air, it drops from there; out
   //             of a portal it keeps flying on a moment first)
-  //   landing   at a portal it stays in the air, leaning in; anywhere else it lands on
-  //             its backside on the card, bounces, shakes its head and gets up
+  //   landing   at a portal it stays in the air, leaning in; anywhere else the jets
+  //             brake it and it sets down on its feet (the backside landing below is
+  //             kept for a body without the jetpack)
   // sk (start): 'stand' | 'fall' | 'hover' | 'fly'      ek (end): 'hover' | 'feet' | 'butt'
-  const endKind = (id) => (id === 'historia' && tunnelMode() ? 'hover' : id === 'inicio' ? 'feet' : 'butt');
+  // (with the jetpack it never drops onto its backside any more: it flies down and lands on
+  // its feet, the jets braking it)
+  const endKind = (id) => (id === 'historia' && tunnelMode() ? 'hover' : 'feet');
   function scrubPhases(sk, ek) {
     const T0 = sk === 'stand' ? 0.14 : 0;
     const L = ek === 'hover' ? 1 : ek === 'feet' ? 0.8 : 0.58;
@@ -1599,7 +1598,7 @@ export async function start({ reduced = false } = {}) {
   // what a journey asks of the frame: pose (and its weight over the clips), floor
   // pinning, airborne-ness, body lean, flying tilt, squash, a little bounce, the card it
   // sits on (tun: the tunnel drives it, so it may float and look around)
-  const jr = { on: false, tun: false, w: 0, pin: 0, air: 0, pitch: 0, tilt: 0, fly: 0, squash: 0, hop: 0, pose: null, floor: null, lastP: -1 };
+  const jr = { on: false, tun: false, w: 0, pin: 0, air: 0, pitch: 0, tilt: 0, roll: 0, fly: 0, squash: 0, hop: 0, jet: 0, pose: null, floor: null, lastP: -1 };
   function journeyAt(A, B, p, sk, ek, ph) {
     const { T0, L, S } = ph;
     jr.on = true;
@@ -1615,7 +1614,8 @@ export async function start({ reduced = false } = {}) {
       // (A.lag: it drops straight down at first and only then drifts over)
       const kx = A.lag ? smooth(clamp01((q - A.lag) / (1 - A.lag))) : kq;
       at.x = A.x + (B.x - A.x) * kx + (sk === 'fly' ? A.h * 1.5 * Math.sin(Math.PI * q) * (1 - q) : 0);
-      const ky = aloft ? q * q : airEnd ? kq : q;
+      // (the jets carry it: no free fall, an even flight that eases in and out)
+      const ky = aloft || airEnd ? kq : q;
       const apex = sk === 'stand' ? Math.max(A.h, B.h) * 0.32 + Math.max(0, A.y - B.y) * 0.25 : 0;
       at.y = A.y + (B.y - A.y) * ky - apex * Math.sin(Math.PI * q);
     } else { at.x = B.x; at.y = B.y; }
@@ -1654,9 +1654,10 @@ export async function start({ reduced = false } = {}) {
       w = smooth(clamp01(p / Math.max(1e-4, T0 * 0.7)));
     } else if (p < L || airEnd) {
       // springing off (or setting off in the air), arms up in flight
-      if (sk === 'fall') mixPose(P, A.hang ? POSE.hang : POSE.air, POSE.air, A.hang ? smooth(clamp01(q / 0.3)) : 0); // (off the ledge, the dangle turns to a flail)
-      else if (aloft) mixPose(P, sk === 'fly' ? POSE.fly : POSE.hover, POSE.air, smooth(clamp01(q / 0.35)));
-      else mixPose(P, POSE.crouch, POSE.air, smooth(clamp01(q / 0.2)));
+      // (on the jets: upright, legs hanging easy and arms out to steer, never a flail)
+      if (sk === 'fall') mixPose(P, A.hang ? POSE.hang : POSE.hover, POSE.hover, A.hang ? smooth(clamp01(q / 0.25)) : 1);
+      else if (aloft) mixPose(P, sk === 'fly' ? POSE.fly : POSE.hover, POSE.hover, smooth(clamp01(q / 0.35)));
+      else mixPose(P, POSE.crouch, POSE.hover, smooth(clamp01(q / 0.2)));
       // and ready for what's coming: the portal, the feet, or the backside
       const ready = smooth(clamp01((q - 0.62) / 0.38));
       if (ready > 0) mixPose(P, P, airEnd ? POSE.hover : ek === 'feet' ? POSE.crouch : POSE.seat, ready);
@@ -1672,6 +1673,11 @@ export async function start({ reduced = false } = {}) {
     jr.w = w;
     // (the card under it: the one it takes off from, then the one it lands on)
     jr.floor = !airEnd && p >= L - 0.02 && B.floor ? B.floor : sk === 'stand' && p < T0 && A.floor ? A.floor : null;
+    // the jets: lit in the crouch, a hard burn lifting off, easing to a cruise and burning
+    // hard again to brake for the landing; off once it is down (at a portal it hovers on)
+    jr.jet = p < T0 ? 0.35 * smooth(p / Math.max(1e-4, T0))
+      : p < L || airEnd ? Math.max(1 - 0.45 * smooth(clamp01(q / 0.35)), airEnd ? 0.35 + 0.4 * (1 - smooth(clamp01((q - 0.75) / 0.25))) : smooth(clamp01((q - 0.55) / 0.4)))
+      : 0;
     // the bump: once, on the way down
     if (!airEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
     jr.lastP = p;
@@ -1695,7 +1701,7 @@ export async function start({ reduced = false } = {}) {
     head.wasTun = tun.drove;
     head.x = at.x;
     head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
-    if (flyW < 0.25 || reduced || view.dock) head.to = 0;
+    if (flyW < 0.25 || reduced || view.dock || (trans && trans.kind === 'case')) head.to = 0;
     else if (Math.abs(head.vx) > at.h * 0.5) head.to = (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
     head.m += (head.to - head.m) * damp(6, dt);
     if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
@@ -1767,7 +1773,7 @@ export async function start({ reduced = false } = {}) {
     jr.tilt = st.tilt;
     jr.fly = st.fly;
     jr.air = 0.45 * st.fly; // a little buffeting in flight
-    jet.boost = st.swoop >= 0 ? 1 - 0.3 * st.swoop : 0; // (burning hard round the swoop)
+    jet.boost = st.ph > TUN.inside && st.ph < TUN.off + 0.15 ? 1 : 0; // (burning hard across the screen)
     jr.pin = jr.pitch = jr.squash = jr.hop = 0;
     jr.floor = null;
     jr.w = 1;
@@ -1783,7 +1789,7 @@ export async function start({ reduced = false } = {}) {
   // it is inside, and motes swirl into the way in and burst out of the way out.
   function portalFx(st) {
     tunnels.forEach((T, j) => {
-      const nearIn = (j === st.k && st.ph > 0.005 && st.ph < TUN.dive + 0.05) || (j === st.k + 1 && st.ph > 0.86);
+      const nearIn = (j === st.k && st.ph > 0.005 && st.ph < TUN.dive + 0.05) || (j === st.k + 1 && st.ph > 0.84);
       const nearOut = j === st.k && st.ph > TUN.inside - 0.08 && st.ph < TUN.inside + 0.12;
       if (nearIn !== T.near[0]) { T.near[0] = nearIn; T.pin.classList.toggle('is-near', nearIn); }
       if (nearOut !== T.near[1]) { T.near[1] = nearOut; T.pout.classList.toggle('is-near', nearOut); }
@@ -1947,12 +1953,12 @@ export async function start({ reduced = false } = {}) {
   }
 
   // The jetpack fires through the time tunnels: a low flame hovering at a portal, full
-  // flight level through the cards, and a hard burn swooping round to the next portal.
+  // flight level through the cards, and a hard burn across the screen to the next portal.
   const jv = new THREE.Vector3(), jd = new THREE.Vector3();
   function stepJet(dt) {
     if (!jet.group) return;
     const vis = clamp01(1 - shared.uDissolve.value * 2.5);
-    let want = reduced || view.dock || !(jr.on && jr.tun) ? 0 : Math.max(0.35 + 0.65 * jr.fly, jet.boost) * vis;
+    let want = reduced || view.dock || !jr.on ? 0 : (jr.tun ? Math.max(0.35 + 0.65 * jr.fly, jet.boost) : jr.jet) * vis;
     if (dbg.jet != null) want = dbg.jet; // (QA: pin the thrust)
     jet.thrust += (want - jet.thrust) * damp(want > jet.thrust ? 8 : 4, dt);
     const T = jet.thrust;
@@ -2493,22 +2499,21 @@ export async function start({ reduced = false } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Opening a case: straight into one big jump, and the card gives way under the
-  // landing. app.js opens the case from there (caseJump's promise resolves true) and
-  // the poster grows into the video in one even motion. Closed again, it springs back
-  // out of the card it fell into.
+  // Opening a case: a rocket launch. The jetpack sputters into life on the card (the
+  // card bowing under the thrust), it blasts off and goes out of control, wobbling,
+  // spinning and looping over the deck, then nose-dives head first into the poster and
+  // vanishes into the video. app.js opens the case from there (caseJump's promise
+  // resolves true) and the poster grows into the video in one even motion. Closed
+  // again, it springs back out of the card it flew into.
   // ---------------------------------------------------------------------------
-  // The show as a timeline, in seconds: a quick wind-up (the card bowing under it), the
-  // big jump (height in body heights: up and out of the top of the screen), and the
-  // landing that sends the card down. ('ground' and 'hop', a springy crouch and a small
-  // hop, are there for a longer show.)
+  // The show as a timeline, in seconds: the ignition, the launch (its height in body
+  // heights) and the dive into the poster.
   const STUNT = (() => {
     const segs = [];
     let t = 0;
     const add = (kind, d, a) => { segs.push({ kind, t0: t, d, a }); t += d; };
-    add('wind', 0.16, 1); add('jump', 0.46, 1.3);
-    add('slam', 0.1, 1);
-    return { segs, end: t, dip: 0.012, give: 0.07 }; // the card: a dip under each crouch, then how far it falls (card heights)
+    add('ignite', 0.42, 1); add('launch', 0.95, 2.1); add('dive', 0.42, 1);
+    return { segs, end: t, dip: 0.012 }; // the card: how far it bows under the thrust (card heights)
   })();
   // The card's give, on its own translate (it composes with the deck's transform): a
   // stiff, bouncy spring under the hops, or driven straight as it falls away.
@@ -2561,6 +2566,7 @@ export async function start({ reduced = false } = {}) {
     const S = trans;
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
+    popMask = null;
     sink.drive = false;
     sink.target = 0;
     seatLift = 0;
@@ -2596,70 +2602,97 @@ export async function start({ reduced = false } = {}) {
     const u = clamp01((t - seg.t0) / seg.d);
     const cardH = S.card.offsetHeight;
     const P = jr.pose || (jr.pose = newPose());
-    let lift = 0, squash = 0;
+    const m = S.media.getBoundingClientRect();
+    const [mx, my] = clientToCanvas(m.left + m.width / 2, m.top + m.height / 2);
+    const h = F.h;
+    // the launch, as a function of its own progress (x, feet y, roll, tilt): up off the
+    // card in a wobbling corkscrew, a loop-the-loop at the top
+    // (as high as the screen allows above the deck, swinging wide to the sides instead)
+    const up = clamp((F.y - barBottom - h * 1.15) / h, 0.5, STUNT.segs[1].a);
+    const wide = 0.6 + (STUNT.segs[1].a - up) * 0.7;
+    const launchAt = (v) => {
+      const k = smooth(v);
+      return [
+        F.x + h * (wide * Math.sin(TAU * 1.25 * v) * smooth(clamp01(v / 0.25)) + 0.3 * k),
+        F.y - h * (up * (1 - (1 - v) * (1 - v)) + 0.12 * Math.sin(TAU * 2.3 * v)),
+        0.55 * Math.sin(TAU * 2.1 * v + 0.4) * smooth(clamp01(v / 0.2)),
+        TAU * smooth(clamp01((v - 0.45) / 0.4)) + 0.35 * Math.sin(TAU * 1.7 * v),
+      ];
+    };
+    let x = F.x, y = F.y, size = h, roll = 0, tiltA = 0, thrust = 0, inCard = false;
     sink.drive = false;
     sink.target = 0;
+    jr.squash = 0;
     switch (seg.kind) {
-      case 'ground': { // landing from one hop into the next: crouch and spring, the card dips
-        const sq = seg.a * Math.sin(Math.PI * u);
+      case 'ignite': { // crouched, the jets coughing into life, the card bowing under the thrust
+        const sq = smooth(clamp01(u / 0.5));
         mixPose(P, POSE.stand, POSE.squat, sq);
-        squash = 0.07 * sq;
-        sink.target = STUNT.dip * cardH * sq;
+        jr.squash = 0.08 * sq;
+        thrust = (0.25 + 0.6 * u) * (u < 0.7 ? 0.55 + 0.45 * Math.abs(Math.sin(time * 31) * Math.sin(time * 17)) : 1);
+        sink.target = STUNT.dip * 2.4 * cardH * sq;
+        x = F.x + h * 0.012 * Math.sin(time * 70) * u; // shaking on the pad
+        if (Math.random() < u * 0.9) { // smoke rolling off the card
+          root.updateMatrixWorld(true);
+          const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
+          const H = h * view.wpp, a = Math.random() * TAU, sp = H * (0.3 + Math.random() * 0.5);
+          spawn(c.x, c.y + H * 0.03, c.z, Math.cos(a) * sp, H * (0.04 + Math.random() * 0.1), Math.sin(a) * sp * 0.4, 0.6 + Math.random() * 0.6, 0.45);
+        }
         break;
       }
-      case 'hop':
-        lift = seg.a * 4 * u * (1 - u);
-        mixPose(P, POSE.stand, POSE.hopAir, Math.sin(Math.PI * u));
-        squash = -0.05 * Math.sin(Math.PI * u);
-        break;
-      case 'wind': { // down deep, arms swung back, the card bowing under it; then up
-        const sq = smooth(clamp01(u / 0.6)) * (1 - smooth(clamp01((u - 0.82) / 0.18)));
-        mixPose(P, POSE.stand, POSE.wind, sq);
-        squash = 0.1 * sq;
-        sink.target = STUNT.dip * 2.2 * cardH * sq;
+      case 'launch': { // blasted off and out of control
+        if (!S.hit) { S.hit = true; touchdown('feet'); } // (the blast kicks up the dust)
+        [x, y, roll, tiltA] = launchAt(u);
+        mixPose(P, POSE.hover, POSE.air, 0.5 + 0.5 * Math.sin(TAU * 1.9 * u));
+        thrust = 1;
+        setFace('surprised', 1);
+        jr.squash = -0.08 * Math.sin(Math.PI * clamp01(u / 0.15));
         break;
       }
-      case 'jump': // knees up at the top, legs stamped down for the landing
-        lift = seg.a * 4 * u * (1 - u);
-        if (u < 0.5) mixPose(P, POSE.stand, POSE.tuck, smooth(clamp01(u / 0.35)));
-        else mixPose(P, POSE.tuck, POSE.stomp, smooth(clamp01((u - 0.5) / 0.3)));
-        squash = -0.1 * Math.sin(Math.PI * clamp01(u / 0.25)) - 0.05 * smooth(clamp01((u - 0.85) / 0.15));
-        break;
-      default: // 'slam': it lands hard and the card falls away under it, taking it along
-        if (!S.hit) { S.hit = true; S.giveFrom = sink.px; touchdown('feet'); }
-        mixPose(P, POSE.stomp, POSE.squat, smooth(clamp01(u / 0.3)));
-        squash = 0.24 * (1 - smooth(u));
-        sink.drive = true;
-        sink.px = S.giveFrom + (STUNT.give * cardH - S.giveFrom) * u * u;
+      default: { // 'dive': head first into the poster, shrinking into the video
+        const [x0, y0, r0, t0] = launchAt(1);
+        const e = u * u; // faster and faster
+        size = h * (1 - 0.5 * e);
+        x = x0 + (mx - x0) * e;
+        y = y0 + (my + size * BODY_C - y0) * e;
+        roll = r0 * (1 - smooth(u));
+        tiltA = t0 + (Math.PI * 0.92) * smooth(clamp01(u / 0.6)); // over onto its head
+        mixPose(P, POSE.air, POSE.fly, smooth(clamp01(u / 0.4)));
+        thrust = 1;
+        inCard = true;
+      }
     }
     holdCard(S.card); // (the spring lets go of a card at rest: in the air, say)
     stepSink(dt);
-    // where: on the card (riding its give), lifted off it by the hops
-    at.x = F.x;
-    at.y = F.y + sink.px - lift * F.h;
-    at.h = F.h;
+    // flying into the card: whatever of it is inside the card is hidden (maskTunnel)
+    if (inCard || S.opened) {
+      const r = S.card.getBoundingClientRect();
+      popMask = { l: r.left, t: r.top, w: r.width, h: r.height };
+    }
+    at.x = x;
+    at.y = y + (seg.kind === 'ignite' ? sink.px : 0);
+    at.h = size;
     at.yaw += wrapPi(-0.12 - at.yaw) * damp(5, dt);
     snapAt();
     vel.x = vel.y = 0;
     jr.on = true;
     jr.w = smooth(clamp01(S.t / 0.12)); // (the pose eases in over the clips)
-    jr.pin = 1;
-    jr.air = 0;
-    jr.tilt = 0;
+    jr.pin = seg.kind === 'ignite' ? 1 : 0;
+    jr.air = seg.kind === 'launch' ? 1 : 0;
+    jr.tilt = tiltA;
+    jr.roll = roll;
     jr.fly = 0;
     jr.pitch = 0;
-    jr.squash = squash;
     jr.hop = 0;
-    jr.floor = F.floor;
-    seatLift = lift;
-    // it eyes the poster under its feet, until the big jump
-    if (seg.kind !== 'jump' && seg.kind !== 'slam') {
-      const m = S.media.getBoundingClientRect();
-      [glance.x, glance.y] = clientToCanvas(m.left + m.width / 2, m.top + m.height / 2);
+    jr.jet = thrust;
+    jr.floor = seg.kind === 'ignite' ? F.floor : null;
+    seatLift = seg.kind === 'ignite' ? 0 : Math.max(0, (F.y - y) / h);
+    // it eyes the poster: on the pad, and on the way down into it
+    if (seg.kind !== 'launch') {
+      [glance.x, glance.y] = [mx, my];
       glance.until = performance.now() + 150;
     }
     // down: the case opens from here
-    if (!S.opened && S.t >= STUNT.end) {
+    if (!S.opened && S.t >= STUNT.end) { // (inside the video now)
       S.opened = true;
       S.openAt = S.t;
       const f = S.done;
@@ -2943,6 +2976,8 @@ export async function start({ reduced = false } = {}) {
     shared.uTime.value = time;
     const wasOn = jr.on;
     jr.on = false; // a journey (or the tunnels) claims the frame again below
+    jr.jet = 0;
+    jr.roll = 0;
     jr.tun = false;
     tun.drove = false;
     if (!ledge.drove) ledge.lastP = -1;
@@ -3046,7 +3081,8 @@ export async function start({ reduced = false } = {}) {
     pivot.rotation.z = fw * (0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4))
       + calm * (floating ? driftX : onFloor ? 0 : driftX * 0.5)
       + air * (0.07 * Math.sin(time * 2.3) + 0.03 * Math.sin(time * 5.1 + 0.6))
-      + tug.x * 0.25 * grip.w; // leans back with the jolt on the card
+      + tug.x * 0.25 * grip.w // leans back with the jolt on the card
+      + (jr.on ? jr.roll : 0); // (spinning out of control, launching into a case)
     // (on the cards the scroll moves the deck, not the guide: no lean into the current)
     pivot.rotation.x = calm * (onFloor ? 0 : lean * 0.3 + driftY) + fw * 0.03 * Math.sin(time * 0.53 + 1.7)
       + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : trans && trans.kind === 'enter' ? trans.pitch : 0);
