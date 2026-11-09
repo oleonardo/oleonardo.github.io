@@ -247,9 +247,13 @@ export async function start({ reduced = false } = {}) {
   // Flying level, the body turns about its middle (as a fraction of its height), so a
   // pitch doesn't swing it round its feet.
   const BODY_C = 0.46;
-  function setTilt(a) {
-    tilt.rotation.x = a;
-    tilt.position.set(0, BODY_C * modelH * (1 - Math.cos(a)), -BODY_C * modelH * Math.sin(a));
+  // (spin: about its own long axis, head to feet, applied first; bank: sideways. Both 0
+  // outside the case launch.)
+  const vTilt = new THREE.Vector3();
+  function setTilt(a, spin = 0, bank = 0) {
+    tilt.rotation.set(a, spin, bank);
+    vTilt.set(0, BODY_C * modelH, 0).applyEuler(tilt.rotation);
+    tilt.position.set(-vTilt.x, BODY_C * modelH - vTilt.y, -vTilt.z);
   }
 
   // Rig for the poses the clips don't have: the take-off, the fall, hovering and flying
@@ -836,7 +840,7 @@ export async function start({ reduced = false } = {}) {
     pMat.uniforms.uPx.value = view.dpr;
     goal = anchorFor(section);
     if (view.dock && trans && (trans.kind === 'hop' || trans.kind === 'enter')) trans = null;
-    if (view.dock) endShow(true);
+    if (view.dock || (trans && trans.kind === 'case' && !trans.opened)) endShow(true); // (a show drawn for the old layout: the case opens now)
     if (!trans) snapTo(goal);
     dirty = true;
   }
@@ -1598,7 +1602,7 @@ export async function start({ reduced = false } = {}) {
   // what a journey asks of the frame: pose (and its weight over the clips), floor
   // pinning, airborne-ness, body lean, flying tilt, squash, a little bounce, the card it
   // sits on (tun: the tunnel drives it, so it may float and look around)
-  const jr = { on: false, tun: false, w: 0, pin: 0, air: 0, pitch: 0, tilt: 0, roll: 0, fly: 0, squash: 0, hop: 0, jet: 0, pose: null, floor: null, lastP: -1 };
+  const jr = { on: false, tun: false, w: 0, pin: 0, air: 0, pitch: 0, tilt: 0, spin: 0, bank: 0, fly: 0, squash: 0, hop: 0, jet: 0, pose: null, floor: null, lastP: -1 };
   function journeyAt(A, B, p, sk, ek, ph) {
     const { T0, L, S } = ph;
     jr.on = true;
@@ -1878,8 +1882,9 @@ export async function start({ reduced = false } = {}) {
       if (!overlaps(box) || view.dock || reduced || (trans && trans.kind !== 'hop') || section !== 'contato') ledge.carry = null;
       else c = box;
     }
-    shared.uClipAll.value = c ? 1 : 0;
-    maskHides = !!c && at.x > c.l && at.x < c.l + c.w && cy > c.t && cy < c.t + c.h;
+    shared.uClipAll.value = c ? (c.window ? 2 : 1) : 0;
+    const mid = !!c && at.x > c.l && at.x < c.l + c.w && cy > c.t && cy < c.t + c.h;
+    maskHides = !!c && (c.window ? !mid : mid);
     if (!c) return;
     const [ox, oy] = clientToCanvas(c.l, c.t);
     const pr = renderer.getPixelRatio();
@@ -1888,12 +1893,14 @@ export async function start({ reduced = false } = {}) {
 
   // A pose change that can't be continuous (a journey taking over mid-way, a new
   // target): blend from where everything was over a quarter of a second.
-  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
+  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, spin: 0, bank: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
   function snapRig() {
     snap.t = 0;
     snap.k = 0;
     Object.assign(snap.at, { x: at.x, y: at.y, h: at.h, yaw: at.yaw });
     snap.tilt = tilt.rotation.x;
+    snap.spin = tilt.rotation.y;
+    snap.bank = tilt.rotation.z;
     snap.pp.copy(pivot.position);
     snap.pr.set(pivot.rotation.x, pivot.rotation.y, pivot.rotation.z);
     snap.ps.copy(pivot.scale);
@@ -1909,7 +1916,7 @@ export async function start({ reduced = false } = {}) {
       snap.pr.y + wrapPi(pivot.rotation.y - snap.pr.y) * k,
       snap.pr.z + (pivot.rotation.z - snap.pr.z) * k);
     pivot.scale.lerpVectors(snap.ps, pivot.scale, k);
-    setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k);
+    setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k, snap.spin + (tilt.rotation.y - snap.spin) * k, snap.bank + (tilt.rotation.z - snap.bank) * k);
     rigBones.forEach((b, i) => {
       b.quaternion.copy(qSnap.copy(snap.q[i]).slerp(b.quaternion, k));
       b.position.lerpVectors(snap.p[i], b.position, k);
@@ -1970,7 +1977,7 @@ export async function start({ reduced = false } = {}) {
       if (on) f.scale.set(0.7 + 0.3 * T, T * flick * (n & 1 ? 1.08 : 0.94), 0.7 + 0.3 * T);
     });
     // (where a puff born behind a card is hidden: that card, wherever it has moved to)
-    const masked = shared.uClipAll.value > 0.5;
+    const masked = shared.uClipAll.value > 0.5 && shared.uClipAll.value < 1.5; // (behind a card; through a window the exhaust stays as it is)
     if (masked) jMat.uniforms.uRect.value.copy(shared.uAllRect.value);
     else if (tun.active && tun.maskK >= 0 && jp.live) {
       const c = cardBox(tun.maskK);
@@ -2499,22 +2506,72 @@ export async function start({ reduced = false } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Opening a case: a rocket launch. The jetpack sputters into life on the card (the
-  // card bowing under the thrust), it blasts off and goes out of control, wobbling,
-  // spinning and looping over the deck, then nose-dives head first into the poster and
-  // vanishes into the video. app.js opens the case from there (caseJump's promise
-  // resolves true) and the poster grows into the video in one even motion. Closed
-  // again, it springs back out of the card it flew into.
+  // Opening a case: a rocket launch, shot like a film. The jetpack sputters into life on
+  // the card (the card bowing under the thrust) and it lifts off, up and toward us,
+  // turning its back to us; then it flies out to the side and on, away from us, round in
+  // front of the card and into the poster, on a path drawn afresh each time (which side,
+  // how wide, how high and how near, whether it crosses in front of the card first). The
+  // path is a curve in depth as well as across, and it faces the way it flies (its back
+  // more or less to us throughout), leaning and banking with the turns. The moment it goes
+  // through the poster (it is seen through it from then on, like through a window) light
+  // bursts out of it, and a beat later, small and far inside, the case opens: app.js
+  // grows the poster into the video (caseJump's promise resolves true). Closed again, it
+  // springs back out of the card it flew into.
   // ---------------------------------------------------------------------------
-  // The show as a timeline, in seconds: the ignition, the launch (its height in body
-  // heights) and the dive into the poster.
+  // The show as a timeline, in seconds: the ignition, the flight round to the front of
+  // the card, and on through the poster into the picture.
+  const FLY = { t0: 0.42, cross: 1.55, open: 0.3 }; // lift-off; through the poster (seconds after lift-off); the case opens, after that
   const STUNT = (() => {
     const segs = [];
     let t = 0;
-    const add = (kind, d, a) => { segs.push({ kind, t0: t, d, a }); t += d; };
-    add('ignite', 0.42, 1); add('launch', 0.95, 2.1); add('dive', 0.42, 1);
-    return { segs, end: t, dip: 0.012 }; // the card: how far it bows under the thrust (card heights)
+    const add = (kind, d) => { segs.push({ kind, t0: t, d }); t += d; };
+    add('ignite', FLY.t0); add('fly', FLY.cross); add('plunge', 0.55);
+    return { segs, end: t, dip: 0.012, far: 0.28 }; // the card's bow (card heights); its size once gone (body heights)
   })();
+  // A flight through timed keys, [seconds, x, y, size] in screen terms, as three curves
+  // in the world: X and Y, its offset from the poster's middle at the card's distance,
+  // and q, the log of its distance (0 at the card; its size is e^-q). Each is a monotone
+  // cubic (Fritsch-Carlson): smooth, never overshooting a key (so it stays where the keys
+  // keep it, and only ever goes one way in depth between them), from rest at the first.
+  function flightPath(keys, mx, my) {
+    const T = keys.map((k) => k[0]), n = T.length;
+    const ch = [keys.map((k) => (k[1] - mx) / k[3]), keys.map((k) => (k[2] - my) / k[3]), keys.map((k) => -Math.log(k[3]))];
+    const tan = ch.map((V) => {
+      const d = [];
+      for (let i = 0; i < n - 1; i++) d.push((V[i + 1] - V[i]) / (T[i + 1] - T[i]));
+      const M = new Array(n).fill(0);
+      for (let i = 1; i < n - 1; i++) {
+        if (d[i - 1] * d[i] <= 0) continue; // (a turning point: flat there)
+        const cr = (V[i + 1] - V[i - 1]) / (T[i + 1] - T[i - 1]);
+        M[i] = Math.sign(cr) * Math.min(Math.abs(cr), 3 * Math.abs(d[i - 1]), 3 * Math.abs(d[i]));
+      }
+      M[n - 1] = d[n - 2];
+      return M;
+    });
+    return { T, ch, tan, end: T[n - 1] };
+  }
+  function pathAt(P, t, out) {
+    const T = P.T;
+    t = clamp(t, 0, P.end);
+    let i = 0;
+    while (i < T.length - 2 && t > T[i + 1]) i++;
+    const d = T[i + 1] - T[i], w = (t - T[i]) / d, w2 = w * w, w3 = w2 * w;
+    const a = 2 * w3 - 3 * w2 + 1, b = (w3 - 2 * w2 + w) * d, c = 3 * w2 - 2 * w3, e = (w3 - w2) * d;
+    for (let k = 0; k < 3; k++) out[k] = a * P.ch[k][i] + b * P.tan[k][i] + c * P.ch[k][i + 1] + e * P.tan[k][i + 1];
+    return out;
+  }
+  // its velocity in the world, in pixels a second: across, down, and away from us (D: how
+  // far the camera is from the card)
+  const fP = [0, 0, 0], fA = [0, 0, 0], fB = [0, 0, 0], fV = [0, 0, 0];
+  function flightVel(P, t, D, out) {
+    const e = 0.008;
+    pathAt(P, t - e, fA);
+    pathAt(P, t + e, fB);
+    out[0] = (fB[0] - fA[0]) / (2 * e);
+    out[1] = (fB[1] - fA[1]) / (2 * e);
+    out[2] = (D * Math.exp((fA[2] + fB[2]) / 2) * (fB[2] - fA[2])) / (2 * e);
+    return out;
+  }
   // The card's give, on its own translate (it composes with the deck's transform): a
   // stiff, bouncy spring under the hops, or driven straight as it falls away.
   const sink = { card: null, px: 0, v: 0, target: 0, drive: false };
@@ -2548,7 +2605,7 @@ export async function start({ reduced = false } = {}) {
     // a hello or a click reaction gives way to the show
     if (oneShot) { oneShot = false; fadeTo(baseName, 0.2); }
     snapRig();
-    trans = { kind: 'case', t: 0, node, card, media: card.querySelector('.project-media') || card, sy: window.scrollY, hit: false, giveFrom: 0, opened: false, done: null };
+    trans = { kind: 'case', t: 0, node, card, media: card.querySelector('.project-media') || card, sy: window.scrollY, hit: false, giveFrom: 0, opened: false, done: null, rnd: Array.from({ length: 8 }, Math.random) };
     markInput(); // full frame rate for the show
     return new Promise((res) => { trans.done = res; });
   }
@@ -2564,6 +2621,7 @@ export async function start({ reduced = false } = {}) {
   function endStunt(open) {
     if (!trans || trans.kind !== 'case') return;
     const S = trans;
+    at.yaw = -0.12 + wrapPi(at.yaw + 0.12); // (it flies off facing ±π: unwound, or the springs after it settle a whole turn off)
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
     popMask = null;
@@ -2585,9 +2643,17 @@ export async function start({ reduced = false } = {}) {
     const open = doc.classList.contains('is-detail');
     // The case is open (the stage is out of sight: the card can jump back), or it
     // didn't open after all: the show is over.
-    if (S.opened && (open || S.t > S.openAt + 1.2)) {
+    if (S.opened && ((open && S.t >= STUNT.end) || S.t > S.openAt + 1.2)) {
       if (open) { sink.px = sink.v = 0; popFrom = S.node; }
       endStunt(false);
+      return;
+    }
+    // (closed again before the show was over: it springs straight back out of the card)
+    if (open) S.seen = true;
+    else if (S.seen) {
+      sink.px = sink.v = 0;
+      endStunt(false);
+      startPop(S.node);
       return;
     }
     // Anything else first (a scroll, the deck moving on, another section) ends it early:
@@ -2602,97 +2668,139 @@ export async function start({ reduced = false } = {}) {
     const u = clamp01((t - seg.t0) / seg.d);
     const cardH = S.card.offsetHeight;
     const P = jr.pose || (jr.pose = newPose());
-    const m = S.media.getBoundingClientRect();
+    // (the poster as it was at the start: the card bows under the thrust, and opening,
+    // the page moves under the case)
+    const m = S.m0 || (S.m0 = S.media.getBoundingClientRect());
     const [mx, my] = clientToCanvas(m.left + m.width / 2, m.top + m.height / 2);
-    const h = F.h;
-    // the launch, as a function of its own progress (x, feet y, roll, tilt): up off the
-    // card in a wobbling corkscrew, a loop-the-loop at the top
-    // (as high as the screen allows above the deck, swinging wide to the sides instead)
-    const up = clamp((F.y - barBottom - h * 1.15) / h, 0.5, STUNT.segs[1].a);
-    const wide = 0.6 + (STUNT.segs[1].a - up) * 0.7;
-    const launchAt = (v) => {
-      const k = smooth(v);
-      return [
-        F.x + h * (wide * Math.sin(TAU * 1.25 * v) * smooth(clamp01(v / 0.25)) + 0.3 * k),
-        F.y - h * (up * (1 - (1 - v) * (1 - v)) + 0.12 * Math.sin(TAU * 2.3 * v)),
-        0.55 * Math.sin(TAU * 2.1 * v + 0.4) * smooth(clamp01(v / 0.2)),
-        TAU * smooth(clamp01((v - 0.45) / 0.4)) + 0.35 * Math.sin(TAU * 1.7 * v),
-      ];
-    };
-    let x = F.x, y = F.y, size = h, roll = 0, tiltA = 0, thrust = 0, inCard = false;
+    const h = S.h0 || (S.h0 = F.h);
+    // The flight, drawn from this show's dice the first time round and kept on the
+    // screen: off the pad, up and toward us, turning its back on the way; out to one side
+    // and on, further from us all the time; round in front of the card (or across it
+    // first); and on into the poster, through it at FLY.cross and away into the picture.
+    // Keys are [seconds from lift-off, x, y, size] (its middle; the size is one over its
+    // distance), joined in depth as well as across (flightPath).
+    if (!S.path) {
+      const R = S.rnd;
+      const room = (d) => (d < 0 ? mx : view.w - mx) / h;
+      const dir = room(1) > 1.6 && room(-1) > 1.6 ? (R[0] < 0.5 ? -1 : 1) : room(1) > room(-1) ? 1 : -1;
+      // (kept below the top bar, all but the lift-off: that rises from the card even
+      // where there is little room above it, over the bar if need be, its head on screen)
+      const fit = (x, y, sz, over = false) => [clamp(x, sz * h * 0.45 + 12, view.w - sz * h * 0.45 - 12), clamp(y, over ? sz * h * (1 - BODY_C) + 6 : barBottom + sz * h * 0.6, view.h - sz * h * 0.55)];
+      const s1 = 1.3 + R[3] * 0.15, s2 = s1 - 0.06 - R[6] * 0.06;
+      const c0 = F.y - h * BODY_C;
+      const A = fit(F.x + dir * h * 0.2, c0 - h * 0.45, s1, true);
+      const B = fit(mx + dir * h * Math.min(1.4 + R[1] * 1.0, room(dir) - 0.7), c0 + h * (R[2] * 0.6 - 0.1), s2);
+      const across = R[4] < 0.4; // (round in front of the card to its other side first)
+      const C = fit(mx + dir * h * (across ? -(0.6 + R[5] * 0.6) : 0.45 + R[5] * 0.5), my + h * (0.15 + R[7] * 0.5), 1.18);
+      const X = FLY.cross;
+      S.dir = dir;
+      S.path = flightPath([
+        [0, F.x, c0, 1],
+        [0.38, A[0], A[1], s1],
+        [0.8, B[0], B[1], s2],
+        [1.18, C[0], C[1], 1.18],
+        [X - 0.13, mx + (C[0] - mx) * 0.3, my + h * 0.08, 1.07],
+        [X, mx, my, 1],
+        [X + 0.25, mx, my, 0.55],
+        [X + 0.55, mx, my, STUNT.far],
+      ], mx, my);
+    }
+    let cx = F.x, cy = F.y - h * BODY_C, size = h, yaw = -0.12, tiltA = 0, spin = 0, bank = 0, thrust = 0, inside = false;
     sink.drive = false;
     sink.target = 0;
     jr.squash = 0;
-    switch (seg.kind) {
-      case 'ignite': { // crouched, the jets coughing into life, the card bowing under the thrust
-        const sq = smooth(clamp01(u / 0.5));
-        mixPose(P, POSE.stand, POSE.squat, sq);
-        jr.squash = 0.08 * sq;
-        thrust = (0.25 + 0.6 * u) * (u < 0.7 ? 0.55 + 0.45 * Math.abs(Math.sin(time * 31) * Math.sin(time * 17)) : 1);
-        sink.target = STUNT.dip * 2.4 * cardH * sq;
-        x = F.x + h * 0.012 * Math.sin(time * 70) * u; // shaking on the pad
-        if (Math.random() < u * 0.9) { // smoke rolling off the card
-          root.updateMatrixWorld(true);
-          const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
-          const H = h * view.wpp, a = Math.random() * TAU, sp = H * (0.3 + Math.random() * 0.5);
-          spawn(c.x, c.y + H * 0.03, c.z, Math.cos(a) * sp, H * (0.04 + Math.random() * 0.1), Math.sin(a) * sp * 0.4, 0.6 + Math.random() * 0.6, 0.45);
-        }
-        break;
+    if (seg.kind === 'ignite') { // crouched, the jets coughing into life, the card bowing under the thrust
+      const sq = smooth(clamp01(u / 0.5));
+      mixPose(P, POSE.stand, POSE.squat, sq);
+      jr.squash = 0.08 * sq;
+      thrust = (0.25 + 0.6 * u) * (u < 0.7 ? 0.55 + 0.45 * Math.abs(Math.sin(time * 31) * Math.sin(time * 17)) : 1);
+      sink.target = STUNT.dip * 2.4 * cardH * sq;
+      cx = F.x + h * 0.012 * Math.sin(time * 70) * u; // shaking on the pad
+      cy += sink.px;
+      if (Math.random() < u * 0.9) { // smoke rolling off the card
+        root.updateMatrixWorld(true);
+        const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
+        const H = h * view.wpp, a = Math.random() * TAU, sp = H * (0.3 + Math.random() * 0.5);
+        spawn(c.x, c.y + H * 0.03, c.z, Math.cos(a) * sp, H * (0.04 + Math.random() * 0.1), Math.sin(a) * sp * 0.4, 0.6 + Math.random() * 0.6, 0.45);
       }
-      case 'launch': { // blasted off and out of control
-        if (!S.hit) { S.hit = true; touchdown('feet'); } // (the blast kicks up the dust)
-        [x, y, roll, tiltA] = launchAt(u);
-        mixPose(P, POSE.hover, POSE.air, 0.5 + 0.5 * Math.sin(TAU * 1.9 * u));
-        thrust = 1;
-        setFace('surprised', 1);
-        jr.squash = -0.08 * Math.sin(Math.PI * clamp01(u / 0.15));
-        break;
+    } else { // in flight
+      if (!S.hit) { S.hit = true; touchdown('feet'); } // (the blast kicks up the dust)
+      const f = t - FLY.t0;
+      const p = pathAt(S.path, f, fP);
+      const s = Math.exp(-p[2]);
+      cx = mx + p[0] * s;
+      cy = my + p[1] * s;
+      size = h * s;
+      // It faces the way it flies, but always with its back more or less to us; it leans
+      // into the flight (more in a dive, less climbing) and banks into its turns. Lifting
+      // off it turns from us to that, upright.
+      // (both through a stiff spring, so that a sharp turn on the curve is a swing)
+      const D = view.h / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2))); // (how far the camera is, in pixels at the card)
+      const v = flightVel(S.path, f, D, fV);
+      const lift = smooth(clamp01(f / 0.4));
+      const off = Math.atan2(-v[0], Math.max(v[2], Math.abs(v[0])) + 1e-3); // (from straight away from us: 45° at most)
+      const aim = -0.12 + (S.dir * Math.PI + off + 0.12) * lift;
+      const elev = Math.atan2(-v[1], Math.hypot(v[0], v[2]));
+      const dive = 0.35 * smooth(clamp01((f - FLY.cross + 0.2) / 0.5));
+      const pitch = 0.1 + (clamp(0.8 - elev * 0.55, 0.3, 1.2) + dive - 0.1) * lift;
+      const A = S.aim || (S.aim = { yaw: -0.12 + wrapPi(at.yaw + 0.12), yv: 0, tilt: 0.1, tv: 0 }); // (whatever turns it has made before)
+      for (let n = dt; n > 1e-6; n -= 1 / 120) {
+        const st = Math.min(n, 1 / 120);
+        A.yv += (144 * (aim - A.yaw) - 24 * A.yv) * st;
+        A.yaw += A.yv * st;
+        A.tv += (100 * (pitch - A.tilt) - 20 * A.tv) * st;
+        A.tilt += A.tv * st;
       }
-      default: { // 'dive': head first into the poster, shrinking into the video
-        const [x0, y0, r0, t0] = launchAt(1);
-        const e = u * u; // faster and faster
-        size = h * (1 - 0.5 * e);
-        x = x0 + (mx - x0) * e;
-        y = y0 + (my + size * BODY_C - y0) * e;
-        roll = r0 * (1 - smooth(u));
-        tiltA = t0 + (Math.PI * 0.92) * smooth(clamp01(u / 0.6)); // over onto its head
-        mixPose(P, POSE.air, POSE.fly, smooth(clamp01(u / 0.4)));
-        thrust = 1;
-        inCard = true;
-      }
+      yaw = A.yaw;
+      tiltA = A.tilt;
+      const roll = clamp(-A.yv * 0.2, -0.45, 0.45); // (into the turn: a roll about its length when it flies flat, a lean when upright)
+      spin = roll * Math.sin(tiltA);
+      bank = roll * Math.cos(tiltA);
+      mixPose(P, POSE.hover, POSE.fly, smooth(clamp01((f - 0.12) / 0.4)));
+      thrust = 1 + 0.3 * smooth(clamp01((f - FLY.cross + 0.15) / 0.3));
+      jr.squash = -0.08 * Math.sin(Math.PI * clamp01(f / 0.18));
+      inside = s < 1; // (past the card: in the picture)
     }
     holdCard(S.card); // (the spring lets go of a card at rest: in the air, say)
     stepSink(dt);
-    // flying into the card: whatever of it is inside the card is hidden (maskTunnel)
-    if (inCard || S.opened) {
-      const r = S.card.getBoundingClientRect();
-      popMask = { l: r.left, t: r.top, w: r.width, h: r.height };
+    // In the picture: only what is inside the poster shows, as through a window; going
+    // through, light bursts out of it and the case opens, in the same beat.
+    if (inside) popMask = { l: m.left, t: m.top, w: m.width, h: m.height, window: true };
+    if (inside && !S.burst) {
+      S.burst = true;
+      const o = toWorld(mx, my, 0, new THREE.Vector3());
+      const H = h * view.wpp, R = Math.min(m.width, m.height) * 0.5 * view.wpp;
+      for (let n = 0; n < 70; n++) {
+        const a = (n / 70) * TAU + Math.random() * 0.2, sp = H * (0.9 + Math.random() * 0.9);
+        spawn(o.x + Math.cos(a) * R * 0.35, o.y + Math.sin(a) * R * 0.35, o.z, Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.3) * H * 0.4, 0.45 + Math.random() * 0.4, 0.7);
+      }
+      setFace('surprised', 0.8);
     }
-    at.x = x;
-    at.y = y + (seg.kind === 'ignite' ? sink.px : 0);
+    at.x = cx;
+    at.y = cy + size * BODY_C; // (its feet: what the root is placed by)
     at.h = size;
-    at.yaw += wrapPi(-0.12 - at.yaw) * damp(5, dt);
+    at.yaw = seg.kind === 'ignite' ? at.yaw + wrapPi(-0.12 - at.yaw) * damp(5, dt) : yaw;
     snapAt();
     vel.x = vel.y = 0;
     jr.on = true;
     jr.w = smooth(clamp01(S.t / 0.12)); // (the pose eases in over the clips)
     jr.pin = seg.kind === 'ignite' ? 1 : 0;
-    jr.air = seg.kind === 'launch' ? 1 : 0;
+    jr.air = seg.kind === 'fly' ? 0.5 : 0;
     jr.tilt = tiltA;
-    jr.roll = roll;
+    jr.spin = spin;
+    jr.bank = bank;
     jr.fly = 0;
     jr.pitch = 0;
     jr.hop = 0;
     jr.jet = thrust;
     jr.floor = seg.kind === 'ignite' ? F.floor : null;
-    seatLift = seg.kind === 'ignite' ? 0 : Math.max(0, (F.y - y) / h);
-    // it eyes the poster: on the pad, and on the way down into it
-    if (seg.kind !== 'launch') {
-      [glance.x, glance.y] = [mx, my];
-      glance.until = performance.now() + 150;
-    }
-    // down: the case opens from here
-    if (!S.opened && S.t >= STUNT.end) { // (inside the video now)
+    seatLift = 0;
+    // it eyes the poster on the pad, and where it flies after that
+    [glance.x, glance.y] = seg.kind === 'ignite' ? [mx, my] : [cx + Math.sin(yaw) * h * 3, cy];
+    glance.until = performance.now() + 150;
+    // Gone into the picture, small and far: the case opens from there (the stage hides
+    // under it, so not before; the poster grows into the video around where it went).
+    if (!S.opened && S.t >= FLY.t0 + FLY.cross + FLY.open) {
       S.opened = true;
       S.openAt = S.t;
       const f = S.done;
@@ -2977,7 +3085,7 @@ export async function start({ reduced = false } = {}) {
     const wasOn = jr.on;
     jr.on = false; // a journey (or the tunnels) claims the frame again below
     jr.jet = 0;
-    jr.roll = 0;
+    jr.spin = jr.bank = 0;
     jr.tun = false;
     tun.drove = false;
     if (!ledge.drove) ledge.lastP = -1;
@@ -3081,8 +3189,7 @@ export async function start({ reduced = false } = {}) {
     pivot.rotation.z = fw * (0.045 * Math.sin(time * 0.61) + 0.025 * Math.sin(time * 1.13 + 0.4))
       + calm * (floating ? driftX : onFloor ? 0 : driftX * 0.5)
       + air * (0.07 * Math.sin(time * 2.3) + 0.03 * Math.sin(time * 5.1 + 0.6))
-      + tug.x * 0.25 * grip.w // leans back with the jolt on the card
-      + (jr.on ? jr.roll : 0); // (spinning out of control, launching into a case)
+      + tug.x * 0.25 * grip.w; // leans back with the jolt on the card
     // (on the cards the scroll moves the deck, not the guide: no lean into the current)
     pivot.rotation.x = calm * (onFloor ? 0 : lean * 0.3 + driftY) + fw * 0.03 * Math.sin(time * 0.53 + 1.7)
       + air * (0.05 + 0.04 * Math.sin(time * 1.6)) + (jr.on ? jr.pitch : trans && trans.kind === 'enter' ? trans.pitch : 0);
@@ -3091,7 +3198,7 @@ export async function start({ reduced = false } = {}) {
     const sq = jr.on ? jr.squash : 0;
     pivot.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
     // (turning round in flight, it rises out of the level flight and lies down again)
-    setTilt(jr.on ? jr.tilt - Math.max(0, jr.tilt - TILT.hover) * 0.85 * Math.sin(Math.PI * head.m) : 0);
+    setTilt(jr.on ? jr.tilt - Math.max(0, jr.tilt - TILT.hover) * 0.85 * Math.sin(Math.PI * head.m) : 0, jr.on ? jr.spin : 0, jr.on ? jr.bank : 0);
 
     // Bones the current clip doesn't animate keep last frame's offsets: undo them first.
     for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
@@ -3209,8 +3316,10 @@ function abyssalize(source, shared) {
         `#include <clipping_planes_fragment>
         if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
-        if (uClipAll > 0.5 && gl_FragCoord.x > uAllRect.x && gl_FragCoord.x < uAllRect.z
-            && gl_FragCoord.y > uAllRect.y && gl_FragCoord.y < uAllRect.w) discard;
+        if (uClipAll > 0.5) {
+          bool aIn = gl_FragCoord.x > uAllRect.x && gl_FragCoord.x < uAllRect.z && gl_FragCoord.y > uAllRect.y && gl_FragCoord.y < uAllRect.w;
+          if (aIn == (uClipAll < 1.5)) discard; // 1: behind the rect; 2: only through it, as through a window
+        }
         if (uDissolve > 0.001) {
           vec3 q = vDPos * uNoiseScale;
           float n = 0.65 * (aNoise(q) * 0.65 + aNoise(q * 2.3 + 7.1) * 0.35) + 0.35 * clamp(vDPos.y / uHeight, 0.0, 1.0);
