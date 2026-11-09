@@ -22,6 +22,7 @@ const MODEL = {
     Main: { color: 0x1b2b44, metal: 0.5, rough: 0.38 },
     Grey: { color: 0x3d5a78, metal: 0.4, rough: 0.42 },
     Black: { color: 0x050810, emissive: 0x63e6d2, glow: 0.6 },
+    Jet: { color: 0x0a0f18, emissive: 0xffb35c, glow: 0 }, // the jetpack's nozzles (glow set by the thrust)
   },
   headBone: 'Head',
   neckBone: 'Neck',
@@ -286,6 +287,73 @@ export async function start({ reduced = false } = {}) {
     for (let i = 0; i < a.count; i += step) floorPts.push([o, new THREE.Vector3().fromBufferAttribute(a, i)]);
   }
 
+  // The jetpack: two tanks on a back plate, strapped to the torso so it follows every
+  // pose, with a nozzle under each tank. Built in model space from the torso's own size
+  // (back is -z), then handed to the torso bone. Its parts take the same Abissal look,
+  // dissolve and card masks as the body; the nozzles' amber glow follows the thrust.
+  const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0 };
+  {
+    let torsoBone = null, torsoMesh = null;
+    model.traverse((o) => { if (!torsoBone && o.isBone && /^Torso(_\d+)?$/.test(bare(o.name))) torsoBone = o; });
+    torsoBone = torsoBone || rigBody;
+    model.traverse((o) => { if (!torsoMesh && !o.isBone && bare(o.name) === 'Torso') torsoMesh = o; }); // (a mesh, or the group of its parts)
+    if (torsoBone && torsoMesh) {
+      model.updateMatrixWorld(true);
+      const tb = new THREE.Box3().setFromObject(torsoMesh);
+      const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+      tb.applyMatrix4(inv);
+      const tw = tb.max.x - tb.min.x, th = tb.max.y - tb.min.y;
+      const look = (name) => abyssalize(new THREE.MeshStandardMaterial({ name }), shared);
+      const shell = look('Main'), metal = look('Grey'), glow = look('Jet');
+      const flame = (color, opacity) => {
+        const m = abyssalize(new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), shared);
+        m.customProgramCacheKey = () => 'abyssal-flame';
+        return m;
+      };
+      const flameOut = flame(0xffb35c, 0.5), flameIn = flame(0xfff0d8, 0.85);
+      const g = new THREE.Group();
+      const r = tw * 0.17, len = th * 0.62;
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.62, len * 1.05, r * 0.5), metal);
+      g.add(plate);
+      for (const sx of [-1, 1]) {
+        const tank = new THREE.Mesh(new THREE.CapsuleGeometry(r, len - 2 * r, 6, 16), shell);
+        tank.position.set(sx * tw * 0.2, 0, -r * 0.95);
+        g.add(tank);
+        // a band round each tank, in the joints' steel
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.06, r * 1.06, len * 0.1, 16), metal);
+        band.position.copy(tank.position).setY(len * 0.18);
+        g.add(band);
+        const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.62, r * 0.86, r * 0.75, 16, 1, true), metal);
+        nozzle.position.set(tank.position.x, -len / 2 - r * 0.25, tank.position.z);
+        nozzle.material.side = THREE.DoubleSide;
+        g.add(nozzle);
+        const core = new THREE.Mesh(new THREE.CircleGeometry(r * 0.6, 16), glow);
+        core.rotation.x = Math.PI / 2; // facing down, out of the nozzle
+        core.position.set(0, -r * 0.2, 0);
+        nozzle.add(core);
+        // where the exhaust leaves: the nozzle's mouth, pointing down its axis
+        const mouth = new THREE.Object3D();
+        mouth.position.set(0, -r * 0.45, 0);
+        nozzle.add(mouth);
+        jet.nozzles.push(mouth);
+        // the flame: a white-hot core in an amber plume, stretched by the thrust
+        for (const [rad, ln, mat] of [[r * 0.58, r * 3.2, flameOut], [r * 0.32, r * 2.0, flameIn]]) {
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(rad, ln, 14, 1, true).rotateX(Math.PI).translate(0, -ln / 2, 0), mat);
+          cone.renderOrder = 1;
+          mouth.add(cone);
+          jet.flames.push(cone);
+        }
+      }
+      g.position.set((tb.min.x + tb.max.x) / 2, tb.min.y + th * 0.52, tb.min.z - r * 0.15);
+      g.rotation.x = -0.12; // its nozzles tipped a little back, away from the legs
+      model.add(g);
+      torsoBone.attach(g);
+      g.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      jet.group = g;
+      jet.glow = glow;
+    }
+  }
+
   // Bones posed on top of the clips: reset to the clean clip pose before every update
   // (bones a clip doesn't animate would otherwise keep last frame's offsets).
   const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone), ...rigBones])]
@@ -401,6 +469,57 @@ export async function start({ reduced = false } = {}) {
   points.renderOrder = 2;
   scene.add(points);
 
+  // Jet exhaust: its own small pool, drawn after the body and hidden by it (depth-tested),
+  // white-hot at the nozzle, cooling to amber and dying out as teal sea-light. A puff
+  // born while the body is behind a card stays behind that card.
+  const N_JET = 360;
+  const jGeo = new THREE.BufferGeometry();
+  const jPos = new Float32Array(N_JET * 3);
+  const jAlpha = new Float32Array(N_JET);
+  const jSize = new Float32Array(N_JET);
+  const jHeat = new Float32Array(N_JET);
+  const jClip = new Float32Array(N_JET);
+  jGeo.setAttribute('position', new THREE.BufferAttribute(jPos, 3).setUsage(THREE.DynamicDrawUsage));
+  jGeo.setAttribute('aAlpha', new THREE.BufferAttribute(jAlpha, 1).setUsage(THREE.DynamicDrawUsage));
+  jGeo.setAttribute('aSize', new THREE.BufferAttribute(jSize, 1).setUsage(THREE.DynamicDrawUsage));
+  jGeo.setAttribute('aHeat', new THREE.BufferAttribute(jHeat, 1).setUsage(THREE.DynamicDrawUsage));
+  jGeo.setAttribute('aClip', new THREE.BufferAttribute(jClip, 1).setUsage(THREE.DynamicDrawUsage));
+  const jMat = new THREE.ShaderMaterial({
+    uniforms: { uPx: pMat.uniforms.uPx, uScale: pMat.uniforms.uScale, uRect: { value: new THREE.Vector4() }, uAmber: { value: AMBER }, uTeal: { value: TEAL } },
+    vertexShader: /* glsl */ `
+      attribute float aAlpha; attribute float aSize; attribute float aHeat; attribute float aClip;
+      uniform float uPx; uniform float uScale;
+      varying float vAlpha; varying float vHeat; varying float vClip;
+      void main() {
+        vAlpha = aAlpha; vHeat = aHeat; vClip = aClip;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aAlpha > 0.002 ? aSize * uScale * uPx : 0.0;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uAmber; uniform vec3 uTeal; uniform vec4 uRect;
+      varying float vAlpha; varying float vHeat; varying float vClip;
+      void main() {
+        if (vClip > 0.5 && gl_FragCoord.x > uRect.x && gl_FragCoord.x < uRect.z
+            && gl_FragCoord.y > uRect.y && gl_FragCoord.y < uRect.w) discard;
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d);
+        a = a * a * vAlpha;
+        if (a < 0.004) discard;
+        vec3 hot = mix(uAmber, vec3(1.0, 0.95, 0.85), smoothstep(0.75, 1.0, vHeat));
+        vec3 c = mix(uTeal, hot, smoothstep(0.1, 0.55, vHeat)) * (1.0 + smoothstep(0.2, 0.0, d) * vHeat);
+        gl_FragColor = vec4(min(c, vec3(1.0)), a); // (additive: the colour times a, once)
+      }`,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const jetPoints = new THREE.Points(jGeo, jMat);
+  jetPoints.frustumCulled = false;
+  jetPoints.renderOrder = 1;
+  scene.add(jetPoints);
+  const jp = { vel: new Float32Array(N_JET * 3), life: new Float32Array(N_JET), age: new Float32Array(N_JET).fill(1e9), a0: new Float32Array(N_JET), s0: new Float32Array(N_JET), next: 0, live: 0, carry: 0 };
+
   // Transit state (sampled from the skinned surface, so motes leave from the body)
   const tStart = new Float32Array(N_TRANSIT * 3);
   const tRel = new Float32Array(N_TRANSIT * 3); // position relative to the root, in model units
@@ -423,7 +542,7 @@ export async function start({ reduced = false } = {}) {
     motePhase[i * 3 + 2] = Math.random(); // height
   }
 
-  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null, head: null };
+  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null, head: null, jet: null };
   const v3 = new THREE.Vector3();
   function sampleSurface(intoWorld, intoRel) {
     root.updateMatrixWorld(true);
@@ -516,13 +635,14 @@ export async function start({ reduced = false } = {}) {
     return best;
   }
 
-  // The timeline: every card is a time tunnel, with a portal at each end. Parked on a
-  // card it hovers at the left portal. Scrolling on, it dives in, passes behind the card,
-  // shoots out of the right portal and off the screen, and comes flying back in from the
-  // left to the next card's portal, over and over. Out of the last one it falls onto the
-  // video cases instead (see tunnelExit). Positions come from the cards' live rects: app.js
-  // turns them on a ring around the spine, and their vertical edges stay vertical on
-  // screen, so the box is exact where it matters, at the ends.
+  // The timeline: every card is a time tunnel, with a portal at each end. It follows the
+  // scroll straight through: at the left portal of the card in front, it dives in, glides
+  // behind the card, and out of the right portal it swoops down into the next card's left
+  // portal (the two portals line up as the ring turns), in one unbroken flight. Stopped
+  // anywhere, it stays right there, inside the card too. Out of the last one it falls
+  // onto the video cases instead (see tunnelExit). Positions come from the cards' live
+  // rects: app.js turns them on a ring around the spine, and their vertical edges stay
+  // vertical on screen, so the box is exact where it matters, at the ends.
   let storyPersp = 2000, storyCardH = 0;
   const tunnelMode = () => !reduced && !view.dock && !!nodes.storyStage && tunnels.length > 1;
   const tunnelOn = () => section === 'historia' && tunnelMode();
@@ -537,9 +657,10 @@ export async function start({ reduced = false } = {}) {
     };
     return { li, card: li.querySelector('.tl-card') || li, pin: mk('tl-portal is-in', 4), pout: mk('tl-portal is-out', 4), wake: mk('tl-wake', 0), near: [false, false], wo: -1, wx: -1 };
   }) : [];
-  // (the legs of a pass, as the fraction of a card's scroll where each one ends; the last
-  // leg, in from the left, ends on the next card)
-  const TUN = { dive: 0.16, inside: 0.42, off: 0.74, last: 0.56 };
+  // (the legs of a pass, as the fraction of a card's scroll where each one ends: into the
+  // left portal, through the card, and the swoop to the next card's portal ends on it;
+  // out of the last card it only clears its right portal, by last)
+  const TUN = { dive: 0.16, inside: 0.6, last: 0.7 };
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
   let PORTAL = 0.033; // half a portal's width, in card widths (read from .tl-portal's --pw on resize)
@@ -603,28 +724,43 @@ export async function start({ reduced = false } = {}) {
     const c = cardBox(k);
     const xIn = c.l + h * 0.55; // just inside: the feet past the left edge
     const xOut = c.r - h * 0.65; // the head at the right edge, still hidden
-    let x, y = c.cy;
+    const glide = (xOut - xIn) / (TUN.inside - TUN.dive); // its pace through the card
+    let x, y = c.cy, swoop = -1, clear = false;
     if (ph < TUN.dive) {
-      const u = ph / TUN.dive;
-      const hx = hoverX(c, h);
-      x = hx + (xIn - hx) * u * u; // leaning in, then faster and faster into the portal
+      // from rest at the portal, speeding up into it until it reaches the glide's pace
+      const u = ph / TUN.dive, D = xIn - hoverX(c, h), v = glide * TUN.dive;
+      x = hoverX(c, h) + (3 * D - v) * u * u + (v - 2 * D) * u * u * u;
     } else if (ph < TUN.inside) {
-      x = xIn + (xOut - xIn) * (ph - TUN.dive) / (TUN.inside - TUN.dive);
+      x = xIn + glide * (ph - TUN.dive);
     } else if (exiting) {
       // out of the last card: clear of the portal, where the fall takes over
       x = xOut + (c.r + c.w * PORTAL + h * 0.5 - xOut) * clamp01((ph - TUN.inside) / (TUN.last - TUN.inside));
-    } else if (ph < TUN.off) {
-      x = xOut + (view.w + h * 0.9 - xOut) * (ph - TUN.inside) / (TUN.off - TUN.inside);
     } else {
-      // in from the left edge, braking at the next portal
+      // Out of the right portal and round, down into the next card's left portal, on one
+      // curve: as the ring turns the two portals come to sit one above the other, so it
+      // shoots out, bends down past the card's edge and comes round to settle at the next
+      // portal, where the next pass starts. It never leaves the screen.
+      swoop = (ph - TUN.inside) / (1 - TUN.inside);
       const c2 = cardBox(k + 1);
-      const u = (ph - TUN.off) / (1 - TUN.off);
-      const x0 = -h * 0.9, x1 = hoverX(c2, h);
-      x = x0 + (x1 - x0) * (1 - (1 - u) * (1 - u));
-      y = c2.cy;
+      const x3 = hoverX(c2, h), y3 = c2.cy;
+      const P = [xOut, c.cy, c.r + h * 1.4, c.cy, x3 + h * 0.15, y3 - h * 0.75, x3, y3];
+      const curve = (u) => {
+        const e = 0.5 * u + 2 * u * u - 1.5 * u * u * u; // out of the portal at speed, braking at the next one
+        const i = 1 - e;
+        const b0 = i * i * i, b1 = 3 * i * i * e, b2 = 3 * i * e * e, b3 = e * e * e;
+        return [b0 * P[0] + b1 * P[2] + b2 * P[4] + b3 * P[6], b0 * P[1] + b1 * P[3] + b2 * P[5] + b3 * P[7]];
+      };
+      [x, y] = curve(swoop);
+      // (behind the card until its whole body has cleared the edge once: coming round,
+      // it passes in front of it)
+      for (let n = 0; n <= 10 && !clear; n++) {
+        const q = curve(swoop * n / 10);
+        clear = q[0] - h * 0.5 > c.r || n === 10 && swoop > 0.5;
+      }
     }
-    const fly = smooth(clamp01(ph / 0.07)) * (exiting ? 1 : 1 - smooth(clamp01((ph - 0.88) / 0.12)));
-    const inLeg = ph < TUN.off || exiting;
+    // (level in flight; upright again, the jets braking, as it comes round to the portal)
+    const fly = smooth(clamp01(ph / 0.07)) * (swoop < 0 ? 1 : 1 - smooth(clamp01((swoop - 0.3) / 0.7)));
+    const inLeg = (ph < TUN.inside || exiting || (swoop >= 0 && !clear));
     // how far it reaches ahead (the head, the fist under its chin) and behind (the
     // feet), upright or flying level; to the right and left (front, back) as it faces
     const ahead = h * (0.3 + 0.28 * fly), behind = h * (0.3 + 0.22 * fly);
@@ -632,7 +768,7 @@ export async function start({ reduced = false } = {}) {
     // behind the card (any part of it, or all of it)
     const over = inLeg && x + front > c.l && x - back < c.r;
     const hidden = inLeg && x - back > c.l && x + front < c.r;
-    return { k, ph, x, cy: y, h, c, fly, front, back, tilt: TILT.hover + (TILT.fly - TILT.hover) * fly, yaw: YAW.hover + (YAW.fly - YAW.hover) * fly, over, hidden, inside: inLeg ? clamp01((x - c.l) / Math.max(1, c.r - c.l)) : -1 };
+    return { k, ph, swoop, x, cy: y, h, c, fly, front, back, tilt: TILT.hover + (TILT.fly - TILT.hover) * fly, yaw: YAW.hover + (YAW.fly - YAW.hover) * fly, over, hidden, inside: inLeg ? clamp01((x - c.l) / Math.max(1, c.r - c.l)) : -1 };
   }
 
   // Running state, kept here because the deck anchor reads its heading.
@@ -1590,10 +1726,11 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Time tunnels: the timeline's plateau
   // ---------------------------------------------------------------------------
-  // On the timeline the pass follows the cards (g: card index + how far through it).
-  // Left between two cards it settles at the nearer portal it can park at; once it has
-  // settled ahead, scrolling on the same way waits for the cards to catch up.
+  // On the timeline the pass follows the cards (g: card index + how far through it),
+  // straight from the scroll: stopped mid-way, it stays where it is (inside a card too)
+  // instead of flying off to a portal on its own.
   const tun = { g: 0, active: false, drove: false, mask: null, maskK: -1, carry: null, hidden: false, wake: -1, edge: null };
+  // (the portal it parks at when it arrives from elsewhere with the page at rest)
   function restCard(f) {
     const last = tunnels.length - 1;
     const lo = Math.min(Math.floor(f), last), hi = Math.min(lo + 1, last);
@@ -1603,13 +1740,10 @@ export async function start({ reduced = false } = {}) {
     const f = storyF();
     const idle = now - scrub.scrolledAt > 450;
     // taking over (from a journey, a jump): with the page still moving, straight onto
-    // the pass under the scroll; at rest, at the nearer portal
+    // the pass under the scroll; at rest, from the nearer portal, gliding on to it
     if (!tun.active) { tun.g = idle ? restCard(f) : f; tun.edge = null; snapRig(); }
-    let target = idle ? restCard(f) : f;
-    if (!idle && scrub.dir > 0 && f < tun.g && tun.g <= Math.floor(f) + 1) target = tun.g;
-    if (!idle && scrub.dir < 0 && f > tun.g && tun.g >= Math.ceil(f) - 1) target = tun.g;
-    tun.g += (target - tun.g) * damp(idle ? 2.4 : 10, dt);
-    if (Math.abs(target - tun.g) < 2e-4) tun.g = target;
+    tun.g += (f - tun.g) * damp(idle ? 3 : 10, dt);
+    if (Math.abs(f - tun.g) < 2e-4) tun.g = f;
     tun.g = clamp(dbg.tunG != null ? dbg.tunG : tun.g, 0, tunnels.length - 1); // (QA: pin the pass)
     applyTunnel(tunnelAt(tun.g));
   }
@@ -1633,6 +1767,7 @@ export async function start({ reduced = false } = {}) {
     jr.tilt = st.tilt;
     jr.fly = st.fly;
     jr.air = 0.45 * st.fly; // a little buffeting in flight
+    jet.boost = st.swoop >= 0 ? 1 - 0.3 * st.swoop : 0; // (burning hard round the swoop)
     jr.pin = jr.pitch = jr.squash = jr.hop = 0;
     jr.floor = null;
     jr.w = 1;
@@ -1648,8 +1783,8 @@ export async function start({ reduced = false } = {}) {
   // it is inside, and motes swirl into the way in and burst out of the way out.
   function portalFx(st) {
     tunnels.forEach((T, j) => {
-      const nearIn = (j === st.k && st.ph > 0.005 && st.ph < TUN.dive + 0.05) || (j === st.k + 1 && st.ph > 0.82);
-      const nearOut = j === st.k && st.ph > TUN.inside - 0.08 && st.ph < TUN.inside + 0.16;
+      const nearIn = (j === st.k && st.ph > 0.005 && st.ph < TUN.dive + 0.05) || (j === st.k + 1 && st.ph > 0.86);
+      const nearOut = j === st.k && st.ph > TUN.inside - 0.08 && st.ph < TUN.inside + 0.12;
       if (nearIn !== T.near[0]) { T.near[0] = nearIn; T.pin.classList.toggle('is-near', nearIn); }
       if (nearOut !== T.near[1]) { T.near[1] = nearOut; T.pout.classList.toggle('is-near', nearOut); }
     });
@@ -1809,6 +1944,78 @@ export async function start({ reduced = false } = {}) {
         Math.sin(ph) * Math.cos(th) * sp, Math.abs(Math.cos(ph)) * sp * 0.6, Math.sin(ph) * Math.sin(th) * sp * 0.5,
         1.2 + Math.random() * 1.2, 0.55);
     }
+  }
+
+  // The jetpack fires through the time tunnels: a low flame hovering at a portal, full
+  // flight level through the cards, and a hard burn swooping round to the next portal.
+  const jv = new THREE.Vector3(), jd = new THREE.Vector3();
+  function stepJet(dt) {
+    if (!jet.group) return;
+    const vis = clamp01(1 - shared.uDissolve.value * 2.5);
+    let want = reduced || view.dock || !(jr.on && jr.tun) ? 0 : Math.max(0.35 + 0.65 * jr.fly, jet.boost) * vis;
+    if (dbg.jet != null) want = dbg.jet; // (QA: pin the thrust)
+    jet.thrust += (want - jet.thrust) * damp(want > jet.thrust ? 8 : 4, dt);
+    const T = jet.thrust;
+    const flick = 1 + 0.18 * Math.sin(time * 41) * Math.sin(time * 27 + 1);
+    jet.glow.emissiveIntensity = T * 2.4 * flick;
+    jet.flames.forEach((f, n) => {
+      const on = T > 0.03;
+      f.visible = on;
+      if (on) f.scale.set(0.7 + 0.3 * T, T * flick * (n & 1 ? 1.08 : 0.94), 0.7 + 0.3 * T);
+    });
+    // (where a puff born behind a card is hidden: that card, wherever it has moved to)
+    const masked = shared.uClipAll.value > 0.5;
+    if (masked) jMat.uniforms.uRect.value.copy(shared.uAllRect.value);
+    else if (tun.active && tun.maskK >= 0 && jp.live) {
+      const c = cardBox(tun.maskK);
+      const [ox, oy] = clientToCanvas(c.l, c.t);
+      const pr = renderer.getPixelRatio();
+      jMat.uniforms.uRect.value.set(ox * pr, (view.h - oy - c.h) * pr, (ox + c.w) * pr, (view.h - oy) * pr);
+    }
+    const H = Math.max(at.h * view.wpp, 1e-3);
+    if (T > 0.04) {
+      jp.carry += T * 140 * dt * jet.nozzles.length;
+      while (jp.carry >= 1) {
+        jp.carry -= 1;
+        const m = jet.nozzles[(Math.random() * jet.nozzles.length) | 0];
+        m.getWorldPosition(jv);
+        jd.setFromMatrixColumn(m.matrixWorld, 1).normalize().negate(); // out of the mouth
+        const i = jp.next;
+        jp.next = (jp.next + 1) % N_JET;
+        const sp = H * (1.3 + Math.random() * 1.0) * (0.45 + 0.55 * T);
+        const sx = (Math.random() - 0.5) * H * 0.22, sy = (Math.random() - 0.5) * H * 0.22, sz = (Math.random() - 0.5) * H * 0.22;
+        const back = Math.random() * dt; // (spread along the frame, not in clumps)
+        jPos[i * 3] = jv.x + jd.x * sp * back; jPos[i * 3 + 1] = jv.y + jd.y * sp * back; jPos[i * 3 + 2] = jv.z + jd.z * sp * back;
+        jp.vel[i * 3] = jd.x * sp + sx; jp.vel[i * 3 + 1] = jd.y * sp + sy; jp.vel[i * 3 + 2] = jd.z * sp + sz;
+        jp.life[i] = (0.35 + Math.random() * 0.4) * (0.6 + 0.4 * T);
+        jp.age[i] = 0;
+        jp.a0[i] = (0.7 + Math.random() * 0.3) * Math.min(1, T * 1.6);
+        jp.s0[i] = 8 + Math.random() * 9;
+        jClip[i] = masked ? 1 : 0;
+        jp.live = N_JET;
+      }
+    }
+    if (!jp.live) return;
+    const drag = Math.exp(-3.2 * dt);
+    let alive = 0;
+    for (let i = 0; i < N_JET; i++) {
+      jp.age[i] += dt;
+      const k = jp.age[i] / jp.life[i];
+      if (k >= 1) { jAlpha[i] = 0; continue; }
+      alive++;
+      jp.vel[i * 3] *= drag; jp.vel[i * 3 + 1] = jp.vel[i * 3 + 1] * drag + H * 0.5 * dt; // spent exhaust drifts up, like bubbles
+      jp.vel[i * 3 + 2] *= drag;
+      jPos[i * 3] += jp.vel[i * 3] * dt; jPos[i * 3 + 1] += jp.vel[i * 3 + 1] * dt; jPos[i * 3 + 2] += jp.vel[i * 3 + 2] * dt;
+      jHeat[i] = 1 - k;
+      jSize[i] = jp.s0[i] * (0.55 + 1.3 * k);
+      jAlpha[i] = jp.a0[i] * Math.min(1, jp.age[i] / 0.04) * Math.pow(1 - k, 1.3);
+    }
+    jp.live = alive;
+    jGeo.attributes.position.needsUpdate = true;
+    jGeo.attributes.aAlpha.needsUpdate = true;
+    jGeo.attributes.aSize.needsUpdate = true;
+    jGeo.attributes.aHeat.needsUpdate = true;
+    jGeo.attributes.aClip.needsUpdate = true;
   }
 
   // Moving within a section: the body sheds a faint wake that the current takes away
@@ -2881,6 +3088,7 @@ export async function start({ reduced = false } = {}) {
 
     shed(dt);
     stepPool(dt);
+    stepJet(dt);
     stepMotes(dt, Math.max(air, level), level);
     pGeo.attributes.position.needsUpdate = true;
     pGeo.attributes.aAlpha.needsUpdate = true;
