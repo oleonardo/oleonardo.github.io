@@ -2766,12 +2766,23 @@ export async function start({ reduced = false } = {}) {
         const stiff = goal.floor ? 170 : 11;
         const dampC = 2 * Math.sqrt(stiff) * (goal.floor ? 1 : 0.72);
         const h = Math.min(dt, 1 / 30);
+        // At the contact card it goes no further than the spot where it holds the card.
+        // A fast scroll carries the card up while the spring trails it, and on a tall
+        // screen that left it well below the card (then overshooting on the way back).
+        // So it never sinks below that spot (the card's corner takes it along) and,
+        // reaching it from anywhere, it stops there instead of sailing past.
+        const noPass = section === 'contato';
         for (let n = dt; n > 1e-6; n -= h) {
           const st = Math.min(h, n);
-          vel.x += ((goal.x - at.x) * stiff - vel.x * dampC) * st;
-          vel.y += ((goal.y - at.y) * stiff - vel.y * dampC) * st;
+          const dx = goal.x - at.x, dy = goal.y - at.y;
+          vel.x += (dx * stiff - vel.x * dampC) * st;
+          vel.y += (dy * stiff - vel.y * dampC) * st;
           at.x += vel.x * st;
           at.y += vel.y * st;
+          if (noPass) {
+            if (dx * (goal.x - at.x) <= 0) { at.x = goal.x; vel.x = 0; }
+            if (dy * (goal.y - at.y) <= 0 || at.y > goal.y) { at.y = goal.y; vel.y = 0; }
+          }
         }
         if (goal.floor) {
           at.y = goal.y;
