@@ -840,7 +840,7 @@ export async function start({ reduced = false } = {}) {
     pMat.uniforms.uPx.value = view.dpr;
     goal = anchorFor(section);
     if (view.dock && trans && (trans.kind === 'hop' || trans.kind === 'enter')) trans = null;
-    if (view.dock) endShow(true);
+    if (view.dock || (trans && trans.kind === 'case' && !trans.opened)) endShow(true); // (a show drawn for the old layout: the case opens now)
     if (!trans) snapTo(goal);
     dirty = true;
   }
@@ -1893,12 +1893,14 @@ export async function start({ reduced = false } = {}) {
 
   // A pose change that can't be continuous (a journey taking over mid-way, a new
   // target): blend from where everything was over a quarter of a second.
-  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
+  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, spin: 0, bank: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
   function snapRig() {
     snap.t = 0;
     snap.k = 0;
     Object.assign(snap.at, { x: at.x, y: at.y, h: at.h, yaw: at.yaw });
     snap.tilt = tilt.rotation.x;
+    snap.spin = tilt.rotation.y;
+    snap.bank = tilt.rotation.z;
     snap.pp.copy(pivot.position);
     snap.pr.set(pivot.rotation.x, pivot.rotation.y, pivot.rotation.z);
     snap.ps.copy(pivot.scale);
@@ -1914,7 +1916,7 @@ export async function start({ reduced = false } = {}) {
       snap.pr.y + wrapPi(pivot.rotation.y - snap.pr.y) * k,
       snap.pr.z + (pivot.rotation.z - snap.pr.z) * k);
     pivot.scale.lerpVectors(snap.ps, pivot.scale, k);
-    setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k, tilt.rotation.y, tilt.rotation.z);
+    setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k, snap.spin + (tilt.rotation.y - snap.spin) * k, snap.bank + (tilt.rotation.z - snap.bank) * k);
     rigBones.forEach((b, i) => {
       b.quaternion.copy(qSnap.copy(snap.q[i]).slerp(b.quaternion, k));
       b.position.lerpVectors(snap.p[i], b.position, k);
@@ -2512,13 +2514,13 @@ export async function start({ reduced = false } = {}) {
   // path is a curve in depth as well as across, and it faces the way it flies (its back
   // more or less to us throughout), leaning and banking with the turns. The moment it goes
   // through the poster (it is seen through it from then on, like through a window) light
-  // bursts out of it and the case opens: app.js grows the poster into the video
-  // (caseJump's promise resolves true) while it flies on away inside. Closed again, it
+  // bursts out of it, and a beat later, small and far inside, the case opens: app.js
+  // grows the poster into the video (caseJump's promise resolves true). Closed again, it
   // springs back out of the card it flew into.
   // ---------------------------------------------------------------------------
   // The show as a timeline, in seconds: the ignition, the flight round to the front of
   // the card, and on through the poster into the picture.
-  const FLY = { t0: 0.42, cross: 1.55 }; // lift-off; through the poster (seconds after lift-off)
+  const FLY = { t0: 0.42, cross: 1.55, open: 0.3 }; // lift-off; through the poster (seconds after lift-off); the case opens, after that
   const STUNT = (() => {
     const segs = [];
     let t = 0;
@@ -2619,6 +2621,7 @@ export async function start({ reduced = false } = {}) {
   function endStunt(open) {
     if (!trans || trans.kind !== 'case') return;
     const S = trans;
+    at.yaw = -0.12 + wrapPi(at.yaw + 0.12); // (it flies off facing ±π: unwound, or the springs after it settle a whole turn off)
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
     popMask = null;
@@ -2680,17 +2683,19 @@ export async function start({ reduced = false } = {}) {
       const R = S.rnd;
       const room = (d) => (d < 0 ? mx : view.w - mx) / h;
       const dir = room(1) > 1.6 && room(-1) > 1.6 ? (R[0] < 0.5 ? -1 : 1) : room(1) > room(-1) ? 1 : -1;
-      const fit = (x, y, sz) => [clamp(x, sz * h * 0.45 + 12, view.w - sz * h * 0.45 - 12), clamp(y, barBottom + sz * h * 0.6, view.h - sz * h * 0.55)];
+      // (kept below the top bar, all but the lift-off: that rises from the card even
+      // where there is little room above it, over the bar if need be, its head on screen)
+      const fit = (x, y, sz, over = false) => [clamp(x, sz * h * 0.45 + 12, view.w - sz * h * 0.45 - 12), clamp(y, over ? sz * h * (1 - BODY_C) + 6 : barBottom + sz * h * 0.6, view.h - sz * h * 0.55)];
       const s1 = 1.3 + R[3] * 0.15, s2 = s1 - 0.06 - R[6] * 0.06;
-      const top = F.y - h * (BODY_C + 1.0);
-      const A = fit(F.x + dir * h * 0.2, top, s1);
-      const B = fit(mx + dir * h * Math.min(1.4 + R[1] * 1.0, room(dir) - 0.7), top + h * (0.15 + R[2] * 0.6), s2);
+      const c0 = F.y - h * BODY_C;
+      const A = fit(F.x + dir * h * 0.2, c0 - h * 0.45, s1, true);
+      const B = fit(mx + dir * h * Math.min(1.4 + R[1] * 1.0, room(dir) - 0.7), c0 + h * (R[2] * 0.6 - 0.1), s2);
       const across = R[4] < 0.4; // (round in front of the card to its other side first)
       const C = fit(mx + dir * h * (across ? -(0.6 + R[5] * 0.6) : 0.45 + R[5] * 0.5), my + h * (0.15 + R[7] * 0.5), 1.18);
       const X = FLY.cross;
       S.dir = dir;
       S.path = flightPath([
-        [0, F.x, F.y - h * BODY_C, 1],
+        [0, F.x, c0, 1],
         [0.38, A[0], A[1], s1],
         [0.8, B[0], B[1], s2],
         [1.18, C[0], C[1], 1.18],
@@ -2738,7 +2743,7 @@ export async function start({ reduced = false } = {}) {
       const elev = Math.atan2(-v[1], Math.hypot(v[0], v[2]));
       const dive = 0.35 * smooth(clamp01((f - FLY.cross + 0.2) / 0.5));
       const pitch = 0.1 + (clamp(0.8 - elev * 0.55, 0.3, 1.2) + dive - 0.1) * lift;
-      const A = S.aim || (S.aim = { yaw: at.yaw, yv: 0, tilt: 0.1, tv: 0 });
+      const A = S.aim || (S.aim = { yaw: -0.12 + wrapPi(at.yaw + 0.12), yv: 0, tilt: 0.1, tv: 0 }); // (whatever turns it has made before)
       for (let n = dt; n > 1e-6; n -= 1 / 120) {
         const st = Math.min(n, 1 / 120);
         A.yv += (144 * (aim - A.yaw) - 24 * A.yv) * st;
@@ -2770,13 +2775,6 @@ export async function start({ reduced = false } = {}) {
         spawn(o.x + Math.cos(a) * R * 0.35, o.y + Math.sin(a) * R * 0.35, o.z, Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.3) * H * 0.4, 0.45 + Math.random() * 0.4, 0.7);
       }
       setFace('surprised', 0.8);
-      if (!S.opened) {
-        S.opened = true;
-        S.openAt = S.t;
-        const f = S.done;
-        S.done = null;
-        if (f) f(true);
-      }
     }
     at.x = cx;
     at.y = cy + size * BODY_C; // (its feet: what the root is placed by)
@@ -2800,8 +2798,9 @@ export async function start({ reduced = false } = {}) {
     // it eyes the poster on the pad, and where it flies after that
     [glance.x, glance.y] = seg.kind === 'ignite' ? [mx, my] : [cx + Math.sin(yaw) * h * 3, cy];
     glance.until = performance.now() + 150;
-    // down: the case opens from here
-    if (!S.opened && S.t >= STUNT.end) { // (inside the video now)
+    // Gone into the picture, small and far: the case opens from there (the stage hides
+    // under it, so not before; the poster grows into the video around where it went).
+    if (!S.opened && S.t >= FLY.t0 + FLY.cross + FLY.open) {
       S.opened = true;
       S.openAt = S.t;
       const f = S.done;
