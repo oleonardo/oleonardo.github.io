@@ -933,9 +933,9 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     placeRoot();
-    if (fromScatter && id === 'inicio' && actions.run) {
-      // First appearance at the hero: it comes running in from the right.
-      enterRunning(id);
+    if (fromScatter && id === 'inicio' && rigOK) {
+      // First appearance at the hero: it comes flying in from the right.
+      enterFlying(id);
       return;
     }
     if (fromScatter) {
@@ -962,16 +962,16 @@ export async function start({ reduced = false } = {}) {
 
   // A timed journey (menu links, leaps, a retarget): the same jump, fall and landing
   // as the scrolled ones, run by the clock from wherever the guide is right now.
-  function hopTo(id, prev) {
+  function hopTo(id, prev, skForce) {
     // (flying through a tunnel it sets off from there, still in the air)
-    const airborne = trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && jr.air > 0.5;
+    const airborne = trans && (trans.kind === 'hop' || trans.kind === 'enter') ? jr.air > 0.5 : scrub.mid && jr.air > 0.5;
     if (trans && trans.kind === 'send') settleSend(null);
     // (off the end of the last case it springs from where it is on the card, or drops
     // from where it hangs past it: not from the deck's middle)
     const onLedge = !trans && (ledge.drove || ledge.was);
-    const sk = tun.active ? 'hover' : airborne || (onLedge && !jr.floor) ? 'fall' : 'stand';
+    const sk = skForce || (tun.active ? 'hover' : airborne || (onLedge && !jr.floor) ? 'fall' : 'stand');
     const ek = endKind(id);
-    const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tilt: tilt.rotation.x, floor: onLedge && jr.floor ? jr.floor : undefined };
+    const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tilt: wrapPi(tilt.rotation.x), floor: onLedge && jr.floor ? jr.floor : undefined }; // (the tilt unwound: out of a loop it rights itself the short way)
     const B = anchorFor(id, true);
     const dist = Math.hypot(B.x - A.x, clamp(B.y, 0, view.h) - A.y);
     const tk = sk === 'stand' ? 0.32 : 0;
@@ -999,65 +999,111 @@ export async function start({ reduced = false } = {}) {
     dirty = true;
   }
 
-  // The first appearance at the hero: it runs in from beyond the right edge, brakes on
-  // its spot (leaning back, kicking up a little dust), turns to the visitor and waves.
-  // The stride is paced to the ground it covers. Scrolling or a menu link meanwhile
-  // turns it straight into a jump from wherever it is.
-  const RUN_STRIDE = 1.1; // body heights a second the Running clip covers at speed 1 (under the mixer's 0.82)
-  const ENTER = { v: 1.6, yaw: -1.2, brake: 0.5, turn: 0.4 }; // speed in body heights a second
-  function enterRunning(id) {
+  // The first appearance at the hero: it comes in flying flat out from beyond the right
+  // edge, small and far off, loops the loop twice as it swoops in closer, then pulls up
+  // over its spot, rights itself and sets down on it on the jets, braking hard in a
+  // flare of dust, and turns to the visitor and waves. The path is a flight through
+  // timed keys (flightPath: x, y and size, the size standing for how far off it is); it
+  // flies head first along it, upside down over the top of each loop. Scrolling or a
+  // menu link meanwhile turns it straight into a journey from wherever it is.
+  const ENTER = { land: 0.7, turn: 0.35 }; // the set-down and the turn to the visitor, in seconds
+  function enterFlying(id) {
     goal = anchorFor(id);
-    const h = goal.h;
-    const x0 = view.w + h * 0.45; // just out of view
-    const v = ENTER.v * h;
-    const tr = Math.max(0.15, (x0 - goal.x) / v - ENTER.brake / 2); // full speed, then the brake
-    Object.assign(at, { x: x0, y: goal.y, h, yaw: ENTER.yaw });
+    const G = goal, h = G.h, W = view.w, H = view.h;
+    const gx = G.x, gy = G.y - h * BODY_C; // its middle, standing on the spot
+    const keys = [[0, W + h * 0.5, H * 0.22, 0.5], [0.45, W * 0.62, H * 0.42, 0.62]];
+    // two loops, each as eight keys round a circle: in at the bottom flying left, up the
+    // near side, over the top flying right and down the far side (the second smaller,
+    // higher and nearer)
+    const loop = (t0, dur, cx, cy, r, s0, s1) => {
+      for (let n = 1; n <= 8; n++) {
+        const a = Math.PI / 2 + (n / 8) * TAU, u = n / 8;
+        keys.push([t0 + dur * u, cx + Math.cos(a) * r * 1.15, cy + Math.sin(a) * r, s0 + (s1 - s0) * u]);
+      }
+    };
+    const r1 = Math.min(H * 0.2, W * 0.13), r2 = r1 * 0.7;
+    loop(0.45, 0.85, Math.min(W * 0.62, gx - h * 0.4), H * 0.42 - r1, r1, 0.62, 0.8);
+    loop(1.3, 0.7, Math.min(W * 0.66, gx - h * 0.3), H * 0.4 - r1 - r2 * 0.6, r2, 0.8, 0.92);
+    const tHigh = 2.0 + 0.5, tDown = tHigh + ENTER.land;
+    keys.push([tHigh - 0.2, gx - h * 0.35, Math.max(barBottom + h * 0.6, gy - h * 0.95), 0.97]); // (pulling up over the spot)
+    keys.push([tHigh, gx, gy - h * 0.55, 1]); // (hanging over it, upright)
+    keys.push([tDown, gx, gy, 1]); // (down on it)
+    const x0 = keys[0], c0 = [x0[1], x0[2]];
+    Object.assign(at, { x: c0[0], y: c0[1] + h * x0[3] * BODY_C, h: h * x0[3], yaw: -YAW.fly });
     vel.x = vel.y = 0;
-    trans = { kind: 'enter', phase: 'travel', t: 0, toId: id, x0, v, tr, run: v * (tr + ENTER.brake / 2), sp: 1, pitch: 0 };
+    trans = { kind: 'enter', phase: 'fly', t: 0, toId: id, path: flightPath(keys, 0, 0), tHigh, tDown, th: 0, lastTh: null, sp: 0, pitch: 0, hit: false };
     shared.uDissolve.value = 0;
     pAlpha.fill(0, 0, N_TRANSIT);
-    baseName = 'run';
-    fadeTo('run', 0.05);
+    baseName = (SECTIONS[id] || SECTIONS.inicio).base;
     floatW = 0;
     dirty = true;
   }
-  function stepEnter() {
+  function stepEnter(dt) {
     const E = trans;
     const B = anchorFor(E.toId);
     goal = B;
-    const tb = ENTER.brake;
-    // ground covered: full speed, then slowing evenly to a stop on the spot
-    const b = clamp01((E.t - E.tr) / tb);
-    const s = E.v * Math.min(E.t, E.tr) + E.v * tb * (b - (b * b) / 2);
-    E.sp = E.t < E.tr ? 1 : 1 - b;
-    at.x = E.x0 + (B.x - E.x0) * Math.min(1, s / E.run);
-    at.y = B.y;
-    at.h = B.h;
-    if (current === actions.run) actions.run.setEffectiveTimeScale((ENTER.v / RUN_STRIDE) * Math.max(0.4, E.sp));
-    if (E.phase === 'travel' && E.t >= E.tr) {
-      // the brake: into the idle, a skid of dust off its feet
-      E.phase = 'brake';
-      baseName = (SECTIONS[E.toId] || SECTIONS.inicio).base;
-      fadeTo(baseName, 0.45);
-      skid();
+    const h = B.h;
+    const p = pathAt(E.path, E.t, fP);
+    const sc = Math.exp(-p[2]), size = h * sc; // (how near: the path is drawn at the spot's distance)
+    const D = view.h / (2 * Math.tan(THREE.MathUtils.degToRad(FOV / 2)));
+    const v = flightVel(E.path, Math.min(E.t, E.tHigh), D, fV);
+    // Head first along the path: the lean is the way it flies, from flat out to the
+    // left (a loop takes it right round), unwound so a loop is a whole turn; the last
+    // leg it rights itself (to the nearest upright), hanging on the jets to set down.
+    const landing = clamp01((E.t - (E.tHigh - 0.45)) / 0.55);
+    if (landing <= 0 && Math.hypot(v[0], v[1]) > h * 0.2) {
+      const th = Math.atan2(v[1], -v[0]);
+      if (E.lastTh != null) E.th += wrapPi(th - E.lastTh);
+      E.lastTh = th;
     }
-    E.pitch = -0.16 * Math.sin(Math.PI * b); // leaning back into the stop
-    // facing where it runs (a little toward the viewer), then round to its spot
-    const k = smooth(clamp01((E.t - E.tr - tb * 0.35) / (tb * 0.65 + ENTER.turn)));
-    at.yaw = ENTER.yaw + wrapPi(B.yaw - ENTER.yaw) * k;
-    if (E.t >= E.tr + tb + ENTER.turn) {
+    const flat = TILT.fly + E.th;
+    const upright = Math.round(flat / TAU) * TAU;
+    const tiltA = flat + (upright - flat) * smooth(landing);
+    const down = clamp01((E.t - E.tHigh) / (E.tDown - E.tHigh));
+    const P = jr.pose || (jr.pose = newPose());
+    mixPose(P, POSE.fly, POSE.hover, smooth(landing));
+    if (down > 0.6) mixPose(P, P, POSE.crouch, smooth((down - 0.6) / 0.4));
+    const landed = E.t >= E.tDown;
+    const g = landed ? clamp01((E.t - E.tDown) / ENTER.turn) : 0; // down: absorbing it, turning to the visitor
+    if (landed && g > 0) mixPose(P, POSE.crouch, POSE.stand, smooth(g));
+    at.x = p[0] * sc;
+    at.y = p[1] * sc + size * BODY_C;
+    at.h = size;
+    // (facing left as it flies, round to the visitor once it is down)
+    at.yaw = -YAW.fly + (B.yaw + YAW.fly) * smooth(clamp01((E.t - E.tDown + 0.1) / (ENTER.turn + 0.1)));
+    vel.x = vel.y = 0;
+    jr.on = true;
+    jr.w = landed ? 1 - smooth(clamp01((g - 0.4) / 0.6)) : 1;
+    jr.pin = landed ? 1 : smooth(clamp01((down - 0.8) / 0.2));
+    jr.air = (1 - smooth(landing)) * 0.5 + 0.2 * (1 - down);
+    jr.tilt = landed ? 0 : tiltA;
+    jr.spin = jr.bank = 0;
+    jr.fly = 0;
+    jr.pitch = 0;
+    jr.hop = 0;
+    jr.squash = landed ? 0.14 * Math.sin(Math.PI * Math.min(1, g * 2.2)) * (1 - g) : 0;
+    jr.floor = null;
+    // the jets: flat out all the way in, braking hard to hang over the spot, a flare as
+    // it sets down, then off
+    jr.jet = landed ? 0.6 * (1 - smooth(clamp01(g / 0.4))) : 1.3 - 0.4 * smooth(landing) + 0.5 * smooth(clamp01((down - 0.5) / 0.4));
+    if (E.t >= E.tDown && !E.hit) { E.hit = true; touchdown('feet'); flare(); }
+    // it looks where it is going, then at the visitor
+    [glance.x, glance.y] = landed ? [view.w / 2, view.h / 2] : [at.x - h * 2, at.y - size * BODY_C + (E.t < E.tHigh ? v[1] * 0.3 : 0)];
+    glance.until = performance.now() + 150;
+    if (E.t >= E.tDown + ENTER.turn) {
       trans = null;
       greet(E.toId, (SECTIONS[E.toId] || SECTIONS.inicio).greet);
     }
   }
-  function skid() {
+  // the blast of the landing: smoke rolling out from under its feet
+  function flare() {
     root.updateMatrixWorld(true);
     const c = new THREE.Vector3(0, 0, 0).applyMatrix4(root.matrixWorld);
     const H = at.h * view.wpp;
-    for (let n = 0; n < 22; n++) {
-      spawn(c.x + (Math.random() - 0.3) * H * 0.2, c.y + H * 0.02, c.z + (Math.random() - 0.5) * H * 0.12,
-        -H * (0.25 + Math.random() * 0.45), H * (0.04 + Math.random() * 0.14), (Math.random() - 0.5) * H * 0.2,
-        0.5 + Math.random() * 0.5, 0.45);
+    for (let n = 0; n < 40; n++) {
+      const a = Math.random() * TAU, sp = H * (0.5 + Math.random() * 0.7);
+      spawn(c.x + Math.cos(a) * H * 0.1, c.y + H * 0.02, c.z + Math.sin(a) * H * 0.08,
+        Math.cos(a) * sp, H * (0.08 + Math.random() * 0.2), Math.sin(a) * sp * 0.4, 0.7 + Math.random() * 0.7, 0.5);
     }
   }
 
@@ -1160,9 +1206,8 @@ export async function start({ reduced = false } = {}) {
   function stepTransit(dt) {
     if (!trans) return;
     trans.t += dt;
-    if (trans.kind === 'enter') { stepEnter(); return; }
+    if (trans.kind === 'enter') { stepEnter(dt); return; }
     if (trans.kind === 'case') { stepStunt(dt); return; }
-    if (trans.kind === 'pop') { stepPop(dt); return; }
     if (trans.kind === 'hop') {
       const p = clamp01(trans.t / trans.dur);
       const B = anchorFor(trans.toId, true);
@@ -1466,10 +1511,79 @@ export async function start({ reduced = false } = {}) {
       snapRig();
     }
     const idA = ORDER[i], idB = ORDER[i + 1];
+    if (idA === 'inicio' && idB === 'historia' && tunnelMode()) { heroCross(p, idB); return; }
     if (idA === 'historia' && tunnelMode()) { tunnelExit(p, idB); return; }
     if (idA === 'projetos' && ledgeMode()) { ledgeExit(p, idB, dt); return; }
     const sk = 'stand', ek = endKind(idB);
     journeyAt(anchorFor(idA, true), anchorFor(idB, true), p, sk, ek, scrubPhases(sk, ek));
+  }
+
+  // Into the timeline (scrubbed by the scroll, like the pass itself): off its spot on the
+  // jets and flat out to the left, off the left edge of the screen, and in from the right
+  // edge at that same pace, over the first card and down to its portal, braking to hover
+  // there (the pass takes over from that hover). Both legs are cubics matched in pace at
+  // the edges, so the flight never lurches; scrolled back, it is the same way in reverse.
+  const CROSS = { T0: 0.1, L1: 0.42 }; // the lift-off's share of the zone, and the leg out to the left edge's
+  function heroCross(p, idB) {
+    const A = anchorFor('inicio', true), B = anchorFor(idB, true);
+    const P = jr.pose || (jr.pose = newPose());
+    jr.on = true;
+    vel.x = vel.y = 0;
+    jr.pitch = jr.squash = jr.hop = 0;
+    jr.floor = null;
+    jr.w = 1;
+    if (p < CROSS.T0) { // lifting off: a crouch, the jets lighting
+      const u = p / CROSS.T0;
+      Object.assign(at, { x: A.x, y: A.y, h: A.h, yaw: A.yaw });
+      snapAt();
+      mixPose(P, POSE.crouch, POSE.crouch, 0);
+      jr.w = smooth(clamp01(u / 0.7));
+      jr.pin = 1;
+      jr.air = jr.tilt = jr.fly = 0;
+      jr.pitch = 0.16 * Math.sin(Math.PI * u);
+      jr.squash = 0.07 * Math.sin(Math.PI * u);
+      jr.jet = 0.35 * smooth(u);
+      jr.lastP = p;
+      return;
+    }
+    const q = (p - CROSS.T0) / (1 - CROSS.T0);
+    const W = view.w, L1 = CROSS.L1, L2 = 1 - L1;
+    const xOff = -A.h * 0.9, xIn = W + B.h * 0.9; // clear of the edges
+    const D1 = Math.max(1, A.x - xOff), D2 = Math.max(1, xIn - B.x);
+    const cruise = Math.min(1.6 * D2 / L2, 2.4 * D1 / L1); // px per unit of the zone
+    const herm = (p0, v0, p1, v1, u) => {
+      const u2 = u * u, u3 = u2 * u;
+      return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * v0 + (3 * u2 - 2 * u3) * p1 + (u3 - u2) * v1;
+    };
+    // its height: up off the spot to a cruise over the first card, down to the portal
+    const c = cardBox(0);
+    const yC = Math.max(barBottom + B.h, Math.min(A.y, c.t - B.h * 0.25));
+    const h = A.h + (B.h - A.h) * smooth(clamp01(q / 0.75));
+    let x, y;
+    if (q < L1) {
+      x = herm(A.x, 0, xOff, -cruise * L1, q / L1);
+      y = A.y + (yC - A.y) * smooth(clamp01(q / (L1 * 0.8)));
+    } else {
+      x = herm(xIn, -cruise * L2, B.x, 0, (q - L1) / L2);
+      y = yC + (B.y - yC) * smooth(clamp01((q - L1 - L2 * 0.45) / (L2 * 0.55)));
+    }
+    // flat out in between: head first to the left, the jets burning hard; righting
+    // itself to the hover at the portal, turned to face it
+    const up = smooth(clamp01(q / 0.15)), endK = smooth(clamp01((q - 0.8) / 0.2));
+    const fly = up * (1 - endK);
+    let yaw = A.yaw + wrapPi(-YAW.fly - A.yaw) * up;
+    yaw += wrapPi(B.yaw - yaw) * endK;
+    Object.assign(at, { x, y, h, yaw });
+    snapAt();
+    jr.pin = 0;
+    jr.air = 0.45 * fly;
+    jr.tilt = up * (TILT.fly + (TILT.hover - TILT.fly) * endK);
+    jr.fly = fly;
+    jr.jet = 0.4 + 0.6 * fly + 0.4 * smooth(clamp01((q - 0.15) / 0.1)) * (1 - smooth(clamp01((q - 0.7) / 0.1)));
+    mixPose(P, POSE.hover, POSE.fly, fly);
+    [glance.x, glance.y] = [x - h * 2 * (fly > 0.5 ? 1 : -1), y - h * 0.6];
+    glance.until = performance.now() + 150;
+    jr.lastP = p;
   }
 
   // Out of the timeline: through the last card's tunnel, then out of its right portal
@@ -1496,6 +1610,7 @@ export async function start({ reduced = false } = {}) {
   // the scroll does then (see stepScrub), and sets down on its feet: it never hangs in
   // the air.
   const DECK_DWELL = 0.4; // the hold, in viewport heights (the same in app.js)
+  const RUN_STRIDE = 1.1; // body heights a second the Running clip covers at speed 1 (under the mixer's 0.82)
   const ledgeMode = () => !reduced && !view.dock && !!nodes.deck && nodes.projects.length > 1;
   const lastCase = () => { const n = nodes.projects[nodes.projects.length - 1]; return n.querySelector('.project-card') || n; };
   const LEDGE = { edge: 0.2, fall: 0.62, up: 0.9 }; // the run's share of the zone; the fall and the getting up, in seconds
@@ -1705,7 +1820,7 @@ export async function start({ reduced = false } = {}) {
     head.wasTun = tun.drove;
     head.x = at.x;
     head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
-    if (flyW < 0.25 || reduced || view.dock || (trans && trans.kind === 'case')) head.to = 0;
+    if (flyW < 0.25 || reduced || view.dock || (trans && (trans.kind === 'case' || trans.kind === 'enter'))) head.to = 0;
     else if (Math.abs(head.vx) > at.h * 0.5) head.to = (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
     head.m += (head.to - head.m) * damp(6, dt);
     if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
@@ -1866,15 +1981,10 @@ export async function start({ reduced = false } = {}) {
   function maskTunnel() {
     const cy = at.y - at.h * BODY_C, rad = at.h * 0.7;
     const overlaps = (b) => !(at.x + rad < b.l || at.x - rad > b.l + b.w || cy + rad < b.t || cy - rad > b.t + b.h);
-    let c = tun.mask || popMask;
+    let c = tun.mask;
     if (!c && tun.carry) {
       const box = cardBox(tun.carry.k);
       if (!overlaps(box) || time > tun.carry.until || view.dock) tun.carry = null;
-      else c = box;
-    }
-    if (!c && pop.carry) {
-      const box = rectOf(pop.carry.card);
-      if (!overlaps(box) || time > pop.carry.until || view.dock) pop.carry = null;
       else c = box;
     }
     if (!c && ledge.carry) {
@@ -1882,9 +1992,8 @@ export async function start({ reduced = false } = {}) {
       if (!overlaps(box) || view.dock || reduced || (trans && trans.kind !== 'hop') || section !== 'contato') ledge.carry = null;
       else c = box;
     }
-    shared.uClipAll.value = c ? (c.window ? 2 : 1) : 0;
-    const mid = !!c && at.x > c.l && at.x < c.l + c.w && cy > c.t && cy < c.t + c.h;
-    maskHides = !!c && (c.window ? !mid : mid);
+    shared.uClipAll.value = c ? 1 : 0;
+    maskHides = !!c && at.x > c.l && at.x < c.l + c.w && cy > c.t && cy < c.t + c.h;
     if (!c) return;
     const [ox, oy] = clientToCanvas(c.l, c.t);
     const pr = renderer.getPixelRatio();
@@ -1977,7 +2086,7 @@ export async function start({ reduced = false } = {}) {
       if (on) f.scale.set(0.7 + 0.3 * T, T * flick * (n & 1 ? 1.08 : 0.94), 0.7 + 0.3 * T);
     });
     // (where a puff born behind a card is hidden: that card, wherever it has moved to)
-    const masked = shared.uClipAll.value > 0.5 && shared.uClipAll.value < 1.5; // (behind a card; through a window the exhaust stays as it is)
+    const masked = shared.uClipAll.value > 0.5;
     if (masked) jMat.uniforms.uRect.value.copy(shared.uAllRect.value);
     else if (tun.active && tun.maskK >= 0 && jp.live) {
       const c = cardBox(tun.maskK);
@@ -2509,24 +2618,26 @@ export async function start({ reduced = false } = {}) {
   // Opening a case: a rocket launch, shot like a film. The jetpack sputters into life on
   // the card (the card bowing under the thrust) and it lifts off, up and toward us,
   // turning its back to us; then it flies out to the side and on, away from us, round in
-  // front of the card and into the poster, on a path drawn afresh each time (which side,
-  // how wide, how high and how near, whether it crosses in front of the card first). The
-  // path is a curve in depth as well as across, and it faces the way it flies (its back
-  // more or less to us throughout), leaning and banking with the turns. The moment it goes
-  // through the poster (it is seen through it from then on, like through a window) light
-  // bursts out of it, and a beat later, small and far inside, the case opens: app.js
-  // grows the poster into the video (caseJump's promise resolves true). Closed again, it
-  // springs back out of the card it flew into.
+  // front of the card and straight at the poster, on a path drawn afresh each time (which
+  // side, how wide, how high and how near, whether it crosses in front of the card
+  // first). The path is a curve in depth as well as across, and it faces the way it flies
+  // (its back more or less to us throughout), leaning and banking with the turns. It hits
+  // the poster with its whole weight: light bursts out, the card gives, and the case opens
+  // in that same beat (caseJump's promise resolves true: app.js slides the deck away the
+  // way it was shoved and grows the poster into the video), while it is thrown back off
+  // the poster and blasts away off the top of the screen, in plain sight the whole way
+  // (the stage stays up until it is gone: see is-exit). Closed again, it flies back in
+  // from where it went and sets down on the card.
   // ---------------------------------------------------------------------------
   // The show as a timeline, in seconds: the ignition, the flight round to the front of
-  // the card, and on through the poster into the picture.
-  const FLY = { t0: 0.42, cross: 1.55, open: 0.3 }; // lift-off; through the poster (seconds after lift-off); the case opens, after that
+  // the card and into it, and the way out off the screen.
+  const FLY = { t0: 0.42, cross: 1.55, out: 0.6 }; // lift-off; into the poster (seconds after lift-off); off the screen, after that
   const STUNT = (() => {
     const segs = [];
     let t = 0;
     const add = (kind, d) => { segs.push({ kind, t0: t, d }); t += d; };
-    add('ignite', FLY.t0); add('fly', FLY.cross); add('plunge', 0.55);
-    return { segs, end: t, dip: 0.012, far: 0.28 }; // the card's bow (card heights); its size once gone (body heights)
+    add('ignite', FLY.t0); add('fly', FLY.cross); add('exit', FLY.out);
+    return { segs, end: t, dip: 0.012 }; // the card's bow (card heights)
   })();
   // A flight through timed keys, [seconds, x, y, size] in screen terms, as three curves
   // in the world: X and Y, its offset from the poster's middle at the card's distance,
@@ -2624,7 +2735,8 @@ export async function start({ reduced = false } = {}) {
     at.yaw = -0.12 + wrapPi(at.yaw + 0.12); // (it flies off facing ±π: unwound, or the springs after it settle a whole turn off)
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
-    popMask = null;
+    retDir = S.dir || retDir;
+    canvas.classList.remove('is-exit');
     sink.drive = false;
     sink.target = 0;
     seatLift = 0;
@@ -2635,25 +2747,28 @@ export async function start({ reduced = false } = {}) {
   function endShow(open) {
     if (!trans) return;
     if (trans.kind === 'case') endStunt(open && section === 'projetos' && trans.node.classList.contains('is-active'));
-    else if (trans.kind === 'pop') { snapRig(); trans = null; popMask = null; seatLift = 0; }
+
   }
   function stepStunt(dt) {
     const S = trans;
     const F = anchorFor('projetos', true);
     const open = doc.classList.contains('is-detail');
-    // The case is open (the stage is out of sight: the card can jump back), or it
+    // Off the screen with the case open (it flies back in when it closes), or the case
     // didn't open after all: the show is over.
-    if (S.opened && ((open && S.t >= STUNT.end) || S.t > S.openAt + 1.2)) {
-      if (open) { sink.px = sink.v = 0; popFrom = S.node; }
+    if (S.opened && (S.t >= STUNT.end || S.t > S.openAt + 1.2)) {
+      const node = S.node;
+      sink.px = sink.v = 0;
       endStunt(false);
+      if (open) popFrom = node; // (it comes back when the case closes)
+      else startReturn(node); // (closed again already, or it never opened: straight back)
       return;
     }
-    // (closed again before the show was over: it springs straight back out of the card)
+    // (closed again before it was off the screen: it comes straight back down)
     if (open) S.seen = true;
     else if (S.seen) {
       sink.px = sink.v = 0;
       endStunt(false);
-      startPop(S.node);
+      startReturn(S.node);
       return;
     }
     // Anything else first (a scroll, the deck moving on, another section) ends it early:
@@ -2701,11 +2816,11 @@ export async function start({ reduced = false } = {}) {
         [1.18, C[0], C[1], 1.18],
         [X - 0.13, mx + (C[0] - mx) * 0.3, my + h * 0.08, 1.07],
         [X, mx, my, 1],
-        [X + 0.25, mx, my, 0.55],
-        [X + 0.55, mx, my, STUNT.far],
+        [X + 0.14, mx + dir * h * 0.3, my - h * 0.3, 1.14], // (thrown back off the poster, toward us)
+        [X + FLY.out, mx + dir * h * 1.3, -h * 1.1, 1.4], // (and away off the top, on the side it came round)
       ], mx, my);
     }
-    let cx = F.x, cy = F.y - h * BODY_C, size = h, yaw = -0.12, tiltA = 0, spin = 0, bank = 0, thrust = 0, inside = false;
+    let cx = F.x, cy = F.y - h * BODY_C, size = h, yaw = -0.12, tiltA = 0, spin = 0, bank = 0, thrust = 0, hit = false;
     sink.drive = false;
     sink.target = 0;
     jr.squash = 0;
@@ -2741,8 +2856,8 @@ export async function start({ reduced = false } = {}) {
       const off = Math.atan2(-v[0], Math.max(v[2], Math.abs(v[0])) + 1e-3); // (from straight away from us: 45° at most)
       const aim = -0.12 + (S.dir * Math.PI + off + 0.12) * lift;
       const elev = Math.atan2(-v[1], Math.hypot(v[0], v[2]));
-      const dive = 0.35 * smooth(clamp01((f - FLY.cross + 0.2) / 0.5));
-      const pitch = 0.1 + (clamp(0.8 - elev * 0.55, 0.3, 1.2) + dive - 0.1) * lift;
+      const brace = 0.3 * smooth(clamp01((f - FLY.cross + 0.25) / 0.25)) * (1 - smooth(clamp01((f - FLY.cross) / 0.2))); // (head down into the hit)
+      const pitch = 0.1 + (clamp(0.8 - elev * 0.55, 0.3, 1.2) + brace - 0.1) * lift;
       const A = S.aim || (S.aim = { yaw: -0.12 + wrapPi(at.yaw + 0.12), yv: 0, tilt: 0.1, tv: 0 }); // (whatever turns it has made before)
       for (let n = dt; n > 1e-6; n -= 1 / 120) {
         const st = Math.min(n, 1 / 120);
@@ -2756,17 +2871,18 @@ export async function start({ reduced = false } = {}) {
       const roll = clamp(-A.yv * 0.2, -0.45, 0.45); // (into the turn: a roll about its length when it flies flat, a lean when upright)
       spin = roll * Math.sin(tiltA);
       bank = roll * Math.cos(tiltA);
-      mixPose(P, POSE.hover, POSE.fly, smooth(clamp01((f - 0.12) / 0.4)));
-      thrust = 1 + 0.3 * smooth(clamp01((f - FLY.cross + 0.15) / 0.3));
-      jr.squash = -0.08 * Math.sin(Math.PI * clamp01(f / 0.18));
-      inside = s < 1; // (past the card: in the picture)
+      const gone = smooth(clamp01((f - FLY.cross) / 0.25));
+      mixPose(P, POSE.hover, POSE.fly, smooth(clamp01((f - 0.12) / 0.4)) * (1 - 0.5 * gone)); // (arms out, braced, as it hits)
+      thrust = 1 + 0.4 * smooth(clamp01((f - FLY.cross + 0.15) / 0.3)); // (full burn into the hit and away)
+      jr.squash = -0.08 * Math.sin(Math.PI * clamp01(f / 0.18)) + 0.1 * Math.sin(Math.PI * clamp01((f - FLY.cross) / 0.16)); // (flattened by the hit)
+      if (f >= FLY.cross) sink.target = STUNT.dip * 6 * cardH * (1 - smooth(clamp01((f - FLY.cross) / 0.3))); // (the poster takes the blow)
+      hit = f >= FLY.cross;
     }
     holdCard(S.card); // (the spring lets go of a card at rest: in the air, say)
     stepSink(dt);
-    // In the picture: only what is inside the poster shows, as through a window; going
-    // through, light bursts out of it and the case opens, in the same beat.
-    if (inside) popMask = { l: m.left, t: m.top, w: m.width, h: m.height, window: true };
-    if (inside && !S.burst) {
+    // The hit: light bursts out of the poster, the deck is shoved the way it came, and
+    // the case opens, all in the same beat; the stage stays up while it flies out.
+    if (hit && !S.burst) {
       S.burst = true;
       const o = toWorld(mx, my, 0, new THREE.Vector3());
       const H = h * view.wpp, R = Math.min(m.width, m.height) * 0.5 * view.wpp;
@@ -2775,6 +2891,15 @@ export async function start({ reduced = false } = {}) {
         spawn(o.x + Math.cos(a) * R * 0.35, o.y + Math.sin(a) * R * 0.35, o.z, Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.3) * H * 0.4, 0.45 + Math.random() * 0.4, 0.7);
       }
       setFace('surprised', 0.8);
+      doc.style.setProperty('--guide-push', `${-S.dir * 14}vw`);
+      canvas.classList.add('is-exit');
+      if (!S.opened) {
+        S.opened = true;
+        S.openAt = S.t;
+        const f = S.done;
+        S.done = null;
+        if (f) f(true);
+      }
     }
     at.x = cx;
     at.y = cy + size * BODY_C; // (its feet: what the root is placed by)
@@ -2798,73 +2923,20 @@ export async function start({ reduced = false } = {}) {
     // it eyes the poster on the pad, and where it flies after that
     [glance.x, glance.y] = seg.kind === 'ignite' ? [mx, my] : [cx + Math.sin(yaw) * h * 3, cy];
     glance.until = performance.now() + 150;
-    // Gone into the picture, small and far: the case opens from there (the stage hides
-    // under it, so not before; the poster grows into the video around where it went).
-    if (!S.opened && S.t >= FLY.t0 + FLY.cross + FLY.open) {
-      S.opened = true;
-      S.openAt = S.t;
-      const f = S.done;
-      S.done = null;
-      if (f) f(true);
-    }
   }
 
-  // Closed again (see update): out of sight inside the card while the video shrinks
-  // back into its poster, then it springs up out of the card's top edge and lands on it.
-  // Whatever of it is still inside the card is hidden (popMask, drawn by maskTunnel).
-  const POP = { wait: 0.55, rise: 0.5, settle: 0.3, depth: 1.05, arc: 0.9 };
-  let popFrom = null, popMask = null, wasDetail = false;
-  const pop = { carry: null }; // cut short: the card it was coming out of still hides it a moment
-  function startPop(node) {
+  // Closed again (see update): it flies back in from off the top of the screen, on the
+  // side it left by, and sets down on the card on its jets (a journey, like any other).
+  let popFrom = null, wasDetail = false, retDir = 1;
+  function startReturn(node) {
     const F = anchorFor('projetos', true);
     if (reduced || view.dock || !rigOK || trans || scrub.mid || section !== 'projetos' || !F.floor || F.floor.node !== node) return;
-    snapRig();
-    trans = { kind: 'pop', t: 0, node, card: node.querySelector('.project-card') || node };
-  }
-  function stepPop(dt) {
-    const S = trans;
-    const F = anchorFor('projetos', true);
-    if (section !== 'projetos' || !F.floor || F.floor.node !== S.node || doc.classList.contains('is-detail')) {
-      snapRig();
-      if (popMask) pop.carry = { card: S.card, until: time + 0.4 };
-      trans = null;
-      popMask = null;
-      seatLift = 0;
-      return;
-    }
-    const u = clamp01((S.t - POP.wait) / POP.rise);
-    const g = clamp01((S.t - POP.wait - POP.rise) / POP.settle); // landed: absorbing it
-    // from inside the card, up through its top edge, over the top and down onto it
-    const lift = -POP.depth * (1 - u) + 4 * POP.arc * u * (1 - u);
-    const P = jr.pose || (jr.pose = newPose());
-    if (g > 0) mixPose(P, POSE.squat, POSE.stand, smooth(g));
-    else if (u < 0.55) mixPose(P, POSE.stomp, POSE.tuck, smooth(clamp01((u - 0.3) / 0.25)));
-    else mixPose(P, POSE.tuck, POSE.squat, smooth(clamp01((u - 0.7) / 0.3)));
-    at.x = F.x;
-    at.y = F.y - lift * F.h;
-    at.h = F.h;
-    at.yaw += wrapPi(-0.12 - at.yaw) * damp(6, dt);
+    const h = F.h;
+    Object.assign(at, { x: clamp(F.x + retDir * h * 1.3, h * 0.6, view.w - h * 0.6), y: -h * 0.6, h, yaw: -retDir * 0.9 });
     vel.x = vel.y = 0;
-    jr.on = true;
-    jr.w = 1 - smooth(clamp01((g - 0.5) / 0.5));
-    jr.pin = 1;
-    jr.air = 0;
-    jr.tilt = 0;
-    jr.fly = 0;
-    jr.pitch = 0;
-    jr.squash = g > 0 ? 0.16 * Math.sin(Math.PI * Math.min(1, g * 2.2)) * (1 - g) : -0.08 * Math.sin(Math.PI * u);
-    jr.hop = 0;
-    jr.floor = lift > -0.15 ? F.floor : null;
-    seatLift = Math.max(0, lift);
-    if (u >= 1 && !S.hit) { S.hit = true; touchdown('feet'); }
-    const r = S.card.getBoundingClientRect();
-    popMask = u < 1 ? { l: r.left, t: r.top, w: r.width, h: r.height } : null;
-    if (g >= 1) {
-      trans = null;
-      popMask = null;
-      seatLift = 0;
-      greet('projetos', 'thumbs');
-    }
+    snap.t = snap.k = 1; // (from there, not blended from wherever the body was)
+    placeRoot();
+    hopTo('projetos', 'projetos', 'hover');
   }
 
   function updateSeatMark() {
@@ -3144,9 +3216,9 @@ export async function start({ reduced = false } = {}) {
         at.yaw += wrapPi(goal.yaw - at.yaw) * k;
       }
     }
-    // a case it opened was closed again: it springs back out of the card
+    // a case it opened was closed again: it flies back down onto the card
     const detail = doc.classList.contains('is-detail');
-    if (wasDetail && !detail && popFrom) startPop(popFrom);
+    if (wasDetail && !detail && popFrom) startReturn(popFrom);
     if (!detail) popFrom = null;
     wasDetail = detail;
     stepTransit(dt);
@@ -3318,7 +3390,7 @@ function abyssalize(source, shared) {
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
         if (uClipAll > 0.5) {
           bool aIn = gl_FragCoord.x > uAllRect.x && gl_FragCoord.x < uAllRect.z && gl_FragCoord.y > uAllRect.y && gl_FragCoord.y < uAllRect.w;
-          if (aIn == (uClipAll < 1.5)) discard; // 1: behind the rect; 2: only through it, as through a window
+          if (aIn) discard;
         }
         if (uDissolve > 0.001) {
           vec3 q = vDPos * uNoiseScale;
