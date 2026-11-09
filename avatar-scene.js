@@ -755,7 +755,7 @@ export async function start({ reduced = false } = {}) {
   // are laid out facing right, the way the page reads; scrolled back up they run
   // backward, so it turns round to face left instead of flying backward. m: 0 as laid
   // out, 1 turned round (see stepHeading).
-  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false, along: NaN };
+  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false, along: NaN, lo: 0, hi: 1, mode: 0 };
   // Which arm reaches out ahead in flight: the one on the visitor's side (the right
   // arm flying right, the left one turned round), so the big head doesn't hide it.
   const leadOf = (s) => (s < 0 ? 1 - head.m : head.m);
@@ -961,7 +961,7 @@ export async function start({ reduced = false } = {}) {
   const tug = { x: 0, v: 0 }; // a jolt on the card when the focus moves: a springy wobble
   let tugAsked = 0; // when a pull was asked for before the hands were on the card
   let cardStyled = false;
-  let scrollY = window.scrollY, scrollV = 0, lean = 0;
+  let scrollY = window.scrollY, scrollD = 0, scrollV = 0, lean = 0; // (scrollD: how far the page went in this frame)
 
   function snapTo(a) {
     at.x = a.x; at.y = a.y; at.h = a.h; at.yaw = a.yaw;
@@ -1048,13 +1048,15 @@ export async function start({ reduced = false } = {}) {
   function hopTo(id, prev, skForce) {
     // (flying through a tunnel, or off its spot on a scrolled flight, it sets off from
     // there, still in the air)
-    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.pin < 0.5);
+    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.fly > 0);
     if (trans && trans.kind === 'send') settleSend(null);
     // (off the end of the last case it springs from where it is on the card, or drops
     // from where it hangs past it: not from the deck's middle)
     const onLedge = !trans && (ledge.drove || ledge.was);
     const sk = skForce || (tun.active ? 'hover' : airborne || (onLedge && !jr.floor) ? 'fall' : 'stand');
     const ek = endKind(id);
+    // (turned round on a flight laid out the other way, it sets off facing the way it is)
+    if (head.m > 0) { at.yaw = wrapPi(at.yaw * (1 - 2 * head.m)); head.m = head.to = 0; }
     const A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, tilt: wrapPi(tilt.rotation.x), floor: onLedge && jr.floor ? jr.floor : undefined }; // (the tilt unwound, so it always rights itself the short way)
     const B = anchorFor(id, true);
     const dist = Math.hypot(B.x - A.x, clamp(B.y, 0, view.h) - A.y);
@@ -1798,19 +1800,51 @@ export async function start({ reduced = false } = {}) {
   // edge both ways (the legs share the zone by their lengths), so the flight never
   // lurches. Scrolled back, it is the same way in reverse.
   const CROSS = { T0: 0.1, LT: 0.07 }; // the lift-off's share of the zone, and the turn's out of sight (of the rest)
-  // Into the zone from wherever it was: how far off the path it was then, fading out as
-  // the rig's blend does. The path itself is kept, the turn out of sight included (not
-  // pulled toward the spot it came from, on screen).
-  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1 }; // (p: the last frame's, to tell a new entry)
-  function crossPlace(x, y, h, yaw) {
+  // Into the zone from wherever it was. Near either end's spot the flight is kept as laid
+  // out, the turn out of sight included: only how far off that spot it was is carried
+  // along, fading out as the rig's blend does and as the flight nears the turn (measured
+  // from the spot, not from the flight, so a first frame that is already well on its way
+  // doesn't drag the turn back on screen). At the portal that reaches half the way in
+  // from the edge: with the page running back up, the pass is still on its way there.
+  // From further off (a leap back from deep in the timeline, say) it glides onto the
+  // flight instead, as any journey taking over does: shifted that far, the whole way out
+  // and back would be flown across the screen. And so it does (over) when the first frame
+  // is already past the turn, which it then never took. Gliding on the way back up, it
+  // doesn't follow the flight out to the edge either (it would be on its way back before
+  // it got there, a loop in mid-screen): it brakes and waits (hold), turning round as the
+  // flight does out of sight, and is taken along when the flight comes past, or goes
+  // straight to the spot if that is on its way.
+  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1, far: false, x0: 0, hold: NaN, soft: 0 }; // (p: the last frame's, to tell a new entry)
+  function crossPlace(x, y, h, yaw, E, paged, over, xTurn, to) {
     if (jr.lastP < 0 || jr.lastP !== crossOff.p) {
       const k = snap.k < 1 ? 1 : 0;
-      crossOff.x = (snap.at.x - x) * k;
-      crossOff.y = (snap.at.y - y) * k;
-      crossOff.h = (snap.at.h - h) * k;
-      crossOff.yaw = wrapPi(snap.at.yaw - yaw) * k;
+      let dy = snap.at.y - E.y;
+      // (the portal's end moves with the page: what the page went by in this frame is
+      // not how far off it was, so at the portal it stays with it)
+      if (paged) dy += clamp(-dy, Math.min(0, -scrollD), Math.max(0, -scrollD));
+      crossOff.x = (snap.at.x - E.x) * k;
+      crossOff.y = dy * k;
+      crossOff.h = (snap.at.h - E.h) * k;
+      crossOff.yaw = wrapPi(snap.at.yaw - E.yaw) * k;
+      crossOff.x0 = x;
+      crossOff.far = over || Math.abs(crossOff.x) > Math.max(E.h, paged ? E.x - xTurn : 0) * 0.5;
+      crossOff.hold = NaN;
+      if (crossOff.far && k && to) {
+        crossOff.hold = Math.min(snap.at.x - snap.at.h * 0.5, to.x);
+        crossOff.soft = Math.min(to.h * 0.6, to.x - crossOff.hold);
+      }
     }
-    const r = 1 - Math.min(1, snap.k);
+    if (crossOff.far) {
+      if (Number.isFinite(crossOff.hold)) {
+        const b = crossOff.hold, s = crossOff.soft, u = x - b;
+        if (u >= s) crossOff.hold = NaN; // (the flight has come past: with it from here)
+        else x = b + (u <= -s ? 0 : ((u + s) * (u + s)) / (4 * s));
+      }
+      Object.assign(at, { x, y, h, yaw });
+      snapAt();
+      return;
+    }
+    const r = (1 - Math.min(1, snap.k)) * clamp01((x - xTurn) / Math.max(1, crossOff.x0 - xTurn));
     at.x = x + crossOff.x * r;
     at.y = y + crossOff.y * r;
     at.h = h + crossOff.h * r;
@@ -1826,7 +1860,7 @@ export async function start({ reduced = false } = {}) {
     jr.w = 1;
     if (p < CROSS.T0) { // lifting off: a crouch, the jets lighting
       const u = p / CROSS.T0;
-      crossPlace(A.x, A.y, A.h, A.yaw);
+      crossPlace(A.x, A.y, A.h, A.yaw, A, false, false, -A.h * 0.9, null);
       mixPose(P, POSE.crouch, POSE.crouch, 0);
       jr.w = smooth(clamp01(u / 0.7));
       jr.pin = 1;
@@ -1866,9 +1900,27 @@ export async function start({ reduced = false } = {}) {
     let yaw = A.yaw + wrapPi(-YAW.fly - A.yaw) * up;
     yaw += (YAW.fly - yaw) * turn;
     yaw += (B.yaw - yaw) * endK;
+    const way = jr.lastP < 0 ? (scrub.dir < 0 ? -1 : 1) : Math.sign(p - jr.lastP); // (on to the timeline, back, or held)
+    const qWas = jr.lastP < 0 ? (way < 0 ? 1 : 0) : (jr.lastP - CROSS.T0) / (1 - CROSS.T0); // (where it was a frame ago)
     const ox = at.x, oy = at.y;
-    crossPlace(x, y, h, yaw);
-    head.along = Math.hypot(at.x - ox, at.y - oy) * (p < jr.lastP ? -1 : 1); // (see stepHeading)
+    crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, jr.lastP < 0 && (way < 0 ? q < L1 : q >= back), xOff, way < 0 ? A : null);
+    // Round the turn, out of sight (in this frame, or between the last one and this):
+    // whatever was still blending in is done with, and it is turned the way it goes
+    // by the time it comes back into view.
+    if (!crossOff.far && Math.min(q, qWas) < back && Math.max(q, qWas) >= L1) {
+      if (snap.k < 1) { snap.t = snap.k = 1; crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, false, xOff, null); }
+      if (way) head.m = head.to = way < 0 ? 1 : 0;
+      head.vx = 0;
+    }
+    head.along = Math.hypot(at.x - ox, at.y - oy) * way; // (see stepHeading)
+    // How far round it has to be, as part of the flight (see stepHeading). Scrolled back
+    // out of the hover at the portal: turned to fly off, by a third of the way to the edge.
+    // And taken back in from just off the edge, before the turn (the scroll changed its
+    // mind): the way it now goes by the time it shows, not tail first.
+    const show = smooth(clamp01((at.x + at.h * 0.9) / (at.h * 0.3)));
+    if (way < 0 && q >= back) head.lo = smooth(clamp01((1 - (q - back) / L2) / 0.35));
+    else if (way < 0 && q < L1 && show < 1) head.lo = show;
+    else if (way > 0 && q >= back && show < 1) head.hi = 1 - show;
     const lift = smooth(clamp01(q / 0.2)); // (up out of the crouch, the feet letting go of the floor)
     jr.pin = 1 - lift;
     jr.air = 0.45 * fly;
@@ -2121,11 +2173,23 @@ export async function start({ reduced = false } = {}) {
     }
     head.wasTun = tun.drove;
     head.x = at.x;
+    // (along a flight and across the screen are not the same measure: one taking over
+    // from the other starts from none)
+    const mode = tun.drove ? 0 : along ? 1 : 2;
+    if (mode + head.mode === 3) head.vx = 0;
+    head.mode = mode;
     head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
-    if (flyW < 0.25 || reduced || view.dock || (trans && (trans.kind === 'case' || trans.kind === 'enter'))) head.to = 0;
+    // (a timed journey rights itself as it sets off, facing the way it was: no turn-round
+    // would be done before it is upright, only begun and taken back)
+    if (flyW < 0.25 || reduced || view.dock || trans) head.to = 0;
     else if (Math.abs(head.vx) > at.h * 0.5) head.to = along ? (head.vx > 0 ? 0 : 1) : (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
     head.m += (head.to - head.m) * damp(6, dt);
     if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
+    // Where the turn is part of the flight as laid out (heroCross), it is not left to the
+    // clock: scrolled back out of the hover at the first portal at a wheel's pace, it was
+    // off the screen, tail first, before it had turned.
+    if (head.m < head.lo) { head.to = 1; head.m = Math.min(head.lo, head.m + dt * 12); }
+    else if (head.m > head.hi) { head.to = 0; head.m = Math.max(head.hi, head.m - dt * 12); }
     if (dbg.head != null) head.m = head.to = dbg.head; // (QA: pin the heading)
   }
   // (a journey taking over mid-way starts from where the body was: see snapRig)
@@ -2305,11 +2369,12 @@ export async function start({ reduced = false } = {}) {
 
   // A pose change that can't be continuous (a journey taking over mid-way, a new
   // target): blend from where everything was over a quarter of a second.
-  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, tilt: 0, spin: 0, bank: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
+  const snap = { t: 1, k: 1, at: { x: 0, y: 0, h: 1, yaw: 0 }, hm: 0, tilt: 0, spin: 0, bank: 0, pp: new THREE.Vector3(), pr: new THREE.Vector3(), ps: new THREE.Vector3(1, 1, 1), q: rigBones.map(() => new THREE.Quaternion()), p: rigBones.map(() => new THREE.Vector3()) };
   function snapRig() {
     snap.t = 0;
     snap.k = 0;
     Object.assign(snap.at, { x: at.x, y: at.y, h: at.h, yaw: at.yaw });
+    snap.hm = head.m;
     snap.tilt = tilt.rotation.x;
     snap.spin = tilt.rotation.y;
     snap.bank = tilt.rotation.z;
@@ -2322,10 +2387,14 @@ export async function start({ reduced = false } = {}) {
   function blendSnap() {
     if (snap.k >= 1) return;
     const k = snap.k;
+    // (turning round has a pace of its own, not held back by the blend: what blends is
+    // the facing it turns from, and the rest of the yaw, the look and the sway)
+    const turn = 1 - 2 * head.m;
+    const more = pivot.rotation.y - at.yaw * turn, more0 = snap.pr.y - snap.at.yaw * (1 - 2 * snap.hm);
     pivot.position.lerpVectors(snap.pp, pivot.position, k);
     pivot.rotation.set(
       snap.pr.x + (pivot.rotation.x - snap.pr.x) * k,
-      snap.pr.y + wrapPi(pivot.rotation.y - snap.pr.y) * k,
+      (at.yaw - wrapPi(at.yaw - snap.at.yaw) * (1 - k)) * turn + more0 + wrapPi(more - more0) * k,
       snap.pr.z + (pivot.rotation.z - snap.pr.z) * k);
     pivot.scale.lerpVectors(snap.ps, pivot.scale, k);
     setTilt(snap.tilt + (tilt.rotation.x - snap.tilt) * k, snap.spin + (tilt.rotation.y - snap.spin) * k, snap.bank + (tilt.rotation.z - snap.bank) * k);
@@ -3639,6 +3708,8 @@ export async function start({ reduced = false } = {}) {
     jr.tun = false;
     tun.drove = false;
     head.along = NaN;
+    head.lo = 0;
+    head.hi = 1;
     if (!ledge.drove) ledge.lastP = -1;
     ledge.was = ledge.drove;
     ledge.drove = false;
@@ -3647,6 +3718,7 @@ export async function start({ reduced = false } = {}) {
     // scroll velocity -> lean (the guide is dragged by the current)
     const sy = window.scrollY;
     const v = (sy - scrollY) / Math.max(dt, 1e-3);
+    scrollD = sy - scrollY;
     scrollY = sy;
     scrollV += (v - scrollV) * damp(4, dt);
     const leanT = reduced ? 0 : clamp(scrollV / 2600, -1, 1);
