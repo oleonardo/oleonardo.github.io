@@ -648,12 +648,16 @@ html.is-locked .topbar {
    1 · HERO
    ========================================================================== */
 .hero {
+  /* The copy sits centred in the space left of the guide (which stands at ~74% of
+     the width, see anchorFor in avatar-scene.js), so on wide screens it moves in
+     from the edge instead of hugging it. Narrow screens fall back to the gutter. */
+  --hero-x: max(var(--gutter), calc((62vw - 660px) / 2));
   position: relative;
   display: grid;
   align-items: center;
   min-height: 100vh;
   min-height: 100svh;
-  padding: calc(var(--topbar-h) + 32px) var(--gutter) 112px;
+  padding: calc(var(--topbar-h) + 32px) var(--gutter) 112px var(--hero-x);
 }
 
 /* A scrim on the reading side keeps the copy crisp over the particles. */
@@ -663,7 +667,7 @@ html.is-locked .topbar {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: linear-gradient(90deg, rgba(5, 8, 16, 0.9) 0%, rgba(5, 8, 16, 0.55) 44%, rgba(5, 8, 16, 0) 72%);
+  background: linear-gradient(90deg, rgba(5, 8, 16, 0.9) 0%, rgba(5, 8, 16, 0.55) 50%, rgba(5, 8, 16, 0) 76%);
 }
 
 .hero-inner {
@@ -744,7 +748,7 @@ html.is-locked .topbar {
 
 .scroll-cue {
   position: absolute;
-  left: var(--gutter);
+  left: var(--hero-x, var(--gutter));
   bottom: 30px;
   display: flex;
   align-items: center;
