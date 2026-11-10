@@ -2,7 +2,13 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <script>document.documentElement.classList.add("js");</script>
+    <script>
+      (function (d, c) {
+        d.classList.add("js");
+        // the sound switch has its place in the top bar from the first paint (sound.js shows it)
+        if ((window.AudioContext || window.webkitAudioContext) && !c.saveData && !/(^|-)2g$/.test(c.effectiveType || "")) d.classList.add("snd");
+      })(document.documentElement, navigator.connection || {});
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Leonardo de Oliveira - Engenheiro de Software / AI</title>
     <meta
@@ -43,6 +49,7 @@
     </script>
     <script src="engine.js" defer></script>
     <script src="app.js" defer></script>
+    <script src="sound.js" defer></script>
     <script src="avatar.js" defer></script>
   </head>
   <body>
@@ -66,6 +73,10 @@
         <a href="#contato" class="nav-link" data-nav="contato">Contato</a>
       </nav>
       <p class="status mono"><span class="status-dot" aria-hidden="true"></span>SYS_ONLINE: AI_AGENT_v2.6<span class="depth" aria-hidden="true"><span class="depth-num"></span> m</span></p>
+      <button id="sound-toggle" class="sound-toggle mono" type="button" aria-pressed="false" aria-label="Som ambiente" hidden>
+        <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span class="sound-label" aria-hidden="true">SOM: <b class="sound-state">OFF</b></span>
+      </button>
       <span class="depth-line" id="depth-line" aria-hidden="true"><i class="depth-fill"></i><i class="depth-tick t1"></i><i class="depth-tick t2"></i><i class="depth-tick t3"></i></span>
     </header>
 

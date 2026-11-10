@@ -24,6 +24,24 @@ const MODEL = {
     Grey: { color: 0x3d5a78, metal: 0.4, rough: 0.42 },
     Black: { color: 0x050810, emissive: 0x63e6d2, glow: 0.6 },
     Jet: { color: 0x0a0f18, emissive: 0xffb35c, glow: 0 }, // the jetpack's nozzles (glow set by the thrust)
+    Pad: { color: 0x0a0f18, metal: 0.15, rough: 0.75 }, // the headphones' cushions
+    Beat: { color: 0x050810, emissive: 0x63e6d2, glow: 0 }, // the ring on each cup (glow set by the music)
+  },
+  // Headphones, measured in the head's own box so another head needs no new numbers:
+  // across in half-widths from its middle, up in heights from its underside; sizes in
+  // half-widths.
+  phones: {
+    reach: 1.13, // a cup's middle, out from the head's middle
+    ear: 0.36, // the ears' height
+    crown: 1.13, // the top of the band's arch
+    cup: [0.3, 0.15], // a cup's radius and thickness (slim: the right arm swings close by in Wave and Dance)
+    pad: [0.33, 0.06], // its cushion
+    ring: [0.19, 0.026], // the glowing ring on its outer face
+    band: [0.053, 2.2], // the band's radius, and how much wider than thick it is
+    // hovering over the ears, where they take shape and where they come apart: lifted
+    // (in heights) and opened out a little wider than the head
+    hover: { lift: 0.36, open: 1.09 },
+    motes: 320, // the particles they are made of, coming and going
   },
   headBone: 'Head',
   neckBone: 'Neck',
@@ -215,7 +233,7 @@ export async function start({ reduced = false } = {}) {
   // The soles: the vertices of the rigid foot meshes riding on the foot bones
   // (the ankle bone itself sits well above the toes).
   const soles = [];
-  for (const n of ['Foot.L', 'Foot.R']) {
+  for (const [foot, n] of ['Foot.L', 'Foot.R'].entries()) {
     const bone = bonesByName[bare(n)];
     if (!bone) continue;
     bone.traverse((o) => {
@@ -224,14 +242,15 @@ export async function start({ reduced = false } = {}) {
       const step = Math.max(1, Math.ceil(a.count / 160));
       const pts = [];
       for (let i = 0; i < a.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(a, i));
-      soles.push({ mesh: o, pts });
+      soles.push({ mesh: o, pts, foot });
     });
   }
   const vSole = new THREE.Vector3();
+  const footLow = [Infinity, Infinity]; // each foot's lowest point, as soleY last found it (see stepHeard)
   function soleY() {
-    let low = Infinity;
-    for (const s of soles) for (const p of s.pts) low = Math.min(low, model.worldToLocal(vSole.copy(p).applyMatrix4(s.mesh.matrixWorld)).y);
-    return low;
+    footLow[0] = footLow[1] = Infinity;
+    for (const s of soles) for (const p of s.pts) footLow[s.foot] = Math.min(footLow[s.foot], model.worldToLocal(vSole.copy(p).applyMatrix4(s.mesh.matrixWorld)).y);
+    return Math.min(footLow[0], footLow[1]);
   }
 
 
@@ -296,7 +315,7 @@ export async function start({ reduced = false } = {}) {
   // pose, with a nozzle under each tank. Built in model space from the torso's own size
   // (back is -z), then handed to the torso bone. Its parts take the same Abissal look,
   // dissolve and card masks as the body; the nozzles' amber glow follows the thrust.
-  const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0 };
+  const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0, lit: false };
   {
     let torsoBone = null, torsoMesh = null;
     model.traverse((o) => { if (!torsoBone && o.isBone && /^Torso(_\d+)?$/.test(bare(o.name))) torsoBone = o; });
@@ -359,6 +378,250 @@ export async function start({ reduced = false } = {}) {
     }
   }
 
+  // The headphones: there while the sound is on, and only then. Switched on, they take
+  // shape out of a swirl of motes, hovering open over its ears, and clamp down on to
+  // them; switched off, they lift off and come apart into motes that the current takes
+  // away. Built in the head bone's own frame from the head's box, the way the jetpack is
+  // from the torso's, so they follow every turn of the head. Same Abissal look and card
+  // masks as the body, but a dissolve of their own, and a ring on each cup that glows
+  // with the music.
+  const phones = { group: null, rig: null, band: null, cups: [], spots: [], glow: null, dis: null, reach: 0, y0: 0, lift: 0, want: 'gone', k: 0, kv: 0, vis: 0, visT: 0, hold: 0, lvl: 0, flash: 0, landed: true, fx: null };
+  if (headBone && MODEL.phones) {
+    const C = MODEL.phones;
+    model.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(headBone.matrixWorld).invert();
+    const hb = new THREE.Box3(), hv = new THREE.Vector3(), hm = new THREE.Matrix4();
+    headBone.traverse((o) => {
+      if (!o.isMesh) return;
+      hm.multiplyMatrices(inv, o.matrixWorld);
+      const a = o.geometry.attributes.position;
+      for (let i = 0; i < a.count; i++) hb.expandByPoint(hv.fromBufferAttribute(a, i).applyMatrix4(hm));
+    });
+    if (hb.isEmpty()) console.warn('[avatar] no headphones: no mesh rides on the head bone to measure them from');
+    else {
+      const hw = (hb.max.x - hb.min.x) / 2, hh = hb.max.y - hb.min.y;
+      const mine = { ...shared, uDissolve: { value: 1 } };
+      const look = (name) => abyssalize(new THREE.MeshStandardMaterial({ name }), mine);
+      const shell = look('Grey'), pad = look('Pad'), glow = look('Beat');
+      const g = new THREE.Group();
+      const rig = new THREE.Group(); // its origin on the line through the ears
+      rig.position.set((hb.min.x + hb.max.x) / 2, hb.min.y + C.ear * hh, (hb.min.z + hb.max.z) / 2);
+      g.add(rig);
+      // the band: an arch from ear to ear over the top of the head
+      const reach = C.reach * hw, rise = (C.crown - C.ear) * hh;
+      const arch = [];
+      for (let i = 0; i <= 24; i++) {
+        const a = (i / 24) * Math.PI;
+        arch.push(new THREE.Vector3(Math.cos(a) * reach, Math.sin(a) * rise, 0));
+      }
+      const band = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(arch), 48, C.band[0] * hw, 8, false), shell);
+      band.scale.z = C.band[1];
+      rig.add(band);
+      const [rc, tc] = C.cup, [rp, tp] = C.pad, [rr, rt] = C.ring;
+      for (const side of [-1, 1]) {
+        const cup = new THREE.Group();
+        cup.position.x = side * reach;
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(rc * hw * 0.9, rc * hw, tc * hw, 28).rotateZ(-side * Math.PI / 2), shell); // (narrower on the outside)
+        cup.add(body);
+        const cushion = new THREE.Mesh(new THREE.CylinderGeometry(rp * hw, rp * hw, tp * hw, 28).rotateZ(Math.PI / 2), pad);
+        cushion.position.x = -side * (tc + tp) * hw * 0.5;
+        cup.add(cushion);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr * hw, rt * hw, 10, 36).rotateY(Math.PI / 2), glow);
+        ring.position.x = side * tc * hw * 0.5;
+        cup.add(ring);
+        rig.add(cup);
+        phones.cups.push({ group: cup, side });
+      }
+      // Where their motes belong: places all over the band and the cups, in the rig's
+      // frame (part: 0 on the band, else the side of the cup it is on).
+      const spots = [];
+      for (let i = 0; i < C.motes; i++) {
+        if (i % 2 === 0) {
+          const a = Math.random() * Math.PI, j = C.band[0] * hw * 1.6;
+          spots.push({ part: 0, x: Math.cos(a) * reach + (Math.random() - 0.5) * j, y: Math.sin(a) * rise + (Math.random() - 0.5) * j, z: (Math.random() - 0.5) * j * C.band[1] });
+        } else {
+          const side = i % 4 === 1 ? -1 : 1, a = Math.random() * TAU, r = rc * hw * (0.5 + 0.55 * Math.random());
+          spots.push({ part: side, x: side * (Math.random() - 0.3) * tc * hw, y: Math.sin(a) * r, z: Math.cos(a) * r });
+        }
+      }
+      g.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      headBone.add(g);
+      Object.assign(phones, { group: g, rig, band, spots, glow, dis: mine.uDissolve, reach, y0: rig.position.y, lift: C.hover.lift * hh });
+    }
+  }
+  // What it does can be heard (sound.js): an effect, by its id. Nothing happens while the
+  // sound is off, where the page has none, or for an id that has no file yet.
+  function sfx(id, opt) {
+    const a = window.abissalAudio;
+    if (!a || !a.play) return;
+    // (nothing of the guide's while the page hides it: docked with a form field in
+    // focus, or under an open scene. The transmission is the page's own event.)
+    if (id !== 'transmit' && ((view.dock && formFocused()) || (sceneOpen() && !canvas.classList.contains('is-exit')))) return;
+    a.play(id, opt);
+  }
+  // Where the sound stands (sound.js: off, armed, loading, on): on, or about to be,
+  // and they are on it; anything else and it has none.
+  function soundState(s, quiet) {
+    const P = phones;
+    if (!P.group) return;
+    const next = s === 'on' || s === 'loading' ? 'on' : 'gone';
+    if (quiet) { // (as the guide is set up: they are simply where they belong)
+      P.want = next;
+      P.k = P.vis = P.visT = next === 'on' ? 1 : 0;
+      return;
+    }
+    if (next === P.want) return;
+    P.want = next;
+    P.landed = next === 'on' ? false : P.k < 0.5; // (nothing to lift off if they never got on)
+    dirty = true; // (with reduced motion the loop sleeps between inputs: draw them now)
+    markInput();
+  }
+  // One of their motes' places, in the world, as the headphones are right now.
+  const pv = new THREE.Vector3();
+  function spotWorld(s, across, out) {
+    return out.set(s.part ? s.part * phones.reach * across + s.x : s.x * across, s.y, s.z).applyMatrix4(phones.rig.matrixWorld);
+  }
+  // Motes in: scattered round and above the head, they swirl in to their places. Motes
+  // out: from their places they are thrown clear and left to the current.
+  function phonesFx(mode, across) {
+    const P = phones;
+    if (!hPts || reduced) return;
+    const H = Math.max(at.h * view.wpp, 1e-3) * (view.dock ? 0.4 : 1); // (docked: a small cloud, inside its small frame)
+    P.rig.updateWorldMatrix(true, false);
+    for (let i = 0; i < hN; i++) {
+      const th = Math.random() * TAU, ph = Math.acos(2 * Math.random() - 1);
+      const dx = Math.sin(ph) * Math.cos(th), dy = Math.abs(Math.cos(ph)), dz = Math.sin(ph) * Math.sin(th);
+      if (mode === 'in') {
+        const r = H * (0.2 + 0.5 * Math.random());
+        hVel[i * 3] = dx * r; hVel[i * 3 + 1] = dy * r * 0.8 + H * 0.05; hVel[i * 3 + 2] = dz * r; // (here: how far off it starts)
+        hDelay[i] = Math.random() * 0.28;
+        hLife[i] = 0.42 + Math.random() * 0.24;
+        hSwirl[i] = 1.3 + Math.random() * 1.7;
+      } else {
+        spotWorld(P.spots[i], across, pv);
+        hPos[i * 3] = pv.x; hPos[i * 3 + 1] = pv.y; hPos[i * 3 + 2] = pv.z;
+        const sp = H * (0.18 + Math.random() * 0.7);
+        hVel[i * 3] = dx * sp; hVel[i * 3 + 1] = dy * sp * 0.7 + H * 0.12; hVel[i * 3 + 2] = dz * sp * 0.6;
+        hDelay[i] = Math.random() * 0.14;
+        hLife[i] = 0.9 + Math.random() * 1.0;
+      }
+      hA0[i] = 0.6 + Math.random() * 0.4;
+      hAlpha[i] = 0;
+    }
+    P.fx = { mode, t: 0 };
+    hPts.visible = true;
+  }
+  function stepPhonesFx(dt, across) {
+    const P = phones, F = P.fx;
+    if (!F) return;
+    F.t += dt;
+    const H = Math.max(at.h * view.wpp, 1e-3);
+    let alive = 0;
+    if (F.mode === 'in') {
+      P.rig.updateWorldMatrix(true, false);
+      for (let i = 0; i < hN; i++) {
+        const u = (F.t - hDelay[i]) / hLife[i];
+        if (u >= 1) { hAlpha[i] = 0; continue; }
+        alive++;
+        if (u <= 0) continue;
+        // (fast at first, easing in to its place, turning round the head as it comes)
+        const far = Math.pow(1 - u, 3), a = hSwirl[i] * far, ca = Math.cos(a), sa = Math.sin(a);
+        const ox = hVel[i * 3], oy = hVel[i * 3 + 1], oz = hVel[i * 3 + 2];
+        spotWorld(P.spots[i], across, pv);
+        hPos[i * 3] = pv.x + (ox * ca + oz * sa) * far;
+        hPos[i * 3 + 1] = pv.y + oy * far;
+        hPos[i * 3 + 2] = pv.z + (oz * ca - ox * sa) * far;
+        hAlpha[i] = hA0[i] * smooth(clamp01(u / 0.25)) * (1 - smooth(clamp01((u - 0.8) / 0.2)));
+      }
+    } else {
+      const drag = Math.exp(-2.2 * dt);
+      for (let i = 0; i < hN; i++) {
+        const age = F.t - hDelay[i];
+        if (age >= hLife[i]) { hAlpha[i] = 0; continue; }
+        alive++;
+        if (age <= 0) continue;
+        const f = flow(hPos[i * 3] / H, hPos[i * 3 + 1] / H, hPos[i * 3 + 2] / H + i, time);
+        for (let c = 0; c < 3; c++) {
+          hVel[i * 3 + c] = hVel[i * 3 + c] * drag + f[c] * H * 0.16 * dt;
+          hPos[i * 3 + c] += hVel[i * 3 + c] * dt;
+        }
+        hAlpha[i] = hA0[i] * Math.min(1, age / 0.06) * Math.pow(1 - age / hLife[i], 1.5);
+      }
+    }
+    hPts.geometry.attributes.position.needsUpdate = true;
+    hPts.geometry.attributes.aAlpha.needsUpdate = true;
+    if (!alive) {
+      P.fx = null;
+      hPts.visible = false;
+    }
+  }
+  function stepPhones(dt) {
+    const P = phones;
+    if (!P.group) return;
+    const want = dbg.phones || P.want; // (QA: pin them 'on', 'up' (hovering) or 'gone')
+    const V = MODEL.phones.hover;
+    const there = want !== 'gone';
+    // (hovering, they are open a little wider than the head; coming down they close on it)
+    let across = 1 + (V.open - 1) * (view.dock ? 0 : 1 - P.k);
+    if (reduced) {
+      P.vis = P.visT = there ? 1 : 0;
+      P.k = want === 'on' ? 1 : 0;
+      P.kv = P.hold = 0;
+    } else {
+      // The order of things. Coming: the motes first, the headphones taking shape in
+      // them a moment later, and only once they are there do they come down on the ears.
+      // Going: up off the ears first, then to motes.
+      const visT = there || P.k > 0.3 ? 1 : 0;
+      if (visT !== P.visT) {
+        P.visT = visT;
+        P.hold = visT ? 0.3 * (1 - P.vis) : 0.04;
+        // (no motes for headphones nobody can see: behind a card, the body in mist, or
+        // gone again before they had taken shape)
+        if (maskHides || tun.hidden || shared.uDissolve.value > 0.5 || (!visT && P.vis < 0.3)) {
+          P.fx = null;
+          if (hPts) hPts.visible = false;
+        } else {
+          phonesFx(visT ? 'in' : 'out', across);
+          sfx(visT ? 'phones-gather' : 'phones-away');
+        }
+      }
+      P.hold = Math.max(0, P.hold - dt);
+      if (!P.hold) {
+        P.vis += (visT - P.vis) * damp(visT ? 7 : 10, dt);
+        if (Math.abs(visT - P.vis) < 0.004) P.vis = visT;
+      }
+      // a spring that runs a little past: they clamp on to the ears, and spring up off them
+      const onT = want === 'on' && P.vis > 0.7 ? 1 : 0;
+      P.kv += ((onT - P.k) * 170 - P.kv * 19) * dt;
+      P.k += P.kv * dt;
+    }
+    // (the body's own dissolve takes them with it; theirs is on top of that)
+    P.dis.value = Math.max(shared.uDissolve.value, 1 - P.vis);
+    P.group.visible = P.dis.value < 0.999;
+    const k = P.k, kc = clamp01(k);
+    const hov = view.dock ? 0 : 1 - k; // (no room to hover in the dock's small frame: there they take shape on the ears)
+    across = 1 + (V.open - 1) * hov;
+    P.rig.position.y = P.y0 + P.lift * hov;
+    P.band.scale.set(across, 1, MODEL.phones.band[1]);
+    for (const c of P.cups) c.group.position.x = c.side * P.reach * across;
+    stepPhonesFx(dt, across);
+    // the moment they are on: its head dips under them, and the rings flare
+    if (!P.landed && (want === 'on' ? k > 0.9 : k < 0.1)) {
+      P.landed = true;
+      if (want === 'on' && !reduced) {
+        P.flash = 1;
+        if (P.dis.value < 0.5 && !maskHides && !tun.hidden) sfx('phones-clamp');
+      }
+      if (!reduced) nod.v += want === 'on' ? 3 : -1.6;
+    }
+    P.flash = Math.max(0, P.flash - dt * 2.2);
+    // the rings glow with the music
+    const audio = window.abissalAudio;
+    const lv = !reduced && want === 'on' && audio ? audio.level() : 0; // (a steady ring where nothing may move)
+    P.lvl += (lv - P.lvl) * damp(lv > P.lvl ? 18 : 5, dt);
+    P.glow.emissiveIntensity = (0.3 + (0.25 + 2.6 * P.lvl) * kc + 2.4 * P.flash * P.flash) * P.vis;
+  }
+
   // Bones posed on top of the clips: reset to the clean clip pose before every update
   // (bones a clip doesn't animate would otherwise keep last frame's offsets).
   const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone), ...rigBones])]
@@ -401,6 +664,7 @@ export async function start({ reduced = false } = {}) {
   function react(name) {
     if (reduced || !actions[name] || (trans && (trans.kind === 'enter' || trans.kind === 'case' || trans.kind === 'pop'))) return;
     fadeTo(name, 0.45, true);
+    sfx('chirp-' + name); // (its voice: a phrase for each)
   }
   // The hello on reaching a section. At the contact card with a field already in
   // focus it skips the wave and takes hold of the card straight away.
@@ -473,6 +737,29 @@ export async function start({ reduced = false } = {}) {
   points.frustumCulled = false;
   points.renderOrder = 2;
   scene.add(points);
+
+  // The headphones' own motes (see stepPhones): the same sea-light, drawn the same way.
+  const hN = phones.spots.length;
+  const hPos = new Float32Array(hN * 3), hVel = new Float32Array(hN * 3), hAlpha = new Float32Array(hN);
+  const hDelay = new Float32Array(hN), hLife = new Float32Array(hN), hSwirl = new Float32Array(hN), hA0 = new Float32Array(hN);
+  let hPts = null;
+  if (hN) {
+    const hGeo = new THREE.BufferGeometry();
+    const hSize = new Float32Array(hN), hTone = new Float32Array(hN);
+    for (let n = 0; n < hN; n++) {
+      hSize[n] = 3.5 + Math.random() * 6;
+      hTone[n] = Math.random() < 0.18 ? 1 : 0;
+    }
+    hGeo.setAttribute('position', new THREE.BufferAttribute(hPos, 3).setUsage(THREE.DynamicDrawUsage));
+    hGeo.setAttribute('aAlpha', new THREE.BufferAttribute(hAlpha, 1).setUsage(THREE.DynamicDrawUsage));
+    hGeo.setAttribute('aSize', new THREE.BufferAttribute(hSize, 1));
+    hGeo.setAttribute('aTone', new THREE.BufferAttribute(hTone, 1));
+    hPts = new THREE.Points(hGeo, pMat);
+    hPts.frustumCulled = false;
+    hPts.renderOrder = 2;
+    hPts.visible = false;
+    scene.add(hPts);
+  }
 
   // Jet exhaust: its own small pool, drawn after the body and hidden by it (depth-tested),
   // white-hot at the nozzle, cooling to amber and dying out as teal sea-light. A puff
@@ -628,7 +915,7 @@ export async function start({ reduced = false } = {}) {
     motePhase[i * 3 + 2] = Math.random(); // height
   }
 
-  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null, head: null, jet: null };
+  const dbg = { noLook: false, timeScale: 1, yaw: null, pose: null, tunG: null, head: null, jet: null, phones: null };
   const v3 = new THREE.Vector3();
   function sampleSurface(intoWorld, intoRel) {
     root.updateMatrixWorld(true);
@@ -1360,6 +1647,7 @@ export async function start({ reduced = false } = {}) {
           E.from = [E.p[0], E.p[2]];
           E.ready = flightReady(E); // (how far the legs had got ready: the pose and the feet go on from there)
           dustBurst(1);
+          sfx('land');
         }
       }
     } else E.downT += dt;
@@ -1464,6 +1752,7 @@ export async function start({ reduced = false } = {}) {
     placeRoot();
     sampleSurface(tStart, tRel);
     trans = { kind: 'send', phase: 'out', t: 0, toId: 'contato', fromH: at.h, c: new THREE.Vector3() };
+    sfx('dissolve');
     for (let i = 0; i < N_TRANSIT; i++) tDelay[i] = Math.random() * SPREAD;
     markInput(); // full frame rate for the show, even after a quiet spell
     return new Promise((res) => { sendDone = res; });
@@ -1490,11 +1779,12 @@ export async function start({ reduced = false } = {}) {
     caseStop: () => endStunt(false),
     beginSend,
     fire() {
+      sfx('transmit');
       if (sending() && trans.phase !== 'in') {
         trans.fire = true;
         return cloudRect();
       }
-      if (!reduced) { react('jump'); puff(); }
+      if (!reduced) { react('jump'); puff(true); } // (quiet: the transmission is what is heard)
       return null;
     },
     result(ok) {
@@ -1669,6 +1959,7 @@ export async function start({ reduced = false } = {}) {
         trans.t = 0;
         const cfg = SECTIONS[trans.toId] || SECTIONS.inicio;
         setBase(cfg.base);
+        sfx('reform');
       }
       return;
     }
@@ -2085,6 +2376,7 @@ export async function start({ reduced = false } = {}) {
     const dir = fly > 0.5 && q < L1 + LT / 2 ? -1 : 1; // (it looks the way it flies, then at the portal)
     [glance.x, glance.y] = [x + h * 2 * dir, y - h * 0.6];
     glance.until = performance.now() + 150;
+    if (jr.lastP >= 0 && jr.lastP < CROSS.T0) sfx('takeoff'); // (off the floor, this frame)
     jr.lastP = crossOff.p = p;
     crossOff.v = (at.x - ox) / Math.max(dt, 1e-3);
   }
@@ -2300,8 +2592,12 @@ export async function start({ reduced = false } = {}) {
     jr.jet = p < T0 ? 0.35 * smooth(p / Math.max(1e-4, T0))
       : p < L || airEnd ? Math.max(1 - 0.45 * smooth(clamp01(q / 0.35)), airEnd ? 0.35 + 0.4 * (1 - smooth(clamp01((q - 0.75) / 0.25))) : smooth(clamp01((q - 0.55) / 0.4)))
       : 0;
-    // the bump: once, on the way down
-    if (!airEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) touchdown(ek);
+    // the bump: once, on the way down (and, as heard, the spring off the floor before it)
+    if (!airEnd && jr.lastP >= 0 && jr.lastP < L && p >= L) {
+      touchdown(ek);
+      sfx('land');
+    }
+    if (sk === 'stand' && jr.lastP >= 0 && jr.lastP < T0 && p >= T0) sfx('takeoff');
     jr.lastP = p;
   }
   // Facing the way it flies (see head): flying (laid out level) and moving the other
@@ -2494,6 +2790,7 @@ export async function start({ reduced = false } = {}) {
   }
   function portalBurst(x, c, h, inward, dir) {
     setFace('surprised', 0.6);
+    sfx(inward ? 'portal-in' : 'portal-out');
     const H = h * view.wpp;
     const o = toWorld(x, c.cy, 0, new THREE.Vector3());
     const R = c.h * 0.32 * view.wpp; // half the portal's height
@@ -2606,8 +2903,9 @@ export async function start({ reduced = false } = {}) {
   }
 
   // Click: a soft cloud breathes out of the chest
-  function puff() {
+  function puff(quiet) {
     if (reduced) return;
+    if (!quiet) sfx('mist-puff');
     root.updateMatrixWorld(true);
     const c = new THREE.Vector3(0, modelH * 0.62, modelH * 0.1).applyMatrix4(root.matrixWorld);
     const H = at.h * view.wpp;
@@ -2630,6 +2928,13 @@ export async function start({ reduced = false } = {}) {
     if (dbg.jet != null) want = dbg.jet; // (QA: pin the thrust)
     jet.thrust += (want - jet.thrust) * damp(want > jet.thrust ? 8 : 4, dt);
     const T = jet.thrust;
+    // heard: a loop as loud as the thrust, a cough as the jets light and a sigh as they die
+    const snd = window.abissalAudio;
+    if (snd && snd.on && snd.jet) {
+      snd.jet(T);
+      if (!jet.lit && T > 0.12) { jet.lit = true; sfx('jet-ignite'); }
+      else if (jet.lit && T < 0.05) { jet.lit = false; sfx('jet-off'); }
+    } else jet.lit = T > 0.12; // (switched on in mid-flight, the jets are simply lit already)
     const flick = 1 + 0.18 * Math.sin(time * 41) * Math.sin(time * 27 + 1);
     jet.glow.emissiveIntensity = T * 2.4 * flick;
     jet.flames.forEach((f, n) => {
@@ -3219,7 +3524,7 @@ export async function start({ reduced = false } = {}) {
     // (asked from afar, it pulls on arrival, as long as the field still has focus)
     if (tugAsked && (performance.now() - tugAsked > 6000 || !formFocused())) tugAsked = 0;
     grip.w += ((on ? 1 : 0) - grip.w) * (reduced ? 1 : damp(tugAsked && on ? 9 : 3.5, dt));
-    if (tugAsked && on && grip.w > 0.3) { tug.v += 4.6; tugAsked = 0; }
+    if (tugAsked && on && grip.w > 0.3) { tug.v += 4.6; tugAsked = 0; sfx('card-tug'); }
     // The left arm is behind the card whenever the guide stands at it (holding it,
     // waving, dancing, or dissolving on the way out), never flipping sides mid-view:
     // whatever of that arm overlaps the card is hidden.
@@ -3296,6 +3601,47 @@ export async function start({ reduced = false } = {}) {
     runner.idx = here ? idx : -1;
   }
 
+  // Heard (sound.js): where it is across the page (and whether behind a card), the rush
+  // of a fast level flight going by, and each foot coming down on the cards as it runs.
+  const heard = { x: NaN, y: 0, v: 0, fast: false, feet: [0, 1].map(() => ({ lo: Infinity, hi: -Infinity, up: false })) };
+  function stepHeard(dt, left, strides) {
+    const snd = window.abissalAudio;
+    const on = !!(snd && snd.on && snd.place);
+    if (on) snd.place(((left + at.x) / Math.max(1, window.innerWidth)) * 2 - 1, tun.hidden || maskHides);
+    // its pace across the screen, in body heights a second (a cut from one place to
+    // another is no flight)
+    const d = Number.isNaN(heard.x) ? 0 : Math.hypot(at.x - heard.x, at.y - heard.y) / Math.max(at.h, 1);
+    heard.x = at.x;
+    heard.y = at.y;
+    const v = d / Math.max(dt, 1e-3);
+    heard.v += ((v > 30 ? 0 : v) - heard.v) * damp(9, dt);
+    const level = jr.on && jr.fly > 0.5 && shared.uDissolve.value < 0.5;
+    if (!heard.fast && level && heard.v > 2.4) {
+      heard.fast = true;
+      sfx('fly-by');
+    } else if (heard.fast && (!level || heard.v < 1.2)) heard.fast = false;
+    // a step: a foot that was up in its stride, down again (its own low point, within
+    // the range it has moved through on this run)
+    for (let i = 0; i < 2; i++) {
+      const F = heard.feet[i], y = footLow[i];
+      if (!strides || !Number.isFinite(y)) {
+        F.lo = Infinity;
+        F.hi = -Infinity;
+        F.up = false;
+        continue;
+      }
+      F.lo = Math.min(F.lo, y);
+      F.hi = Math.max(F.hi, y);
+      const r = F.hi - F.lo;
+      if (r < modelH * 0.02) continue; // (no stride seen yet)
+      const k = (y - F.lo) / r;
+      if (F.up && k < 0.12) {
+        F.up = false;
+        sfx('footstep');
+      } else if (!F.up && k > 0.55) F.up = true;
+    }
+  }
+
   // The cheer: the right arm goes up with the index pointing, holds, comes down to a
   // thumbs-up and lets go. Another new card while it cheers sends the arm back up,
   // so a fast scroll through the deck ends on a single thumbs-up.
@@ -3304,7 +3650,7 @@ export async function start({ reduced = false } = {}) {
   const qPose = new THREE.Quaternion();
   function startCheer() {
     if (reduced || !cheerBones.length) return;
-    if (cheer.t < 0) { cheer.t = 0; cheer.mix = 0; }
+    if (cheer.t < 0) { cheer.t = 0; cheer.mix = 0; sfx('cheer'); } // (heard once, however many cards go by)
     else cheer.t = Math.min(cheer.t, 0.4);
     setFace('surprised', 0.8);
   }
@@ -3561,7 +3907,7 @@ export async function start({ reduced = false } = {}) {
         spawn(c.x, c.y + H * 0.03, c.z, Math.cos(a) * sp, H * (0.04 + Math.random() * 0.1), Math.sin(a) * sp * 0.4, 0.6 + Math.random() * 0.6, 0.45);
       }
     } else { // in flight
-      if (!S.hit) { S.hit = true; touchdown('feet'); } // (the blast kicks up the dust)
+      if (!S.hit) { S.hit = true; touchdown('feet'); sfx('jet-burst'); } // (the blast kicks up the dust)
       const f = t - FLY.t0;
       const p = pathAt(S.path, f, fP);
       const s = Math.exp(-p[2]);
@@ -3606,6 +3952,7 @@ export async function start({ reduced = false } = {}) {
     // the case opens, all in the same beat; the stage stays up while it flies out.
     if (hit && !S.burst) {
       S.burst = true;
+      sfx('stunt-impact');
       const o = toWorld(mx, my, 0, new THREE.Vector3());
       const H = h * view.wpp, R = Math.min(m.width, m.height) * 0.5 * view.wpp;
       for (let n = 0; n < 70; n++) {
@@ -3728,6 +4075,11 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   const markInput = () => { lastInput = performance.now(); wake(); };
 
+  // The sound switch (sound.js): the headphones follow it. Where the page has no sound
+  // to offer (html without .snd) there is no switch, and so no headphones.
+  const soundNow = () => (doc.classList.contains('snd') && window.abissalAudio ? window.abissalAudio.state : null);
+  document.addEventListener('abissal:sound', () => soundState(soundNow()));
+
   window.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') return;
     pointer.x = e.clientX; pointer.y = e.clientY; pointer.has = true; pointer.at = performance.now();
@@ -3786,7 +4138,7 @@ export async function start({ reduced = false } = {}) {
 
   // Hero CTA and contact terminal hooks
   function pullCard() {
-    if (grip.w > 0.3) { tug.v += 4.6; return; }
+    if (grip.w > 0.3) { tug.v += 4.6; sfx('card-tug'); return; }
     // not holding it yet: still arriving, or waving hello. Cut the wave short so the
     // hands go to the card now, and pull as soon as they are on it.
     tugAsked = performance.now();
@@ -4009,14 +4361,17 @@ export async function start({ reduced = false } = {}) {
     applyRig();
     // The Running clip bounds high: keep most of each stride down on the card.
     const wRun = actions.run && actions.run.isRunning() ? actions.run.getEffectiveWeight() : 0;
-    if (!jr.on && wRun > 0.01 && soles.length) {
+    const stride = !jr.on && wRun > 0.01 && soles.length > 0;
+    const ledgeRun = ledge.drove && wRun > 0.01 && soles.length > 0; // (the run to the end of the last card)
+    if (stride) {
       pivot.position.y -= (soleY() - footRest) * 0.75 * wRun;
       pivot.updateMatrixWorld(true);
-    }
+    } else if (ledgeRun) soleY(); // (only to know where its feet are: see stepHeard)
     aimHead(dt, now, level);
     gripCard(dt);
     maskTunnel();
     applyCheer(dt);
+    stepPhones(dt);
     updateSeatMark();
 
     // face
@@ -4046,6 +4401,7 @@ export async function start({ reduced = false } = {}) {
     hit.style.width = `${w.toFixed(0)}px`;
     hit.style.height = `${hh.toFixed(0)}px`;
     hit.style.visibility = visible ? 'visible' : 'hidden';
+    stepHeard(dt, off.left, ((stride && runner.on) || ledgeRun) && wRun > 0.6);
   }
 
   // ---------------------------------------------------------------------------
@@ -4058,6 +4414,7 @@ export async function start({ reduced = false } = {}) {
   section = visibleSection && SECTIONS[visibleSection.id] ? visibleSection.id : 'inicio';
   resize();
   setBase((SECTIONS[section] || SECTIONS.inicio).base);
+  soundState(soundNow(), true);
   doc.classList.add('has-avatar');
   if (reduced || view.dock) {
     shared.uDissolve.value = 0;
@@ -4071,7 +4428,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer() };
+  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)) }; } };
   return window.__avatar;
 }
 

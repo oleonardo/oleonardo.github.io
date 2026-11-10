@@ -325,6 +325,129 @@ html.is-locked .topbar {
   animation: beacon 2.4s ease-in-out infinite;
 }
 
+/* ---------- sound switch ----------
+   Hidden until sound.js shows it (no Web Audio or a save-data connection: no switch).
+   html[data-sound] says where the sound stands: off, armed (asked for on an earlier
+   visit, waiting for a first click), loading, on. */
+.sound-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  margin: 0 -10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--mist);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.25s ease;
+}
+
+.sound-toggle[hidden] {
+  display: none;
+}
+
+/* (where there will be a switch, its place is kept from the first paint: the bar
+   doesn't shift when sound.js shows it) */
+.snd .sound-toggle[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+.sound-toggle:hover,
+html[data-sound="on"] .sound-toggle {
+  color: var(--foam);
+}
+
+/* (as wide as its longest word, so the bar holds still from one state to the next) */
+.sound-state {
+  display: inline-block;
+  min-width: 4.08em;
+  font-weight: inherit;
+  color: var(--foam);
+}
+
+html[data-sound="armed"] .sound-state,
+html[data-sound="on"] .sound-state {
+  color: var(--biolight);
+}
+
+.sound-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.sound-bars i {
+  --i: 0;
+  --h: 0.55; /* its height when the sound is on and nothing may move */
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: currentColor;
+  transform: scaleY(0.25);
+  transform-origin: 50% 100%;
+  transition: transform 0.4s var(--ease-out), background-color 0.25s ease;
+}
+
+.sound-bars i:nth-child(2) {
+  --i: 1;
+  --h: 1;
+}
+
+.sound-bars i:nth-child(3) {
+  --i: 2;
+  --h: 0.7;
+}
+
+.sound-bars i:nth-child(4) {
+  --i: 3;
+  --h: 0.85;
+}
+
+html[data-sound="armed"] .sound-bars i {
+  background: var(--biolight);
+  transform: scaleY(0.5);
+  animation: beacon 2.4s ease-in-out infinite;
+}
+
+html[data-sound="loading"] .sound-bars i {
+  animation: sound-load 0.9s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.12s);
+}
+
+html[data-sound="on"] .sound-bars i {
+  background: var(--biolight);
+  box-shadow: 0 0 6px rgba(99, 230, 210, 0.55);
+  transform: scaleY(var(--h)); /* (under the animation: switched off, the bars ease down from here) */
+  animation: sound-bar 1.1s ease-in-out infinite alternate;
+  animation-duration: calc(1.1s + var(--i) * 0.17s);
+  animation-delay: calc(var(--i) * -0.31s);
+}
+
+@keyframes sound-bar {
+  from {
+    transform: scaleY(0.3);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes sound-load {
+  50% {
+    transform: scaleY(0.8);
+  }
+}
+
 /* ---------- depth line: how far down the abyss you are ----------
    Driven by the page scroll on the compositor (no JS). The ticks mark where
    each section starts; app.js measures those once per resize. */
@@ -2358,6 +2481,25 @@ html.vt:not(.vt-close):has(.avatar-stage.is-exit) .work-stage {
     display: none;
   }
 
+  /* the sound switch: the bars alone, its touch area out to the screen's edge */
+  .sound-toggle {
+    margin-right: calc(-1 * var(--gutter));
+    padding-right: var(--gutter);
+  }
+
+  .sound-toggle:focus-visible {
+    outline-offset: -3px; /* (inside the box: outside, its right side would be off the screen) */
+  }
+
+  .sound-label {
+    display: none;
+  }
+
+  .sound-bars {
+    gap: 3px;
+    height: 14px;
+  }
+
   .hero {
     align-items: end;
     padding-bottom: 96px;
@@ -2407,6 +2549,42 @@ html.vt:not(.vt-close):has(.avatar-stage.is-exit) .work-stage {
   }
 }
 
+/* Narrow phones: the bar closes up so the sound switch stays inside the gutter. */
+@media (max-width: 380px) {
+  .topbar {
+    gap: 10px;
+  }
+
+  .nav {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 354px) {
+  .nav {
+    gap: 6px;
+  }
+
+  .nav-link {
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+}
+
+/* Forced colours (contrast themes): the switch gets a face and its bars the text colour,
+   or with its label hidden there would be nothing to see. */
+@media (forced-colors: active) {
+  .sound-toggle {
+    border: 1px solid ButtonBorder;
+    background: ButtonFace;
+  }
+
+  .sound-bars i {
+    forced-color-adjust: none;
+    background: ButtonText;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -2418,6 +2596,11 @@ html.vt:not(.vt-close):has(.avatar-stage.is-exit) .work-stage {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* the sound switch stands still: bars up while the sound is on */
+  html[data-sound="on"] .sound-bars i {
+    animation: none;
   }
 }
 
