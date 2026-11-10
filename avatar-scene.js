@@ -746,8 +746,9 @@ export async function start({ reduced = false } = {}) {
   }) : [];
   // (the legs of a pass, as the fraction of a card's scroll where each one ends: into the
   // left portal, through the card, off the right edge of the screen, and in from the left
-  // to the next card's portal; out of the last card it only clears its right portal, by last)
-  const TUN = { dive: 0.15, inside: 0.46, off: 0.73, last: 0.6 };
+  // to the next card's portal; out of the last card it only clears its right portal, by last.
+  // far: how far ahead of it the cards may be, in cards, for it to catch up along the pass)
+  const TUN = { dive: 0.15, inside: 0.46, off: 0.73, last: 0.6, far: 0.33 };
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
   let PORTAL = 0.033; // half a portal's width, in card widths (read from .tl-portal's --pw on resize)
@@ -789,8 +790,10 @@ export async function start({ reduced = false } = {}) {
     const r = nodes.storyStage.getBoundingClientRect();
     if (r.height < 10 || !storyCardH) return null;
     // (with the stage pinned and the page at rest, between two cards: the portal it
-    // will park at; while the page still scrolls there, the front, which holds still)
-    if (r.top <= 0 && r.bottom >= view.h - 1 && performance.now() - scrub.scrolledAt > 450) {
+    // will park at; while the page still scrolls there, the front, which holds still.
+    // The front too while it is still flying in from the hero: the pass takes it on from
+    // there, where a spot that moved under the flight would be a jump)
+    if (r.top <= 0 && r.bottom >= view.h - 1 && performance.now() - scrub.scrolledAt > 450 && !scrub.mid) {
       const st = tunnelAt(restCard(storyF()));
       return { x: st.x, y: st.cy + st.h * BODY_C, h: st.h, yaw: st.yaw, tun: true };
     }
@@ -800,6 +803,19 @@ export async function start({ reduced = false } = {}) {
     const h = tunH();
     const x = hoverX({ l: r.left + r.width / 2 - w / 2, w }, h);
     return { x, y: top + r.height / 2 + h * BODY_C, h, yaw: YAW.hover, tun: true };
+  }
+  // How far the first card's portal has gone from the front, with the page already on
+  // into the timeline (the ring turns its card away, up and to the left): the flight in
+  // from the hero ends at the portal, not in front of the card. Up to a quarter of the
+  // way to the next card, that is, and back at the front by half way: from there on the
+  // front holds still. (No further than the portal can go and stay in view, nor than a
+  // third of the way back to the edge: the flight in never turns back.)
+  function frontDrift(v, room) {
+    const w = 1 - smooth(clamp01((storyF() - 0.25) / 0.25));
+    if (w <= 0) return { x: 0, y: 0 };
+    const c = cardBox(0);
+    const rail = nodes.rail ? nodes.rail.getBoundingClientRect().left : 0;
+    return { x: Math.max((Math.max(hoverX(c, v.h), rail + v.h * 0.25) - v.x) * w, -room / 3), y: (c.cy + v.h * BODY_C - v.y) * w };
   }
   // The pass at g (card index + how far through it): the middle of the body, its size,
   // facing and lean, and whether it is behind the card.
@@ -962,6 +978,30 @@ export async function start({ reduced = false } = {}) {
   let tugAsked = 0; // when a pull was asked for before the hands were on the card
   let cardStyled = false;
   let scrollY = window.scrollY, scrollD = 0, scrollV = 0, lean = 0; // (scrollD: how far the page went in this frame)
+  // The scroll's pace right now (px a second), quicker to tell than scrollV, which is
+  // smoothed for the lean: the way it went after the earliest step of the last moments,
+  // over the time since that step. So a wheel's notches count as what they are (a notch
+  // on its own says nothing of a pace), and a steady scroll reads true from its second
+  // frame.
+  const pace = { t: new Float64Array(48), d: new Float64Array(48), i: 0, v: 0 }; // (48 frames: the last moments at any refresh rate)
+  function scrollPace(now, d) {
+    const n = pace.t.length;
+    pace.i = (pace.i + 1) % n;
+    pace.t[pace.i] = now;
+    pace.d[pace.i] = d;
+    let acc = 0, dir = 0, v = 0;
+    for (let k = 0; k < n; k++) {
+      const j = (pace.i - k + n) % n, dj = pace.d[j];
+      if (now - pace.t[j] > 140) break;
+      if (dj) {
+        if (!dir) dir = Math.sign(dj);
+        else if (Math.sign(dj) !== dir) break; // (it turned round: another go)
+        if (k) v = (acc * 1000) / (now - pace.t[j]);
+      }
+      acc += dj;
+    }
+    pace.v = v;
+  }
 
   function snapTo(a) {
     at.x = a.x; at.y = a.y; at.h = a.h; at.yaw = a.yaw;
@@ -1007,6 +1047,7 @@ export async function start({ reduced = false } = {}) {
       setBase(cfg.base);
       if (!reduced && prev !== id) { puff(); greet(id, cfg.greet); }
       dirty = true;
+      wake(); // (with reduced motion the loop sleeps between inputs: draw the new spot now)
       return;
     }
     if (trans && trans.kind !== 'hop' && trans.kind !== 'enter' && trans.phase !== 'in' && !fromScatter) {
@@ -1660,7 +1701,7 @@ export async function start({ reduced = false } = {}) {
   const ZONE = 0.3; // half-length of a journey, in viewport heights
   const FOLLOW = 7; // how closely a journey follows the scroll (per second)
   // (t: where the scroll itself is; span: the first zone's length in px)
-  const scrub = { on: false, u: 0, t: 0, span: 1, mid: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
+  const scrub = { on: false, u: 0, t: 0, span: 1, mid: false, zone: -1, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
   // section tops are cached: drop them whenever the layout changes
   if ('ResizeObserver' in window && document.querySelector('main')) {
     new ResizeObserver(() => { scrub.tops = null; }).observe(document.querySelector('main'));
@@ -1733,6 +1774,12 @@ export async function start({ reduced = false } = {}) {
       scrub.on = false;
       return;
     }
+    // (Out of the timeline again with the pass still inside the last card, where it was
+    // handed it on the way back up: the way out goes on from there, not from the portal.)
+    const hi = ORDER.indexOf('historia');
+    if (hi >= 0 && scrub.u === hi && t > hi && tunnelMode() && tun.active && tun.g > tunnels.length - 1) {
+      scrub.u = hi + EXIT_PASS * (tun.g - (tunnels.length - 1)) / TUN.last;
+    }
     // Left halfway: settle softly at the nearer section. Otherwise follow the scroll
     // closely, smoothing out the steps of a mouse wheel. (Leaving the video cases, the
     // deck it stands on is already scrolling away: it goes on instead of back.)
@@ -1762,6 +1809,10 @@ export async function start({ reduced = false } = {}) {
       if (!idle && f > 0 && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
       scrub.u += (target - scrub.u) * damp(idle ? 2.4 : FOLLOW, dt);
       if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
+      // (Into the timeline it has arrived once it is all but at the first portal, with
+      // the page at the pin or past it: the pass takes it on from there. The last of the
+      // brake is a long while, and the card would be turning away under it meanwhile.)
+      if (t >= 1 && scrub.u < 1 && scrub.u > 1 - CROSS.DONE && ORDER[1] === 'historia' && tunnelMode()) scrub.u = 1;
     }
 
     const N = ORDER.length;
@@ -1784,14 +1835,39 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     // In between, the body travels in plain sight, as a pure function of the scroll.
-    if (!scrub.mid) {
+    // (Straight from one zone's flight into the next one's, a leap of the page with no
+    // rest between them, is a new journey as well: from wherever it is.)
+    if (!scrub.mid || scrub.zone !== i) {
       scrub.mid = true;
+      scrub.zone = i;
       jr.lastP = -1;
       snapRig();
     }
     const idA = ORDER[i], idB = ORDER[i + 1];
-    if (idA === 'inicio' && idB === 'historia' && tunnelMode()) { heroCross(p, idB); return; }
-    if (idA === 'historia' && tunnelMode()) { tunnelExit(p, idB); return; }
+    if (idA === 'inicio' && idB === 'historia' && tunnelMode()) { heroCross(p, idB, dt); return; }
+    if (idA === 'historia' && tunnelMode()) {
+      // Back up into the timeline, it is the pass's again as soon as the page is there and
+      // it is in the last card, no further behind the cards than the pass can make up
+      // calmly (TUN.far): the pass goes on from where it is, with the cards. (The zone's
+      // own way back to the portal is a long while: the cards would have turned away
+      // meanwhile, and the pass be left to catch up with them in a streak.) With the cards
+      // already well ahead (a fling, a leap of the page) it comes out of the last card
+      // first, and goes to them from its portal (tun.leap: see stepTunnel).
+      const g0 = head.g; // (where it is along the pass, as of the last frame)
+      const gap = g0 - storyF();
+      const out = TUN.last * (p / EXIT_PASS) < 0.02; // all but back at the portal
+      if (t <= i && tun.active && g0 < tunnels.length - 1 + TUN.inside && (gap <= TUN.far || out)) {
+        tun.g = g0;
+        tun.wait = false;
+        tun.ease = 1;
+        tun.leap = gap > TUN.far;
+        scrub.u = i;
+        scrub.mid = false;
+        return;
+      }
+      tunnelExit(p, idB);
+      return;
+    }
     if (idA === 'projetos' && ledgeMode()) { ledgeExit(p, idB, dt); return; }
     const sk = 'stand', ek = endKind(idB);
     journeyAt(anchorFor(idA, true), anchorFor(idB, true), p, sk, ek, scrubPhases(sk, ek));
@@ -1804,7 +1880,10 @@ export async function start({ reduced = false } = {}) {
   // from that hover). Out it speeds up evenly and in it brakes evenly, at one pace at the
   // edge both ways (the legs share the zone by their lengths), so the flight never
   // lurches. Scrolled back, it is the same way in reverse.
-  const CROSS = { T0: 0.1, LT: 0.07 }; // the lift-off's share of the zone, and the turn's out of sight (of the rest)
+  // (T0: the lift-off's share of the zone; LT: the turn's out of sight, of the rest; V: the
+  // fastest it flies out to the edge, in its own heights a second, and BRAKE: the fastest
+  // it can still stop from; DONE: the last of the zone, where it is as good as arrived)
+  const CROSS = { T0: 0.1, LT: 0.07, V: 50, BRAKE: 15, DONE: 0.025 };
   // Into the zone from wherever it was. The flight is kept as laid out, the turn out of
   // sight included: only how far off that end's spot it was is carried along, fading out
   // as the rig's blend does and as the flight nears the turn (measured from the spot, not
@@ -1818,7 +1897,7 @@ export async function start({ reduced = false } = {}) {
   // and is taken along when the flight comes past (rush 1). With its spot on its way, or
   // all but, it goes straight there instead, facing the way it flies (rush 2). Either
   // way its facing is its own from there, not the flight's (see heroCross).
-  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1, far: false, x0: 0, hold: NaN, soft: 0, rush: 0 }; // (p: the last frame's, to tell a new entry)
+  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1, far: false, x0: 0, hold: NaN, soft: 0, rush: 0, v: 0 }; // (p: the last frame's, to tell a new entry; v: its pace, px a second)
   function crossPlace(x, y, h, yaw, E, paged, skip, xTurn, to, again) {
     if (!again && (jr.lastP < 0 || jr.lastP !== crossOff.p)) {
       const k = snap.k < 1 ? 1 : 0;
@@ -1835,8 +1914,9 @@ export async function start({ reduced = false } = {}) {
       crossOff.hold = NaN;
       crossOff.rush = 0;
       if (crossOff.far && k && to) {
-        // (it brakes within half its height; it starts off again as the flight nears)
-        crossOff.hold = Math.min(snap.at.x - snap.at.h * 0.5, to.x);
+        // (it brakes within half its height, and in view; it starts off again as the
+        // flight nears)
+        crossOff.hold = Math.min(Math.max(snap.at.x - snap.at.h * 0.5, Math.min(snap.at.x, snap.at.h * 0.45)), to.x);
         crossOff.soft = Math.min(to.h * 0.6, to.x - crossOff.hold);
         crossOff.rush = 1;
         if (crossOff.soft < to.h * 0.25) { crossOff.hold = to.x; crossOff.soft = 0; crossOff.rush = 2; }
@@ -1866,8 +1946,12 @@ export async function start({ reduced = false } = {}) {
     at.h = h + crossOff.h * r;
     at.yaw = yaw + crossOff.yaw * r;
   }
-  function heroCross(p, idB) {
+  function heroCross(p, idB, dt) {
     const A = anchorFor('inicio', true), B = anchorFor(idB, true);
+    // (the flight is laid out to the front, which holds still; its end goes with the
+    // first card's portal: see frontDrift)
+    const bx = B.x, by = B.y;
+    if (B.tun) { const d = frontDrift(B, B.x + B.h * 0.9); B.x += d.x; B.y += d.y; }
     const P = jr.pose || (jr.pose = newPose());
     jr.on = true;
     vel.x = vel.y = 0;
@@ -1885,12 +1969,13 @@ export async function start({ reduced = false } = {}) {
       jr.squash = 0.07 * Math.sin(Math.PI * u);
       jr.jet = 0.4 * smooth(u);
       jr.lastP = crossOff.p = p;
+      crossOff.v = 0;
       head.along = 0;
       return;
     }
     const q = (p - CROSS.T0) / (1 - CROSS.T0);
     // the legs: out to just past the left edge, and back in from there to the portal
-    const D1 = Math.max(1, A.x + A.h * 0.9), D2 = Math.max(1, B.x + B.h * 0.9);
+    const D1 = Math.max(1, A.x + A.h * 0.9), D2 = Math.max(1, bx + B.h * 0.9);
     const LT = CROSS.LT, L1 = ((1 - LT) * D1) / (D1 + D2), L2 = 1 - LT - L1, back = L1 + LT;
     const cruise = (2 * (D1 + D2)) / (1 - LT); // px per unit of the zone, at the edge
     const h = A.h + (B.h - A.h) * smooth(clamp01(q / 0.9));
@@ -1905,7 +1990,7 @@ export async function start({ reduced = false } = {}) {
     else x = herm(xOff, cruise * L2, B.x, 0, (q - back) / L2);
     // its height: up off the spot to fly level with the portal (as the stage rises
     // into place), and onto the portal at the end
-    const yL = Math.min(A.y - A.h * 0.15, Math.max(B.y, barBottom + h * 0.7));
+    const yL = Math.min(A.y - A.h * 0.15, Math.max(by, barBottom + h * 0.7));
     let y = A.y + (yL - A.y) * smooth(clamp01(q / (L1 * 0.5)));
     y += (B.y - y) * smooth(clamp01((q - back) / L2));
     // flat out in between: head first to the left, the jets burning hard; turned round
@@ -1918,16 +2003,27 @@ export async function start({ reduced = false } = {}) {
     yaw += (B.yaw - yaw) * endK;
     const way = jr.lastP < 0 ? (scrub.dir < 0 ? -1 : 1) : Math.sign(p - jr.lastP); // (on to the timeline, back, or held)
     const qWas = jr.lastP < 0 ? (way < 0 ? 1 : 0) : (jr.lastP - CROSS.T0) / (1 - CROSS.T0); // (where it was a frame ago)
-    const ox = at.x, oy = at.y;
+    const ox = at.x, oy = at.y, oh = at.h;
     // Taken back up faster than it could fly out to the edge and round, going by the
     // scroll's pace and by how far ahead the page already is (the time the flight has
     // to the turn, against the way there at about its own length a frame): then it is
-    // not flown at all (see crossPlace). So too when the first frame is past the turn.
+    // not flown at all (see crossPlace). So too when the first frame is past the turn,
+    // or the page is already so far past it that the flight, following it, would go by
+    // the edge faster than that (it is slowest at the portal, so the time it has says
+    // too little of a single leap).
     const dp = p - (CROSS.T0 + (1 - CROSS.T0) * back), gap = scrub.u - scrub.t;
-    const tTurn = Math.min(gap > dp ? -Math.log(1 - dp / gap) / FOLLOW : Infinity, (dp * scrub.span) / Math.max(1, -scrollV));
+    const tTurn = Math.min(gap > dp ? -Math.log(1 - dp / gap) / FOLLOW : Infinity, (dp * scrub.span) / Math.max(1, -Math.min(scrollV, pace.v)));
     const hEdge = A.h + (B.h - A.h) * smooth(clamp01(L1 / 0.9));
-    const rush = dp <= 0 || Math.abs(snap.at.x - B.x) + x - xOff > 50 * hEdge * tTurn;
-    crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, jr.lastP < 0 && (way < 0 ? rush : q >= back), xOff, way < 0 ? A : null, false);
+    const fresh = jr.lastP < 0;
+    const rush = dp <= 0 || Math.abs(snap.at.x - B.x) + x - xOff > CROSS.V * hEdge * tTurn
+      || (cruise / (1 - CROSS.T0)) * FOLLOW * (gap - dp) > CROSS.V * hEdge;
+    // The scroll may only pick up once it is on its way (a wheel spun from rest at the
+    // portal, whose first notch says little): then too, as a new entry from where it
+    // is, while it is still slow enough to brake and has the room to do it in view.
+    const late = !fresh && way < 0 && dp > 0 && !crossOff.far && ox >= at.h * 0.45
+      && Math.abs(crossOff.v) <= CROSS.BRAKE * at.h && ox - xOff > CROSS.V * hEdge * tTurn;
+    if (late) { snapRig(); crossOff.p = -1; }
+    crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, late || (fresh && (way < 0 ? rush : q >= back)), xOff, way < 0 ? A : null, false);
     // Round the turn, out of sight (in this frame, or between the last one and this):
     // whatever was still blending in is done with, and it is turned the way it goes
     // by the time it comes back into view.
@@ -1940,14 +2036,17 @@ export async function start({ reduced = false } = {}) {
     // turns to fly on to its spot, on the clock; going straight there it stays as it
     // flies (that leg's facing all the way, the other leg's and the turn's mirrored).
     // Should the scroll turn back, it is onto the flight again from where it is, as any
-    // journey taking over (read as on the leg the flight is then on).
+    // journey taking over (read as on the leg the flight is then on; from where it was a
+    // frame ago, that is: the flight's own step in this one is not its).
     if (crossOff.rush) {
       crossPlace(x, y, h, q >= back ? -yaw : q >= L1 ? -YAW.fly : yaw, p < 0.5 ? A : B, p >= 0.5, false, xOff, null, true);
       if (way > 0) {
         if (q >= back) { at.yaw = -at.yaw; head.m = 1 - head.m; head.to = 1 - head.to; }
+        else head.to = 0; // (it turns to fly on before it has any pace to tell by)
         crossOff.rush = 0;
         crossOff.hold = NaN;
         head.vx = 0;
+        at.x = ox; at.y = oy; at.h = oh;
         snapRig();
       }
     }
@@ -1961,6 +2060,7 @@ export async function start({ reduced = false } = {}) {
     else if (way < 0 && q >= back) head.lo = smooth(clamp01((1 - (q - back) / L2) / 0.35));
     else if (way < 0 && q < L1 && show < 1) head.lo = show;
     else if (way > 0 && q >= back && show < 1) head.hi = 1 - show;
+    else if (way > 0 && q < L1 && at.x > at.h * 0.45) head.hi = smooth(clamp01((at.x - at.h * 0.45) / (at.h * 1.5)));
     const lift = smooth(clamp01(q / 0.2)); // (up out of the crouch, the feet letting go of the floor)
     jr.pin = 1 - lift;
     jr.air = 0.45 * fly;
@@ -1973,6 +2073,7 @@ export async function start({ reduced = false } = {}) {
     [glance.x, glance.y] = [x + h * 2 * dir, y - h * 0.6];
     glance.until = performance.now() + 150;
     jr.lastP = crossOff.p = p;
+    crossOff.v = (at.x - ox) / Math.max(dt, 1e-3);
   }
 
   // Out of the timeline: through the last card's tunnel, then out of its right portal
@@ -2262,7 +2363,7 @@ export async function start({ reduced = false } = {}) {
   // On the timeline the pass follows the cards (g: card index + how far through it),
   // straight from the scroll: stopped mid-way, it stays where it is (inside a card too)
   // instead of flying off to a portal on its own.
-  const tun = { g: 0, active: false, drove: false, mask: null, maskK: -1, carry: null, hidden: false, wake: -1, edge: null };
+  const tun = { g: 0, active: false, drove: false, mask: null, maskK: -1, carry: null, hidden: false, wake: -1, edge: null, wait: false, ease: 1, leap: false };
   // (the portal it parks at when it arrives from elsewhere with the page at rest)
   function restCard(f) {
     const last = tunnels.length - 1;
@@ -2273,11 +2374,36 @@ export async function start({ reduced = false } = {}) {
     const f = storyF();
     const idle = now - scrub.scrolledAt > 450;
     // taking over (from a journey, a jump): with the page still moving, straight onto
-    // the pass under the scroll; at rest, from the nearer portal, gliding on to it
-    if (!tun.active) { tun.g = idle ? restCard(f) : f; tun.edge = null; snapRig(); }
-    tun.g += (f - tun.g) * damp(idle ? 3 : 10, dt);
+    // the pass under the scroll; at rest, from the nearer portal, gliding on to it.
+    // Where the pass is behind a card, by that card's portal as well: put there from in
+    // front of the card, it would be gone in one frame. And a portal it is not at yet
+    // (off the flight in from the hero, which ends where the first card's stood before
+    // the page went on) it reaches first, in the open: the pass waits there for it,
+    // and sets off gently. So too with the pass left far behind the page (taken back up
+    // through the last card while the page went on to the first ones): flown through
+    // them all at once it would be a streak from one side of the screen to the other,
+    // so it goes to the nearer portal from where it is.
+    const far = tun.active && dbg.tunG == null && (tun.leap || Math.abs(f - tun.g) > 1.25);
+    tun.leap = false;
+    if (!tun.active || far) {
+      const st = tunnelAt(f);
+      tun.g = idle || far ? restCard(f) : st.over && hoverOK(st.k) ? st.k : f;
+      tun.edge = null;
+      const s0 = tun.g === f ? st : tunnelAt(tun.g);
+      tun.wait = tun.g !== f && Math.hypot(at.x - s0.x, at.y - s0.cy - s0.h * BODY_C) > s0.h * 0.2;
+      tun.ease = tun.wait || (tun.g !== f && !idle) ? 0 : 1;
+      if (far) { head.pg = NaN; head.vx = 0; } // (no pace along the pass from a leap of its own)
+      snapRig();
+    }
+    if (snap.k >= 1) tun.wait = false;
+    if (!tun.wait) {
+      tun.ease = Math.min(1, tun.ease + dt / 0.35);
+      tun.g += (f - tun.g) * damp(idle ? 3 : 10, dt) * smooth(tun.ease);
+    }
     if (Math.abs(f - tun.g) < 2e-4) tun.g = f;
-    tun.g = clamp(dbg.tunG != null ? dbg.tunG : tun.g, 0, tunnels.length - 1); // (QA: pin the pass)
+    // (QA: pin the pass. Past the last portal it is only as it comes back up through the
+    // last card: see stepScrub)
+    tun.g = clamp(dbg.tunG != null ? dbg.tunG : tun.g, 0, tunnels.length - 1 + TUN.inside - 1e-3);
     applyTunnel(tunnelAt(tun.g));
   }
   function applyTunnel(st) {
@@ -3763,6 +3889,7 @@ export async function start({ reduced = false } = {}) {
     scrollD = sy - scrollY;
     scrollY = sy;
     scrollV += (v - scrollV) * damp(4, dt);
+    scrollPace(now, scrollD);
     const leanT = reduced ? 0 : clamp(scrollV / 2600, -1, 1);
     lean += (leanT - lean) * damp(2.4, dt);
 
