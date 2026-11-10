@@ -755,7 +755,7 @@ export async function start({ reduced = false } = {}) {
   // are laid out facing right, the way the page reads; scrolled back up they run
   // backward, so it turns round to face left instead of flying backward. m: 0 as laid
   // out, 1 turned round (see stepHeading).
-  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false, along: NaN, lo: 0, hi: 1, mode: 0 };
+  const head = { m: 0, to: 0, x: NaN, vx: 0, g: 0, pg: NaN, gw: 1, wasTun: false, along: NaN, lo: 0, hi: 1, face: NaN, mode: 0 };
   // Which arm reaches out ahead in flight: the one on the visitor's side (the right
   // arm flying right, the left one turned round), so the big head doesn't hide it.
   const leadOf = (s) => (s < 0 ? 1 - head.m : head.m);
@@ -1658,7 +1658,9 @@ export async function start({ reduced = false } = {}) {
   // they run and hand back here when they're done.
   const ORDER = $$('main > section').map((el) => el.id).filter((id) => SECTIONS[id]);
   const ZONE = 0.3; // half-length of a journey, in viewport heights
-  const scrub = { on: false, u: 0, mid: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
+  const FOLLOW = 7; // how closely a journey follows the scroll (per second)
+  // (t: where the scroll itself is; span: the first zone's length in px)
+  const scrub = { on: false, u: 0, t: 0, span: 1, mid: false, leap: false, greeted: null, tops: null, topsAt: 0, scrolledAt: 0, dir: 0, lastY: 0 };
   // section tops are cached: drop them whenever the layout changes
   if ('ResizeObserver' in window && document.querySelector('main')) {
     new ResizeObserver(() => { scrub.tops = null; }).observe(document.querySelector('main'));
@@ -1694,6 +1696,7 @@ export async function start({ reduced = false } = {}) {
       // letting go.
       if (ORDER[i] === 'projetos' && ledgeMode()) { b = tops[i + 1] - vh; z = DECK_DWELL * vh; }
       z = Math.max(24, Math.min(z, maxS - b));
+      if (!i) scrub.span = 2 * z;
       if (sy <= b - z) return i;
       if (sy < b + z) return i + (sy - (b - z)) / (2 * z);
     }
@@ -1713,7 +1716,7 @@ export async function start({ reduced = false } = {}) {
       }
       return;
     }
-    const t = scrubTarget(now);
+    const t = scrub.t = scrubTarget(now);
     if (!scrub.on) {
       // hand-over: start solid where the last journey left it
       scrub.on = true;
@@ -1745,17 +1748,19 @@ export async function start({ reduced = false } = {}) {
       const s = (scrub.u - li - LEDGE.edge) / (1 - LEDGE.edge); // through the fall
       const L = scrubPhases('fall', endKind(ORDER[li + 1])).L;
       const rate = (1 - LEDGE.edge) * (s < L ? L / LEDGE.fall : (1 - L) / LEDGE.up);
-      const follow = t > scrub.u ? (t - scrub.u) * damp(7, dt) : 0;
+      const follow = t > scrub.u ? (t - scrub.u) * damp(FOLLOW, dt) : 0;
       scrub.u = Math.min(li + 1, scrub.u + Math.max(rate * dt, follow));
     } else {
       // (on the last case's hold it stays where the scroll left it, on the card)
       const held = onLedge && f <= LEDGE.edge;
       let target = idle && !held ? (onward ? Math.ceil(t) : Math.round(t)) : t;
       // Once it has settled ahead, scrolling on the same way doesn't pull it back into
-      // the air: it waits there for the scroll to catch up.
-      if (!idle && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
-      if (!idle && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
-      scrub.u += (target - scrub.u) * damp(idle ? 2.4 : 7, dt);
+      // the air: it waits there for the scroll to catch up. (With the page outside the
+      // zone there is nothing to wait for: it comes to rest on that end. A nudge the
+      // other way as it arrived would otherwise leave it short of it, half crouched.)
+      if (!idle && f > 0 && scrub.dir > 0 && t < scrub.u && scrub.u <= Math.floor(t) + 1) target = scrub.u;
+      if (!idle && f > 0 && scrub.dir < 0 && t > scrub.u && scrub.u >= Math.ceil(t) - 1) target = scrub.u;
+      scrub.u += (target - scrub.u) * damp(idle ? 2.4 : FOLLOW, dt);
       if (Math.abs(target - scrub.u) < 2e-4) scrub.u = target;
     }
 
@@ -1800,23 +1805,22 @@ export async function start({ reduced = false } = {}) {
   // edge both ways (the legs share the zone by their lengths), so the flight never
   // lurches. Scrolled back, it is the same way in reverse.
   const CROSS = { T0: 0.1, LT: 0.07 }; // the lift-off's share of the zone, and the turn's out of sight (of the rest)
-  // Into the zone from wherever it was. Near either end's spot the flight is kept as laid
-  // out, the turn out of sight included: only how far off that spot it was is carried
-  // along, fading out as the rig's blend does and as the flight nears the turn (measured
-  // from the spot, not from the flight, so a first frame that is already well on its way
-  // doesn't drag the turn back on screen). At the portal that reaches half the way in
-  // from the edge: with the page running back up, the pass is still on its way there.
-  // From further off (a leap back from deep in the timeline, say) it glides onto the
-  // flight instead, as any journey taking over does: shifted that far, the whole way out
-  // and back would be flown across the screen. And so it does (over) when the first frame
-  // is already past the turn, which it then never took. Gliding on the way back up, it
-  // doesn't follow the flight out to the edge either (it would be on its way back before
-  // it got there, a loop in mid-screen): it brakes and waits (hold), turning round as the
-  // flight does out of sight, and is taken along when the flight comes past, or goes
-  // straight to the spot if that is on its way.
-  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1, far: false, x0: 0, hold: NaN, soft: 0 }; // (p: the last frame's, to tell a new entry)
-  function crossPlace(x, y, h, yaw, E, paged, over, xTurn, to) {
-    if (jr.lastP < 0 || jr.lastP !== crossOff.p) {
+  // Into the zone from wherever it was. The flight is kept as laid out, the turn out of
+  // sight included: only how far off that end's spot it was is carried along, fading out
+  // as the rig's blend does and as the flight nears the turn (measured from the spot, not
+  // from the flight, so a first frame that is already well on its way doesn't drag the
+  // turn back on screen). Two things are not flown that way (skip): from far off the
+  // hero's spot, or with the first frame already past the turn, it glides onto the flight
+  // as any journey taking over does. And taken back up from the timeline faster than it
+  // could fly out to the edge and round (heroCross: rush), it doesn't follow the flight
+  // out at all, which would be a streak across the screen and back, or a loop in
+  // mid-screen. It brakes and waits where it is (hold), turning to fly on to its spot,
+  // and is taken along when the flight comes past (rush 1). With its spot on its way, or
+  // all but, it goes straight there instead, facing the way it flies (rush 2). Either
+  // way its facing is its own from there, not the flight's (see heroCross).
+  const crossOff = { x: 0, y: 0, h: 0, yaw: 0, p: -1, far: false, x0: 0, hold: NaN, soft: 0, rush: 0 }; // (p: the last frame's, to tell a new entry)
+  function crossPlace(x, y, h, yaw, E, paged, skip, xTurn, to, again) {
+    if (!again && (jr.lastP < 0 || jr.lastP !== crossOff.p)) {
       const k = snap.k < 1 ? 1 : 0;
       let dy = snap.at.y - E.y;
       // (the portal's end moves with the page: what the page went by in this frame is
@@ -1827,11 +1831,23 @@ export async function start({ reduced = false } = {}) {
       crossOff.h = (snap.at.h - E.h) * k;
       crossOff.yaw = wrapPi(snap.at.yaw - E.yaw) * k;
       crossOff.x0 = x;
-      crossOff.far = over || Math.abs(crossOff.x) > Math.max(E.h, paged ? E.x - xTurn : 0) * 0.5;
+      crossOff.far = skip || (!to && Math.abs(crossOff.x) > E.h * 0.5);
       crossOff.hold = NaN;
+      crossOff.rush = 0;
       if (crossOff.far && k && to) {
+        // (it brakes within half its height; it starts off again as the flight nears)
         crossOff.hold = Math.min(snap.at.x - snap.at.h * 0.5, to.x);
         crossOff.soft = Math.min(to.h * 0.6, to.x - crossOff.hold);
+        crossOff.rush = 1;
+        if (crossOff.soft < to.h * 0.25) { crossOff.hold = to.x; crossOff.soft = 0; crossOff.rush = 2; }
+        // From here its facing is read as on the leg it will fly, the one from the edge
+        // to its spot: the mirror image of the other leg's, turned round, is the same
+        // facing, so nothing shows.
+        head.m = 1 - head.m;
+        head.to = 1 - head.to;
+        head.vx = 0;
+        snap.at.yaw = -snap.at.yaw;
+        snap.hm = 1 - snap.hm;
       }
     }
     if (crossOff.far) {
@@ -1860,7 +1876,7 @@ export async function start({ reduced = false } = {}) {
     jr.w = 1;
     if (p < CROSS.T0) { // lifting off: a crouch, the jets lighting
       const u = p / CROSS.T0;
-      crossPlace(A.x, A.y, A.h, A.yaw, A, false, false, -A.h * 0.9, null);
+      crossPlace(A.x, A.y, A.h, A.yaw, A, false, false, -A.h * 0.9, null, false);
       mixPose(P, POSE.crouch, POSE.crouch, 0);
       jr.w = smooth(clamp01(u / 0.7));
       jr.pin = 1;
@@ -1903,22 +1919,46 @@ export async function start({ reduced = false } = {}) {
     const way = jr.lastP < 0 ? (scrub.dir < 0 ? -1 : 1) : Math.sign(p - jr.lastP); // (on to the timeline, back, or held)
     const qWas = jr.lastP < 0 ? (way < 0 ? 1 : 0) : (jr.lastP - CROSS.T0) / (1 - CROSS.T0); // (where it was a frame ago)
     const ox = at.x, oy = at.y;
-    crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, jr.lastP < 0 && (way < 0 ? q < L1 : q >= back), xOff, way < 0 ? A : null);
+    // Taken back up faster than it could fly out to the edge and round, going by the
+    // scroll's pace and by how far ahead the page already is (the time the flight has
+    // to the turn, against the way there at about its own length a frame): then it is
+    // not flown at all (see crossPlace). So too when the first frame is past the turn.
+    const dp = p - (CROSS.T0 + (1 - CROSS.T0) * back), gap = scrub.u - scrub.t;
+    const tTurn = Math.min(gap > dp ? -Math.log(1 - dp / gap) / FOLLOW : Infinity, (dp * scrub.span) / Math.max(1, -scrollV));
+    const hEdge = A.h + (B.h - A.h) * smooth(clamp01(L1 / 0.9));
+    const rush = dp <= 0 || Math.abs(snap.at.x - B.x) + x - xOff > 50 * hEdge * tTurn;
+    crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, jr.lastP < 0 && (way < 0 ? rush : q >= back), xOff, way < 0 ? A : null, false);
     // Round the turn, out of sight (in this frame, or between the last one and this):
     // whatever was still blending in is done with, and it is turned the way it goes
     // by the time it comes back into view.
     if (!crossOff.far && Math.min(q, qWas) < back && Math.max(q, qWas) >= L1) {
-      if (snap.k < 1) { snap.t = snap.k = 1; crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, false, xOff, null); }
+      if (snap.k < 1) { snap.t = snap.k = 1; crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, false, xOff, null, true); }
       if (way) head.m = head.to = way < 0 ? 1 : 0;
       head.vx = 0;
     }
-    head.along = Math.hypot(at.x - ox, at.y - oy) * way; // (see stepHeading)
+    // Not flown as laid out (rush): its facing is its own. Waiting for the flight it
+    // turns to fly on to its spot, on the clock; going straight there it stays as it
+    // flies (that leg's facing all the way, the other leg's and the turn's mirrored).
+    // Should the scroll turn back, it is onto the flight again from where it is, as any
+    // journey taking over (read as on the leg the flight is then on).
+    if (crossOff.rush) {
+      crossPlace(x, y, h, q >= back ? -yaw : q >= L1 ? -YAW.fly : yaw, p < 0.5 ? A : B, p >= 0.5, false, xOff, null, true);
+      if (way > 0) {
+        if (q >= back) { at.yaw = -at.yaw; head.m = 1 - head.m; head.to = 1 - head.to; }
+        crossOff.rush = 0;
+        crossOff.hold = NaN;
+        head.vx = 0;
+        snapRig();
+      }
+    }
+    head.along = crossOff.rush ? 0 : Math.hypot(at.x - ox, at.y - oy) * way; // (see stepHeading)
     // How far round it has to be, as part of the flight (see stepHeading). Scrolled back
     // out of the hover at the portal: turned to fly off, by a third of the way to the edge.
     // And taken back in from just off the edge, before the turn (the scroll changed its
     // mind): the way it now goes by the time it shows, not tail first.
     const show = smooth(clamp01((at.x + at.h * 0.9) / (at.h * 0.3)));
-    if (way < 0 && q >= back) head.lo = smooth(clamp01((1 - (q - back) / L2) / 0.35));
+    if (crossOff.rush) head.face = crossOff.rush === 1 && up > 0.25 ? 1 : 0;
+    else if (way < 0 && q >= back) head.lo = smooth(clamp01((1 - (q - back) / L2) / 0.35));
     else if (way < 0 && q < L1 && show < 1) head.lo = show;
     else if (way > 0 && q >= back && show < 1) head.hi = 1 - show;
     const lift = smooth(clamp01(q / 0.2)); // (up out of the crouch, the feet letting go of the floor)
@@ -2181,7 +2221,8 @@ export async function start({ reduced = false } = {}) {
     head.vx += ((dt > 0 ? v / dt : 0) - head.vx) * damp(9, dt);
     // (a timed journey rights itself as it sets off, facing the way it was: no turn-round
     // would be done before it is upright, only begun and taken back)
-    if (flyW < 0.25 || reduced || view.dock || trans) head.to = 0;
+    if (Number.isFinite(head.face)) head.to = head.face; // (the flight's own call: see heroCross)
+    else if (flyW < 0.25 || reduced || view.dock || trans) head.to = 0;
     else if (Math.abs(head.vx) > at.h * 0.5) head.to = along ? (head.vx > 0 ? 0 : 1) : (head.vx > 0) === (Math.sin(at.yaw) >= 0) ? 0 : 1;
     head.m += (head.to - head.m) * damp(6, dt);
     if (Math.abs(head.to - head.m) < 1e-3) head.m = head.to;
@@ -3710,6 +3751,7 @@ export async function start({ reduced = false } = {}) {
     head.along = NaN;
     head.lo = 0;
     head.hi = 1;
+    head.face = NaN;
     if (!ledge.drove) ledge.lastP = -1;
     ledge.was = ledge.drove;
     ledge.drove = false;
