@@ -44,8 +44,7 @@
     //   edge   heard as the sound itself comes on or goes off (the headphones), so it
     //          does not pass through the master fade
     //   file   another name for its file, when ids share one (the voice's phrases)
-    // (still to come, waiting on their takes: 'phones-gather' and 'jet-off'. The page
-    // already asks for them: an id not listed here is simply not heard)
+    // (an id the page asks for that is not listed here is simply not heard)
     dir: 'assets/audio/',
     fx: {
       'jet-ignite': { gain: 0.4, cool: 0.6 },
@@ -62,6 +61,8 @@
       takeoff: { gain: 0.36, cool: 0.8 },
       land: { gain: 0.34, cool: 0.4 },
       'portal-out': { gain: 0.38, cool: 0.3 },
+      'jet-off': { gain: 0.4, cool: 0.6 },
+      'phones-gather': { gain: 0.3, cool: 0.5, edge: true },
       'phones-clamp': { gain: 0.3, cool: 0.5, edge: true },
       'phones-away': { gain: 0.3, cool: 0.5, edge: true },
       // The voice: one take, cut into its phrases (voice-1 to voice-5), so it is the
