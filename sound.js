@@ -43,10 +43,9 @@
     //   voice  the guide's own voice: one phrase at a time, the next cuts the last short
     //   edge   heard as the sound itself comes on or goes off (the headphones), so it
     //          does not pass through the master fade
-    // (still to come, waiting on their takes: 'phones-gather', 'phones-clamp' and
-    // 'phones-away' (edge), 'jet-off', 'takeoff', 'land', 'portal-out', and the voice:
-    // 'chirp-wave', 'chirp-yes', 'chirp-no', 'chirp-thumbs', 'chirp-jump', 'chirp-dance',
-    // 'cheer'. The page already asks for them: an id not listed here is simply not heard)
+    //   file   another name for its file, when ids share one (the voice's phrases)
+    // (still to come, waiting on their takes: 'phones-gather' and 'jet-off'. The page
+    // already asks for them: an id not listed here is simply not heard)
     dir: 'assets/audio/',
     fx: {
       'jet-ignite': { gain: 0.4, cool: 0.6 },
@@ -60,6 +59,21 @@
       'stunt-impact': { gain: 0.52, cool: 1 },
       transmit: { gain: 0.42, cool: 1 },
       'card-tug': { gain: 0.3, cool: 0.2, vary: 0.05 },
+      takeoff: { gain: 0.36, cool: 0.8 },
+      land: { gain: 0.34, cool: 0.4 },
+      'portal-out': { gain: 0.38, cool: 0.3 },
+      'phones-clamp': { gain: 0.3, cool: 0.5, edge: true },
+      'phones-away': { gain: 0.3, cool: 0.5, edge: true },
+      // The voice: one take, cut into its phrases (voice-1 to voice-5), so it is the
+      // same robot in every mood. 1 hello, up and back down; 2 a step down, held (sad);
+      // 3 a little tune; 4 an excited jumble; 5 one even note
+      'chirp-wave': { file: 'voice-1', gain: 0.38, cool: 0.4, voice: true },
+      'chirp-yes': { file: 'voice-5', gain: 0.38, cool: 0.4, voice: true },
+      'chirp-thumbs': { file: 'voice-5', gain: 0.38, cool: 0.4, voice: true },
+      'chirp-no': { file: 'voice-2', gain: 0.38, cool: 0.4, voice: true },
+      'chirp-jump': { file: 'voice-4', gain: 0.34, cool: 0.4, voice: true },
+      'chirp-dance': { file: 'voice-3', gain: 0.36, cool: 0.4, voice: true },
+      cheer: { file: 'voice-4', gain: 0.36, cool: 0.4, voice: true },
     },
     // The jetpack: a loop under the one-shots, as loud and as bright as the thrust
     // (lo, hi: where its low-pass sits with the jets barely lit and at full burn).
@@ -314,7 +328,8 @@
   const LATE_MS = 500; // (how long after the ask it is still worth playing)
   function loadFx(id) {
     if (!fxLoad[id]) {
-      fxLoad[id] = fetch(SOUND.dir + id + '.mp3')
+      const def = SOUND.fx[id];
+      fxLoad[id] = fetch(SOUND.dir + ((def && def.file) || id) + '.mp3')
         .then((r) => {
           if (!r.ok) throw new Error(id + ': HTTP ' + r.status);
           return r.arrayBuffer();
