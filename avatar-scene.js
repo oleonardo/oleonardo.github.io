@@ -747,8 +747,9 @@ export async function start({ reduced = false } = {}) {
   // (the legs of a pass, as the fraction of a card's scroll where each one ends: into the
   // left portal, through the card, off the right edge of the screen, and in from the left
   // to the next card's portal; out of the last card it only clears its right portal, by last.
-  // far: how far ahead of it the cards may be, in cards, for it to catch up along the pass)
-  const TUN = { dive: 0.15, inside: 0.46, off: 0.73, last: 0.6, far: 0.33 };
+  // far: how far ahead of it the cards may be, in cards, for it to catch up along the pass;
+  // fast: the pace, in cards a second, from which the page is leaping past them)
+  const TUN = { dive: 0.15, inside: 0.46, off: 0.73, last: 0.6, far: 0.33, fast: 4 };
   const TILT = { hover: 0.22, fly: 1.32 }; // forward lean, at the portal and flying level
   const YAW = { hover: 0.9, fly: 1.25 }; // facing right, toward the way it flies
   let PORTAL = 0.033; // half a portal's width, in card widths (read from .tl-portal's --pw on resize)
@@ -765,6 +766,14 @@ export async function start({ reduced = false } = {}) {
     if (!sec) return 0;
     const r = sec.getBoundingClientRect();
     return clamp01(-r.top / Math.max(1, r.height - window.innerHeight)) * (tunnels.length - 1);
+  }
+  // How fast the page is taking the cards on, in cards a second: by this frame's step and
+  // by the scroll's pace over the last moments, whichever says more (see scrollPace).
+  function storyPace(dt) {
+    const sec = nodes.storySec;
+    if (!sec) return 0;
+    const v = Math.max(Math.abs(scrollD) / Math.max(dt, 1e-3), Math.abs(pace.v));
+    return (v * (tunnels.length - 1)) / Math.max(1, sec.getBoundingClientRect().height - window.innerHeight);
   }
   // Where the cards are drawn: app.js eases its progress and writes it on the year rail.
   function storyF() {
@@ -1852,11 +1861,14 @@ export async function start({ reduced = false } = {}) {
       // own way back to the portal is a long while: the cards would have turned away
       // meanwhile, and the pass be left to catch up with them in a streak.) With the cards
       // already well ahead (a fling, a leap of the page) it comes out of the last card
-      // first, and goes to them from its portal (tun.leap: see stepTunnel).
+      // first, and goes to them from its portal (tun.leap: see stepTunnel). So too while
+      // the page is still leaping (TUN.fast): the pass would be flung along with it, round
+      // the screen and back, and the page may be past the timeline before it is anywhere.
       const g0 = head.g; // (where it is along the pass, as of the last frame)
       const gap = g0 - storyF();
       const out = TUN.last * (p / EXIT_PASS) < 0.02; // all but back at the portal
-      if (t <= i && tun.active && g0 < tunnels.length - 1 + TUN.inside && (gap <= TUN.far || out)) {
+      const calm = storyPace(dt) < TUN.fast;
+      if (t <= i && tun.active && g0 < tunnels.length - 1 + TUN.inside && ((calm && gap <= TUN.far) || out)) {
         tun.g = g0;
         tun.wait = false;
         tun.ease = 1;
@@ -2020,7 +2032,8 @@ export async function start({ reduced = false } = {}) {
     // The scroll may only pick up once it is on its way (a wheel spun from rest at the
     // portal, whose first notch says little): then too, as a new entry from where it
     // is, while it is still slow enough to brake and has the room to do it in view.
-    const late = !fresh && way < 0 && dp > 0 && !crossOff.far && ox >= at.h * 0.45
+    const flown = !crossOff.far || (!crossOff.rush && !Number.isFinite(crossOff.hold) && snap.k >= 1);
+    const late = !fresh && way < 0 && dp > 0 && flown && ox >= at.h * 0.45
       && Math.abs(crossOff.v) <= CROSS.BRAKE * at.h && ox - xOff > CROSS.V * hEdge * tTurn;
     if (late) { snapRig(); crossOff.p = -1; }
     crossPlace(x, y, h, yaw, p < 0.5 ? A : B, p >= 0.5, late || (fresh && (way < 0 ? rush : q >= back)), xOff, way < 0 ? A : null, false);
@@ -3467,22 +3480,16 @@ export async function start({ reduced = false } = {}) {
       return;
     }
     // Off the screen with the case open, once the trail it left up there has died out (it
-    // flies back in when the case closes); or the case didn't open after all: the show is
-    // over.
+    // flies back in when the case closes); or the case didn't open after all, or is closed
+    // again already: the show is over, and it comes straight back. (Closed while it is
+    // still flying out, it flies on out first: taken back from there it would be gone
+    // from mid-air.)
     if (S.opened && S.t >= STUNT.end + (open ? STUNT.trail : 0)) {
       const node = S.node;
       sink.px = sink.v = 0;
       endStunt(false);
       if (open) popFrom = node; // (it comes back when the case closes)
-      else startReturn(node); // (closed again already, or it never opened: straight back)
-      return;
-    }
-    // (closed again before it was off the screen: it comes straight back down)
-    if (open) S.seen = true;
-    else if (S.seen) {
-      sink.px = sink.v = 0;
-      endStunt(false);
-      startReturn(S.node);
+      else startReturn(node);
       return;
     }
     // Anything else first (a scroll, the deck moving on, another section) ends it early:
