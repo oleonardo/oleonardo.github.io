@@ -666,7 +666,7 @@ export async function start({ reduced = false } = {}) {
     tlItems: $$('.tl-item'),
   };
 
-  // Contact shadow + lantern spill under its feet on the card it stands on. It lives
+  // The card it stands on lights up along its edge under its feet. It lives
   // inside the card's own 3D transform, so it tilts and recedes with the deck for free.
   const seatMark = document.createElement('span');
   seatMark.className = 'avatar-seat';
@@ -3670,9 +3670,9 @@ export async function start({ reduced = false } = {}) {
       seatHost.appendChild(seatMark);
     }
     if (on) {
-      // under its feet, a little narrower while it runs
-      seatMark.style.left = `${(floor.u * 100).toFixed(2)}%`;
-      seatMark.style.width = `${(at.h * (0.85 - 0.15 * runner.run)).toFixed(0)}px`;
+      // the card's edge lights up under its feet, a little tighter while it runs
+      seatMark.style.setProperty('--u', `${(floor.u * 100).toFixed(2)}%`);
+      seatMark.style.setProperty('--w', `${(at.h * (1.1 - 0.2 * runner.run)).toFixed(0)}px`);
       seatMark.style.setProperty('--lift', (jr.on ? Math.min(1, seatLift) : 0).toFixed(3));
     }
     seatMark.classList.toggle('is-on', on);

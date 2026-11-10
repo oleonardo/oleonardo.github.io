@@ -2497,19 +2497,23 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
   visibility: hidden;
 }
 
-/* Where the guide sits on the front project card: a soft contact shadow and
-   the amber spill of its lantern on the card's top edge. */
+/* Where the guide stands on the front project card, the card's own border lights
+   up under its feet: brightest right below it, fading along the top edge and, near
+   a corner, round it and down the side. It is drawn on the border itself (a ring
+   masked to the card's 1px edge), so nothing spills past the card into the air.
+   Off the card (hops), the light dims and spreads, as from a source further away. */
 .avatar-seat {
-  --lift: 0; /* how high it is off the card (hops): the shadow shrinks and fades */
+  --u: 80%; /* where its feet are along the top edge */
+  --w: 120px; /* how far the light reaches along the edge */
+  --lift: 0; /* how high it is off the card, 0..1 */
+  --reach: calc(var(--w) * (1 + var(--lift) * 0.7));
   position: absolute;
-  top: 0;
-  left: 80%;
+  inset: -1px;
   z-index: 10;
-  width: 150px;
-  height: 44px;
-  transform: translate(-50%, -50%) scale(calc(1 - var(--lift) * 0.55));
+  border-radius: inherit;
   pointer-events: none;
   opacity: 0;
+  filter: drop-shadow(0 0 3px rgba(99, 230, 210, 0.9)) drop-shadow(0 0 10px rgba(99, 230, 210, 0.45));
   transition: opacity 0.45s var(--ease-out);
 }
 
@@ -2517,19 +2521,35 @@ html:has(.terminal-form :focus) .avatar-hit.is-dock {
 .avatar-seat::after {
   content: "";
   position: absolute;
-  border-radius: 50%;
-  opacity: calc(1 - var(--lift) * 0.75);
+  inset: 0;
+  border-radius: inherit;
+  opacity: calc(1 - var(--lift) * 0.8);
 }
 
+/* the lit edge */
 .avatar-seat::before {
-  inset: 50% 4% -55% 4%;
-  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.35) 55%, transparent);
+  padding: 1px;
+  background: radial-gradient(
+    var(--reach) calc(var(--reach) * 0.75) at var(--u) 0,
+    #effffc,
+    rgba(99, 230, 210, 0.95) 14%,
+    rgba(99, 230, 210, 0.4) 45%,
+    transparent
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
 }
 
+/* and a faint wash of that light on the card just under the edge */
 .avatar-seat::after {
-  inset: 28% -35%;
-  background: radial-gradient(closest-side, rgba(255, 194, 122, 0.95), rgba(255, 179, 92, 0.35) 45%, transparent);
-  filter: blur(1.5px);
+  inset: 1px;
+  background: radial-gradient(
+    calc(var(--reach) * 0.7) calc(var(--reach) * 0.3) at var(--u) 0,
+    rgba(99, 230, 210, 0.16),
+    transparent
+  );
   mix-blend-mode: screen;
 }
 
