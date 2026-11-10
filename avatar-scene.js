@@ -1385,7 +1385,7 @@ export async function start({ reduced = false } = {}) {
   function hopTo(id, prev, skForce) {
     // (flying through a tunnel, or off its spot on a scrolled flight, it sets off from
     // there, still in the air)
-    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.fly > 0);
+    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.fly > 0 || (jr.on && jr.pin < 0.5));
     if (trans && trans.kind === 'send') settleSend(null);
     // (off the end of the last case it springs from where it is on the card, or drops
     // from where it hangs past it: not from the deck's middle)
@@ -2087,16 +2087,25 @@ export async function start({ reduced = false } = {}) {
     const idle = now - scrub.scrolledAt > 450 && f > 0 && f < 1;
     const onward = ORDER[Math.floor(t)] === 'projetos' && nodes.workStage && nodes.workStage.getBoundingClientRect().top < -40;
     const onLedge = ORDER[Math.floor(t)] === 'projetos' && ledgeMode();
+    const pi = ORDER.indexOf('projetos');
     if (onLedge && f > LEDGE.edge && scrub.u - Math.floor(t) >= LEDGE.edge - 1e-3) {
-      // Run off the end of the last case, it flies down on the clock (faster only
-      // if the scroll runs ahead) and stays in the next section, until the scroll
+      // Run off the end of the last case, it flies down on the clock (a little faster
+      // only if the scroll runs ahead) and stays in the next section, until the scroll
       // takes it back onto the card.
       const li = Math.floor(t);
-      const s = (scrub.u - li - LEDGE.edge) / (1 - LEDGE.edge); // through the fall
-      const L = scrubPhases('fall', endKind(ORDER[li + 1])).L;
-      const rate = (1 - LEDGE.edge) * (s < L ? L / LEDGE.fall : (1 - L) / LEDGE.up);
+      const s = (scrub.u - li - LEDGE.edge) / (1 - LEDGE.edge); // through the flight
+      ledgeWay('down', s);
+      const step = (1 - LEDGE.edge) * ledgeRate(s, false) * dt;
       const follow = t > scrub.u ? (t - scrub.u) * damp(FOLLOW, dt) : 0;
-      scrub.u = Math.min(li + 1, scrub.u + Math.max(rate * dt, follow));
+      scrub.u = Math.min(li + 1, scrub.u + Math.max(step, Math.min(follow, step * 1.8)));
+    } else if (pi >= 0 && pi < ORDER.length - 1 && ledgeMode() && t < pi + LEDGE.edge && scrub.u > pi + LEDGE.edge + 1e-4 && scrub.u <= pi + 1) {
+      // Taken back onto the card's hold with it down by the next section (or still on its
+      // way there): it flies back up onto the card on the clock, the same way.
+      const s = (scrub.u - pi - LEDGE.edge) / (1 - LEDGE.edge);
+      ledgeWay('up', s);
+      const step = (1 - LEDGE.edge) * ledgeRate(s, true) * dt;
+      const follow = (scrub.u - t) * damp(FOLLOW, dt);
+      scrub.u = Math.max(pi + LEDGE.edge, scrub.u - Math.max(step, Math.min(follow, step * 1.8)));
     } else {
       // (on the last case's hold it stays where the scroll left it, on the card)
       const held = onLedge && f <= LEDGE.edge;
@@ -2400,16 +2409,164 @@ export async function start({ reduced = false } = {}) {
 
   // Off the last video case: the deck holds its last card a while (app.js, under
   // html.has-ledge) and it runs on to the end of the card, the scroll pacing its run.
-  // The moment its feet leave the card the jets kick in: turned to the visitor (no
-  // running on thin air), it flies down into the next section on the clock, whatever
-  // the scroll does then (see stepScrub), and sets down on its feet: it never hangs in
-  // the air.
+  // The moment its feet leave the card it flies, on the clock, whatever the scroll does
+  // then (see stepScrub): out level to the right of the case, carried on by its run,
+  // down round a wide turn (upright through it, turned to the visitor, banked into it)
+  // and back in level, flaring to set down on its feet by the next section. Back up the
+  // page it flies the same way the other way up: a crouch and a spring off the floor,
+  // out to the right climbing, up round the turn and back in level onto the end of the
+  // card, facing along it for the run back. It never hangs in the air, and it never
+  // plays the way down backward.
   const DECK_DWELL = 0.4; // the hold, in viewport heights (the same in app.js)
   const RUN_STRIDE = 1.1; // body heights a second the Running clip covers at speed 1 (under the mixer's 0.82)
   const ledgeMode = () => !reduced && !view.dock && !!nodes.deck && nodes.projects.length > 1;
   const lastCase = () => { const n = nodes.projects[nodes.projects.length - 1]; return n.querySelector('.project-card') || n; };
-  const LEDGE = { edge: 0.2, fall: 0.62, up: 0.9 }; // the run's share of the zone; the fall and the getting up, in seconds
-  const ledge = { drove: false, was: false, face: 1, lastP: -1, still: 0, v: 0, carry: null }; // carry: the card it dropped in behind
+  const LEDGE = { edge: 0.2 }; // the run's share of the zone (the rest is the flight's: s, 0 at the edge, 1 down)
+  // The flights, as shares of their own way (r: s down, 1 - s up) and their times in
+  // seconds: the crouch before the spring (up only), the flight, the landing.
+  const FLY_DN = { T0: 0, L: 0.82, crouch: 0, fly: 1.45, land: 0.5 };
+  const FLY_UP = { T0: 0.1, L: 0.88, crouch: 0.2, fly: 1.45, land: 0.28 };
+  // how fast s goes on the clock (per second), flying the given way
+  function ledgeRate(s, up) {
+    const C = up ? FLY_UP : FLY_DN, r = clamp01(up ? 1 - s : s);
+    return r < C.T0 ? C.T0 / C.crouch : r < C.L ? (C.L - C.T0) / C.fly : (1 - C.L) / C.land;
+  }
+  // carry: the card it dropped in behind; mode: the way it flies ('down' | 'up')
+  const ledge = { drove: false, was: false, face: 1, lastP: -1, still: 0, v: 0, carry: null, mode: 'down', fromAir: false, B: null, bAt: 0 };
+  // (the flight's way changing in mid-air: from where it is, onto the other flight)
+  function ledgeWay(mode, s) {
+    if (ledge.mode === mode) return;
+    if (s > 1e-3 && s < 1 - 1e-3) { snapRig(); jr.lastP = -1; }
+    ledge.mode = mode;
+  }
+  // a cubic Hermite: from a (heading off at va) to b (arriving at vb), at u in 0..1
+  const hermite = (a, va, b, vb, u) => {
+    const u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * a + (u3 - 2 * u2 + u) * va + (3 * u2 - 2 * u3) * b + (u3 - u2) * vb;
+  };
+  const hermiteD = (a, va, b, vb, u) => {
+    const u2 = u * u;
+    return (6 * u2 - 6 * u) * a + (3 * u2 - 4 * u + 1) * va + (6 * u - 6 * u2) * b + (3 * u2 - 2 * u) * vb;
+  };
+  // The way round, from A to Z at k (0..1): out to the right of both, round the turn
+  // there (going straight down, or up) and back in from the right. Returns the point and
+  // the heading (per unit of k), continuous through the turn.
+  const loopPt = { x: 0, y: 0, vx: 0, vy: 0 };
+  function loopAt(A, Z, k, up, h) {
+    const right = Math.max(A.x, Z.x);
+    const xR = Math.max(right + h * 0.75, Math.min(right + h * 2, view.w - h * 0.55));
+    const yR = (A.y + Z.y) / 2;
+    const d1 = Math.hypot(xR - A.x, yR - A.y), d2 = Math.hypot(Z.x - xR, Z.y - yR);
+    const D = (d1 + d2) * 1.15, a = d1 / Math.max(1, d1 + d2);
+    const sy = Math.sign(Z.y - A.y) || 1;
+    // off A: level and on its way (down, off the edge) or springing up and out (up);
+    // round the turn, straight down or up; into Z level, settling onto it from just above
+    const tA = up ? [0.35 * D, -0.9 * D] : [1.1 * D, -0.06 * D];
+    const tR = [0, sy * D];
+    const tZ = up ? [-0.85 * D, 0.3 * D] : [-0.95 * D, 0.14 * D];
+    let P0, t0, P1, t1, u, w;
+    if (k < a) { P0 = A; t0 = tA; P1 = { x: xR, y: yR }; t1 = tR; u = k / Math.max(1e-4, a); w = a; }
+    else { P0 = { x: xR, y: yR }; t0 = tR; P1 = Z; t1 = tZ; u = (k - a) / Math.max(1e-4, 1 - a); w = 1 - a; }
+    loopPt.x = hermite(P0.x, t0[0] * w, P1.x, t1[0] * w, u);
+    loopPt.y = hermite(P0.y, t0[1] * w, P1.y, t1[1] * w, u);
+    loopPt.vx = hermiteD(P0.x, t0[0] * w, P1.x, t1[0] * w, u) / Math.max(1e-4, w);
+    loopPt.vy = hermiteD(P0.y, t0[1] * w, P1.y, t1[1] * w, u) / Math.max(1e-4, w);
+    return loopPt;
+  }
+  // E: the end of the card (where its feet leave it); B: the next section's spot.
+  function ledgeFlight(s, E, B) {
+    const up = ledge.mode === 'up';
+    const C = up ? FLY_UP : FLY_DN;
+    const r = up ? 1 - s : s; // through this flight, its own way
+    const rWas = jr.lastP < 0 ? -1 : up ? 1 - jr.lastP : jr.lastP;
+    const A = up ? B : E, Z = up ? E : B; // where it sets off, and where it lands
+    const q = clamp01((r - C.T0) / (C.L - C.T0)); // through the flight
+    // its pace along the way: down it is already on its way off the edge, up it springs
+    // off from a standstill; either way it brakes to land (onto the card with a little
+    // way still on)
+    const k = up ? hermite(0, 0.55, 1, 0.15, q) : hermite(0, 1.3, 1, 0, q);
+    const h = A.h + (Z.h - A.h) * smooth(q);
+    const pt = loopAt(A, Z, k, up, h);
+    const sp = Math.hypot(pt.vx, pt.vy) || 1;
+    const cx = pt.vx / sp, cy = pt.vy / sp; // the way it goes (right +, down +)
+    // into the flight off the start, and out of it into the flare
+    const flyIn = smooth(clamp01(q / (up ? 0.2 : 0.1)));
+    const flare = smooth(clamp01((q - 0.7) / 0.3));
+    const lvl = smooth(clamp01(Math.abs(cx) * 1.15)) * flyIn * (1 - flare); // laid out level
+    const e = clamp01((r - C.L) / (1 - C.L)); // the landing, once down
+    const P = jr.pose || (jr.pose = newPose());
+    jr.on = true;
+    vel.x = vel.y = 0;
+    jr.spin = 0;
+    jr.hop = 0;
+    jr.pitch = 0;
+    jr.squash = 0;
+
+    // where, and which way it faces: the way it goes (turned to the visitor going
+    // straight up or down, round the turn), from the way it stood and to the way it will
+    let yaw = YAW.fly * clamp(cx * 1.8, -1, 1);
+    if (r < C.T0) {
+      at.x = A.x; at.y = A.y; at.h = A.h; at.yaw = A.yaw;
+    } else if (r < C.L) {
+      at.x = pt.x; at.y = pt.y; at.h = h;
+      at.yaw = A.yaw + wrapPi(yaw - A.yaw) * smooth(clamp01(q / (up ? 0.22 : 0.12)));
+    } else {
+      at.x = Z.x; at.y = Z.y; at.h = Z.h;
+      at.yaw = yaw + wrapPi(Z.yaw - yaw) * smooth(clamp01(e / (up ? 0.6 : 1)));
+    }
+    snapAt();
+
+    // how: level in flight, upright round the turn and banked into it, leaning back
+    // into the flare; crouched for the spring and for the touchdown
+    if (r < C.T0) {
+      const u = r / Math.max(1e-4, C.T0);
+      mixPose(P, POSE.crouch, POSE.crouch, 0);
+      jr.w = smooth(clamp01(u / 0.7));
+      jr.pin = 1;
+      jr.air = jr.tilt = jr.fly = jr.bank = 0;
+      jr.pitch = 0.16 * Math.sin(Math.PI * u);
+      jr.squash = 0.07 * Math.sin(Math.PI * u);
+      jr.jet = 0.4 * smooth(u);
+      jr.floor = A.floor || null;
+    } else if (r < C.L) {
+      if (up) mixPose(P, POSE.crouch, POSE.hover, smooth(clamp01(q / 0.18)));
+      else mixPose(P, POSE.hang, POSE.hover, smooth(clamp01(q / 0.2)));
+      if (lvl > 0) mixPose(P, P, POSE.fly, lvl * 0.9);
+      const ready = smooth(clamp01((q - 0.72) / 0.28));
+      if (ready > 0) mixPose(P, P, POSE.crouch, ready * 0.75);
+      // (down, straight out of the run's clip into the flight)
+      jr.w = up ? 1 : smooth(clamp01(s / 0.05));
+      jr.pin = Math.max(up ? 1 - smooth(clamp01(q / 0.12)) : 0, smooth(clamp01((q - 0.86) / 0.14)));
+      jr.tilt = TILT.hover * flyIn * (1 - flare) + (TILT.fly - TILT.hover) * lvl - 0.3 * flare * (1 - smooth(clamp01((q - 0.94) / 0.06)));
+      jr.fly = lvl;
+      jr.air = (0.25 + 0.25 * lvl) * flyIn * (1 - smooth(clamp01((q - 0.85) / 0.15)));
+      // round the turn (going up or down, the turn's middle to its left), leaning into it
+      jr.bank = 0.4 * (1 - Math.abs(cx)) * flyIn * (1 - flare);
+      // the jets: a hard burn off the floor (or out of the run), a cruise, more climbing,
+      // and hard again braking for the touchdown
+      const climb = Math.max(0, -cy);
+      jr.jet = 0.55 + 0.3 * lvl + 0.35 * climb + 0.45 * (1 - smooth(clamp01(q / 0.2))) + 0.55 * flare;
+      jr.floor = r >= C.L - 0.02 && Z.floor ? Z.floor : null;
+      // it looks where it is going
+      [glance.x, glance.y] = [at.x + cx * h * 2.2, at.y - h * 0.6 + cy * h * 2.2];
+      glance.until = performance.now() + 150;
+    } else {
+      mixPose(P, POSE.crouch, POSE.crouch, 0);
+      jr.w = 1 - smooth(e);
+      jr.pin = 1;
+      jr.air = jr.tilt = jr.fly = jr.bank = 0;
+      jr.squash = 0.1 * Math.sin(Math.PI * Math.min(1, e * 2.4)) * (1 - e);
+      jr.jet = 0.5 * (1 - smooth(clamp01(e / 0.35)));
+      jr.floor = Z.floor || null;
+    }
+    if (baseName !== 'idle') { baseName = 'idle'; if (!oneShot) fadeTo('idle', 0.12); }
+    // heard: the spring off the floor, the touchdown
+    if (up && rWas >= 0 && rWas < C.T0 && r >= C.T0) sfx('takeoff');
+    if (rWas >= 0 && rWas < C.L && r >= C.L) { touchdown('feet'); sfx('land'); }
+    head.face = 0; // (its facing is laid out here: no turning round on its own)
+    ledge.fromAir = up && r > C.L - 0.02;
+    jr.lastP = s;
+  }
   function ledgeExit(p, idB, dt) {
     const F = anchorFor('projetos'); // its footing on the card, held at the deck's resting height
     const node = nodes.projects[nodes.projects.length - 1];
@@ -2417,35 +2574,36 @@ export async function start({ reduced = false } = {}) {
     const r = card.getBoundingClientRect();
     const h = F.h;
     const xEdge = r.right + h * 0.08; // where its feet leave the card
-    const YAW_RUN = 1.15, YAW_LOOK = 0.15; // facing its way, and (nearly) the visitor
+    const YAW_RUN = 1.15; // facing its way
     if (p > LEDGE.edge) {
-      // Off the edge: the jets carry it (an even flight, see journeyAt),
-      // carried on a little by its run, down beside the case to the next section's
-      // spot (while the case is held there, just off its right side: see anchorFor).
-      // Whatever of it overlaps the case is hidden behind it (drawn by maskTunnel).
+      // Off the edge, flying (see above). Whatever of it overlaps the case is hidden
+      // behind it (drawn by maskTunnel).
       const s = (p - LEDGE.edge) / (1 - LEDGE.edge);
-      const ek = endKind(idB);
-      const ph = scrubPhases('fall', ek);
-      journeyAt({ x: xEdge, y: F.y, h, yaw: YAW_LOOK, hang: true }, anchorFor(idB, true), s, 'fall', ek, ph);
-      const q = clamp01(s / ph.L);
-      // (straight into the hang: from its run to the visitor in a flash)
-      const k = smooth(clamp01(s / 0.1));
-      at.yaw = YAW_RUN + (at.yaw - YAW_RUN) * k;
-      jr.w *= smooth(clamp01(s / 0.06));
-      if (baseName !== 'idle') { baseName = 'idle'; if (!oneShot) fadeTo('idle', 0.12); }
-      if (q < 1) {
-        // (it looks where it is flying to)
-        [glance.x, glance.y] = [at.x, at.y - h * 0.75];
-        glance.until = performance.now() + 150;
+      const floor = { node, u: clamp01((xEdge - r.left) / Math.max(1, r.width)), x: xEdge, y: F.y, h };
+      // (the next section's spot jumps aside once the case rides up off it: the flight
+      // eases over to it instead of being thrown across)
+      const B = anchorFor(idB, true), now = performance.now();
+      if (!ledge.B || now - ledge.bAt > 120) ledge.B = { ...B };
+      else {
+        const k = damp(s > 0.9 || s < 0.1 ? 9 : 4, dt);
+        ledge.B.x += (B.x - ledge.B.x) * k;
+        ledge.B.y += (B.y - ledge.B.y) * k;
+        ledge.B.h += (B.h - ledge.B.h) * k;
+        ledge.B.yaw = B.yaw;
       }
+      ledge.bAt = now;
+      ledgeFlight(s, { x: xEdge, y: F.y, h, yaw: ledge.mode === 'up' ? -YAW_RUN : YAW_RUN * ledge.face, floor }, ledge.B);
       ledge.carry = card;
       ledge.lastP = -1;
       return;
     }
     ledge.drove = true;
     ledge.carry = null;
-    // (back on the card afresh: nothing left over from the last time)
-    if (ledge.lastP < 0) { ledge.still = 0; ledge.v = 0; ledge.face = 1; }
+    // (back on the card afresh: nothing left over from the last time; landed on it from
+    // the flight up, it faces back along it)
+    if (ledge.lastP < 0) { ledge.still = 0; ledge.v = 0; ledge.face = ledge.fromAir ? -1 : 1; }
+    ledge.fromAir = false;
+    ledge.mode = 'down';
     // the run: at an even pace to the end of the card, a pure function of the scroll
     const v = (xEdge - F.x) / LEDGE.edge;
     const x = F.x + v * p;
