@@ -2364,7 +2364,7 @@ html.vt .work-stage {
 /* a case the guide flew into: the deck is its own layer, so it is seen shoved aside
    the way it was hit as it fades (the page itself changes in an instant, and steps
    aside: there is only the deck as it was) */
-html.vt:not(.vt-close):has(.avatar-stage.is-exit) .work-stage {
+html.vt:not(.vt-close):has(.avatar-stage.is-over) .work-stage {
   view-transition-name: deck;
 }
 
@@ -2757,11 +2757,27 @@ html.gate :is(.topbar, .eyebrow, .hero-actions, .legend, .scroll-cue) {
   transition: opacity 0.6s var(--ease-out);
 }
 
-/* flying out of a case it opened: its own layer in the View Transition, drawn live
-   above the page and the scene's backdrop, so it flies off over the opening instead of
-   freezing in the snapshot (in any other transition it fades with the page) */
-.avatar-stage.is-exit {
+/* with a case it opened (avatar-scene.js: stageOver): its own layer in the scene's
+   View Transition, drawn live over all the others, so it flies on over the opening (and
+   away over the closing) instead of freezing in the snapshot. In any other transition
+   it fades with the page. */
+.avatar-stage.is-over {
   view-transition-name: guide;
+}
+
+::view-transition-group(guide) {
+  z-index: 1;
+}
+
+/* over the open scene it is a popover, in the top layer above the dialog: the same
+   stage, none of a popover's own box */
+.avatar-stage[popover] {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
 }
 
 ::view-transition-old(guide) {
@@ -2805,11 +2821,11 @@ html.gate :is(.topbar, .eyebrow, .hero-actions, .legend, .scroll-cue) {
   outline-offset: 4px;
 }
 
-/* Out of the way while a phone keyboard is up or a video scene is open (opening a
-   case it is still flying off the screen: the stage stays up until it is gone). */
-html.is-detail .avatar-stage:not(.is-exit),
+/* Out of the way while a phone keyboard is up or a video scene is open (but for the
+   case it opened itself: it sits on that one's card, the stage over the scene). */
+html.is-detail .avatar-stage:not(.is-over),
 html.is-detail .avatar-hit,
-html:has(dialog[open]) .avatar-stage:not(.is-exit),
+html:has(dialog[open]) .avatar-stage:not(.is-over),
 html:has(dialog[open]) .avatar-hit,
 html:has(.terminal-form :focus) .avatar-stage.is-dock,
 html:has(.terminal-form :focus) .avatar-hit.is-dock {

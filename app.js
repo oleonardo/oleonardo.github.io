@@ -784,6 +784,9 @@
       }
     });
     dialog.addEventListener('click', (e) => {
+      // (the guide sat on the case's card is not beside the case: a click on it is its own)
+      const guide = window.avatarGuide;
+      if (e.target === dialog && guide && guide.perchPoke && guide.perchPoke(e.clientX, e.clientY)) return;
       if (e.target === dialog || e.target.closest('[data-close]')) closeScene(dialog);
     });
     // Scroll up (or pull down on touch) to go back, as before.

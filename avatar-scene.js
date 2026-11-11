@@ -60,6 +60,11 @@ const MODEL = {
   },
   // Meshes of the left arm: while holding the card, that hand reaches behind it
   behindCard: ['Hand.L', 'Arm.L'],
+  // Meshes of the right arm: sat on an open case, that arm goes down behind the X
+  behindX: ['Hand.R', 'Arm.R'],
+  // ...and only its fingers come over the X's rim: each from the wrist out (the bone to
+  // its knuckle, then the finger's two)
+  grip: [['Palm1.R', 'Index.R', 'Index2.R'], ['Palm2.R', 'Middle1.R', 'Middle2.R'], ['Palm3.R', 'Ring1.R', 'Ring2.R']],
 };
 
 const CLIPS = {
@@ -179,6 +184,8 @@ export async function start({ reduced = false } = {}) {
     uCardOn: { value: 0 },
     uClipAll: { value: 0 }, // 1 = the whole body passes behind a card (a time tunnel, the case it fell into, the last case)...
     uAllRect: { value: new THREE.Vector4() }, // ...this one (its own rect: the contact card's arm clip stays as it is)
+    uDisc: { value: new THREE.Vector3() }, // the X of an open case, a disc (middle and radius, drawing-buffer pixels; no radius: none): the right arm passes behind it...
+    uGrip: { value: new THREE.Vector3() }, // ...and behind this spot on its rim (and this far round it), where the hand is: all of that arm but its fingers
   };
   const meshes = [];
   let faceMesh = null;
@@ -190,6 +197,8 @@ export async function start({ reduced = false } = {}) {
     if (o.isBone && !bonesByName[bare(o.name)]) bonesByName[bare(o.name)] = o;
   });
   const arms = MODEL.arms.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean));
+  // (the fingers that grip the X: wrist bone, the two of the finger, and its tip)
+  const fingers = MODEL.grip.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean)).map((c) => [...c, c[2].children[0] || null]);
   model.traverse((o) => {
     if (o.isBone && o.name === MODEL.headBone && !headBone) headBone = o;
     if (o.isBone && o.name === MODEL.neckBone && !neckBone) neckBone = o;
@@ -200,11 +209,17 @@ export async function start({ reduced = false } = {}) {
     if (o.name === MODEL.face.mesh && o.morphTargetDictionary) faceMesh = o;
   });
 
-  const behind = new Set(MODEL.behindCard.map(bare));
+  const behind = new Set(MODEL.behindCard.map(bare)), behindX = new Set(MODEL.behindX.map(bare));
   model.traverse((o) => {
     if (!o.isMesh || Array.isArray(o.material) || !o.material.userData.uClip) return;
     for (let n = o; n; n = n.parent) {
       if (behind.has(bare(n.name).replace(/_\d+$/, ''))) { o.material.userData.uClip.value = 1; break; }
+      if (behindX.has(bare(n.name).replace(/_\d+$/, ''))) {
+        o.material.userData.uArm.value = 1;
+        // (which of its skeleton's bones are those fingers: told apart in the shader)
+        if (o.isSkinnedMesh) fingers.flatMap((c) => [c[1], c[2]]).forEach((b, i) => { o.material.userData.uFing.value[i] = o.skeleton.bones.indexOf(b); });
+        break;
+      }
     }
   });
 
@@ -456,7 +471,7 @@ export async function start({ reduced = false } = {}) {
     if (!a || !a.play) return;
     // (nothing of the guide's while the page hides it: docked with a form field in
     // focus, or under an open scene. The transmission is the page's own event.)
-    if (id !== 'transmit' && ((view.dock && formFocused()) || (sceneOpen() && !canvas.classList.contains('is-exit')))) return;
+    if (id !== 'transmit' && ((view.dock && formFocused()) || (sceneOpen() && !stage.over))) return;
     a.play(id, opt);
   }
   // Where the sound stands (sound.js: off, armed, loading, on): on, or about to be,
@@ -624,7 +639,7 @@ export async function start({ reduced = false } = {}) {
 
   // Bones posed on top of the clips: reset to the clean clip pose before every update
   // (bones a clip doesn't animate would otherwise keep last frame's offsets).
-  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...cheerBones.map((c) => c.bone), ...rigBones])]
+  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...fingers.flatMap((c) => c.slice(0, 3)), ...cheerBones.map((c) => c.bone), ...rigBones])]
     .filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
   // Animation
@@ -1240,6 +1255,12 @@ export async function start({ reduced = false } = {}) {
     clearDust(); // (laid out for the old screen)
     if (view.dock && trans && (trans.kind === 'hop' || trans.kind === 'enter')) trans = null;
     if (view.dock || (trans && trans.kind === 'case' && !trans.opened)) endShow(true); // (a show drawn for the old layout: the case opens now)
+    // (sat on an open case, or on its way there: the room over the card is another now)
+    if (trans && trans.kind === 'case' && trans.perch && trans.perch.st !== 'wait') {
+      sceneEl.style.paddingTop = '';
+      const g = perchSpot();
+      if (g) trans.perch.hp = perchRoom(g);
+    }
     if (!trans) snapTo(goal);
     dirty = true;
   }
@@ -1796,6 +1817,7 @@ export async function start({ reduced = false } = {}) {
     caseJump,
     caseNow,
     caseStop: () => endStunt(false),
+    perchPoke,
     beginSend,
     fire() {
       sfx('transmit');
@@ -3572,9 +3594,13 @@ export async function start({ reduced = false } = {}) {
     wind: { pitch: 0.45, thigh: [0.22, -0.4, 0.9], shin: [0.06, -0.94, -0.34], kick: 0, flat: 1, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
     tuck: { pitch: 0.12, thigh: [0.2, -0.3, 0.95], shin: [0.08, -0.95, -0.3], kick: 0, flat: 1, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
     stomp: { pitch: -0.05, thigh: [0.12, -1, 0.1], shin: [0.06, -1, -0.02], kick: 0, flat: 1, up: 1, back: 0, scull: 0, seat: 0, push: 0 },
+    // On an open case (see stepPerch): sat on the top edge of its card, the thighs out
+    // over the edge and the shins hanging from the knees, free to swing (dangle: how much
+    // of the shins is the swing's: see stepLegs). Its right hand has the X (perchHold).
+    perch: { pitch: -0.08, thigh: [0.15, -0.1, 1], shin: [0.08, -1, 0.1], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 0, push: 0, dangle: 1 },
   };
-  const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'lead', 'scull', 'seat', 'push'];
-  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 0 }; }
+  const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'lead', 'scull', 'seat', 'push', 'dangle'];
+  function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 0, dangle: 0 }; }
   function mixPose(out, a, b, k) {
     for (const key of POSE_KEYS) { const x = a[key] || 0; out[key] = x + ((b[key] || 0) - x) * k; }
     for (let j = 0; j < 3; j++) {
@@ -3617,15 +3643,22 @@ export async function start({ reduced = false } = {}) {
     model.updateMatrixWorld(true);
     // the upper body leans (the legs are re-aimed below, so they don't lean with it)
     if (P.pitch) turnBone(rigBody, modelDir(1, 0, 0, vD), P.pitch * w);
-    for (const leg of legs) {
+    const dangle = P.dangle || 0;
+    legs.forEach((leg, i) => {
       const s = leg.side;
       const kick = P.kick * Math.sin(time * 4.4 + (s > 0 ? 0 : Math.PI));
       leg.upper.getWorldPosition(vT).add(modelDir(P.thigh[0] * s, P.thigh[1], P.thigh[2] + 0.22 * kick, vD));
       swing(leg.upper, leg.lower, vT, w);
-      leg.lower.getWorldPosition(vT).add(modelDir(P.shin[0] * s, P.shin[1], P.shin[2] + 0.3 * kick, vD));
+      // (sat on an edge, the shin hangs from the knee at the angle its swing has it,
+      // a touch forward of straight down at rest)
+      const a = perch.legs[i].a + PERCH.rest;
+      const sx = P.shin[0] * s, sy = P.shin[1], sz = P.shin[2] + 0.3 * kick;
+      leg.lower.getWorldPosition(vT).add(modelDir(sx, sy + (-Math.cos(a) - sy) * dangle, sz + (Math.sin(a) - sz) * dangle, vD));
       swing(leg.lower, leg.end, vT, w);
-    }
+    });
     plantFeet(w, P.flat);
+    // (and the foot trails the shin: toes down as it swings forward, up on the way back)
+    if (dangle > 0) legs.forEach((leg, i) => turnBone(leg.foot, modelDir(1, 0, 0, vD), clamp(perch.legs[i].v * 0.07, -0.45, 0.45) * dangle * w));
     // hands
     const sum = P.up + P.back + P.scull + P.seat + P.push;
     if (sum < 1e-3) return;
@@ -3670,12 +3703,22 @@ export async function start({ reduced = false } = {}) {
     pivot.position.y -= low * w;
     pivot.updateMatrixWorld(true);
   }
+  // sat on an edge: what it sits on (just under the hip joints) down onto it, weighted
+  function pinSeat(w) {
+    if (w < 0.001) return;
+    root.updateMatrixWorld(true);
+    let y = 0;
+    for (const leg of legs) y += root.worldToLocal(leg.upper.getWorldPosition(vPin)).y / legs.length;
+    pivot.position.y -= (y - PERCH.pad * modelH) * w;
+    pivot.updateMatrixWorld(true);
+  }
   function applyRig() {
     if (!rigOK || reduced || view.dock) return;
     if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); if (dbg.pose !== 'fly' && dbg.pose !== 'hover') pinToFloor(1); return; } // QA
     if (jr.on && jr.pose) {
       applyPose(jr.pose, jr.w);
       pinToFloor(jr.pin);
+      pinSeat(perch.seat);
       if (jr.hop) { pivot.position.y += jr.hop; pivot.updateMatrixWorld(true); }
     }
     blendSnap();
@@ -3992,7 +4035,14 @@ export async function start({ reduced = false } = {}) {
 
   // Heard (sound.js): where it is across the page (and whether behind a card), the rush
   // of a fast level flight going by, and each foot coming down on the cards as it runs.
-  const heard = { x: NaN, y: 0, v: 0, fast: false, feet: [0, 1].map(() => ({ lo: Infinity, hi: -Infinity, up: false })) };
+  // A step is heard as it is seen, not as the clip has it: the run is held down on the
+  // card (see update), so the body hardly leaves it, and what shows of a stride is a foot
+  // lifted clear of the card and brought down again. So each foot is followed by how high
+  // it stands above the card on the screen (in body heights): once clear of it (up), it is
+  // down when it reaches the card (down), or stops coming down just above it (near, at
+  // less than still a second: the foot it glides on through the leap).
+  const STEP = { up: 0.05, near: 0.035, down: 0.012, still: 0.6 };
+  const heard = { x: NaN, y: 0, v: 0, fast: false, feet: [0, 1].map(() => ({ y: NaN, up: false })) };
   function stepHeard(dt, left, strides) {
     const snd = window.abissalAudio;
     const on = !!(snd && snd.on && snd.place);
@@ -4009,25 +4059,24 @@ export async function start({ reduced = false } = {}) {
       heard.fast = true;
       sfx('fly-by');
     } else if (heard.fast && (!level || heard.v < 1.2)) heard.fast = false;
-    // a step: a foot that was up in its stride, down again (its own low point, within
-    // the range it has moved through on this run)
+    // a step: a foot that was up off the card, down on it again
     for (let i = 0; i < 2; i++) {
-      const F = heard.feet[i], y = footLow[i];
-      if (!strides || !Number.isFinite(y)) {
-        F.lo = Infinity;
-        F.hi = -Infinity;
+      const F = heard.feet[i];
+      if (!strides || !Number.isFinite(footLow[i])) {
+        F.y = NaN;
         F.up = false;
         continue;
       }
-      F.lo = Math.min(F.lo, y);
-      F.hi = Math.max(F.hi, y);
-      const r = F.hi - F.lo;
-      if (r < modelH * 0.02) continue; // (no stride seen yet)
-      const k = (y - F.lo) / r;
-      if (F.up && k < 0.12) {
+      // (the sole in the model, and where the body has been put over the card)
+      const y = (footLow[i] - footRest + pivot.position.y) / modelH;
+      const fall = Number.isNaN(F.y) ? Infinity : (F.y - y) / Math.max(dt, 1e-3);
+      F.y = y;
+      if (!F.up) {
+        if (y > STEP.up) F.up = true;
+      } else if (y < STEP.down || (y < STEP.near && fall < STEP.still)) {
         F.up = false;
         sfx('footstep');
-      } else if (!F.up && k > 0.55) F.up = true;
+      }
     }
   }
 
@@ -4074,19 +4123,24 @@ export async function start({ reduced = false } = {}) {
   // the poster with its whole weight: light bursts out, the card gives, and the case opens
   // in that same beat (caseJump's promise resolves true: app.js slides the deck away the
   // way it was shoved and grows the poster into the video), while it is thrown back off
-  // the poster and blasts away off the top of the screen, in plain sight the whole way
-  // (the stage stays up until it is gone: see is-exit). Closed again, it flies back in
-  // from where it went and sets down on the card.
+  // the poster. From there it stays with the case, in plain sight over the open scene
+  // (see stageOver): it flies over to the case's card, takes the X off it in its right
+  // hand and shoots straight up with it, on the jets and then on its own way: it slows,
+  // lets the X go at the top (it drops onto the card's top edge and stands there) and
+  // falls back down to sit on the edge beside it, at the corner
+  // where the X was, its right arm down behind the X and only its fingers showing over
+  // the rim, its legs swinging (stepPerch). The X is still the way to close the case:
+  // closed, it flies back down and lands on the deck.
   // ---------------------------------------------------------------------------
   // The show as a timeline, in seconds: the ignition, the flight round to the front of
-  // the card and into it, and the way out off the screen.
-  const FLY = { t0: 0.42, cross: 1.55, out: 0.6 }; // lift-off; into the poster (seconds after lift-off); off the screen, after that
+  // the card and into it, and hanging there a moment, thrown back.
+  const FLY = { t0: 0.42, cross: 1.55, out: 0.6 }; // lift-off; into the poster (seconds after lift-off); thrown back off it, after that
   const STUNT = (() => {
     const segs = [];
     let t = 0;
     const add = (kind, d) => { segs.push({ kind, t0: t, d }); t += d; };
-    add('ignite', FLY.t0); add('fly', FLY.cross); add('exit', FLY.out);
-    return { segs, end: t, dip: 0.012, trail: 0.9 }; // the card's bow (card heights); the trail it leaves dying out up there (s)
+    add('ignite', FLY.t0); add('fly', FLY.cross + FLY.out);
+    return { segs, end: t, dip: 0.012 }; // the card's bow (card heights)
   })();
   // A flight through timed keys, [seconds, x, y, size] in screen terms, as three curves
   // in the world: X and Y, its offset from the poster's middle at the card's distance,
@@ -4155,7 +4209,12 @@ export async function start({ reduced = false } = {}) {
     if (rest) { sink.card = null; sink.px = sink.v = 0; }
   }
   function caseJump(node) {
-    if (reduced || view.dock || !rigOK || trans || scrub.mid || jumping || section !== 'projetos' || shared.uDissolve.value > 0.01) return null;
+    // On the last case's hold the scroll has it somewhere along the card, on its run to
+    // the card's end: a journey as the scroll sees it, but it is on this card, on its
+    // feet, and the show sets off from where it stands.
+    const onLedge = scrub.mid && !trans && ledge.drove && jr.on && !!jr.floor && jr.floor.node === node;
+    // (no show where the stage could not stay up over the open case: it opens straight away)
+    if (reduced || view.dock || !rigOK || !canPerch || trans || (scrub.mid && !onLedge) || jumping || section !== 'projetos' || shared.uDissolve.value > 0.01) return null;
     const F = anchorFor('projetos', true);
     if (!F.floor || F.floor.node !== node) return null;
     const card = node.querySelector('.project-card') || node;
@@ -4165,13 +4224,17 @@ export async function start({ reduced = false } = {}) {
     // a hello or a click reaction gives way to the show
     if (oneShot) { oneShot = false; fadeTo(baseName, 0.2); }
     snapRig();
-    trans = { kind: 'case', t: 0, node, card, media: card.querySelector('.project-media') || card, sy: window.scrollY, hit: false, giveFrom: 0, opened: false, done: null, rnd: Array.from({ length: 8 }, Math.random) };
+    // (stopped mid-run, its legs come to a stand under the show's own poses)
+    if (onLedge && baseName === 'run') { baseName = 'idle'; fadeTo('idle', 0.2); }
+    // (x0: the pad, where it stands on the card: the deck's middle, or where its run had it)
+    trans = { kind: 'case', t: 0, node, card, media: card.querySelector('.project-media') || card, sy: window.scrollY, x0: onLedge ? at.x : null, hit: false, giveFrom: 0, opened: false, done: null, rnd: Array.from({ length: 8 }, Math.random) };
     markInput(); // full frame rate for the show
     return new Promise((res) => { trans.done = res; });
   }
   // (a second click: open now, wherever the show has got to)
   function caseNow() {
     if (!trans || trans.kind !== 'case' || trans.opened) return;
+    stageOver(true); // (it goes over to the case from wherever it is: see stepStunt)
     trans.opened = true;
     const f = trans.done;
     trans.done = null;
@@ -4183,8 +4246,7 @@ export async function start({ reduced = false } = {}) {
     at.yaw = -0.12 + wrapPi(at.yaw + 0.12); // (it flies off facing ±π: unwound, or the springs after it settle a whole turn off)
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
-    retDir = S.dir || retDir;
-    canvas.classList.remove('is-exit');
+    if (S.perch) perchEnd();
     sink.drive = false;
     sink.target = 0;
     seatLift = 0;
@@ -4205,28 +4267,10 @@ export async function start({ reduced = false } = {}) {
     const S = trans;
     const F = anchorFor('projetos', true);
     const open = sceneOpen();
-    // Opened before it got there (a second click on the way): the scene covers it now, so
-    // the show ends out of sight (it comes back when the case closes).
-    if (S.opened && !S.burst && open) {
-      const node = S.node;
-      sink.px = sink.v = 0;
-      endStunt(false);
-      popFrom = node;
-      return;
-    }
-    // Off the screen with the case open, once the trail it left up there has died out (it
-    // flies back in when the case closes); or the case didn't open after all, or is closed
-    // again already: the show is over, and it comes straight back. (Closed while it is
-    // still flying out, it flies on out first: taken back from there it would be gone
-    // from mid-air.)
-    if (S.opened && S.t >= STUNT.end + (open ? STUNT.trail : 0)) {
-      const node = S.node;
-      sink.px = sink.v = 0;
-      endStunt(false);
-      if (open) popFrom = node; // (it comes back when the case closes)
-      else startReturn(node);
-      return;
-    }
+    // The case is opening: thrown back off the poster (or from wherever it is, opened by
+    // a second click on the way), it goes over to the case's card and sits on it.
+    if (S.opened && !S.perch && (!S.burst || S.t >= FLY.t0 + FLY.cross + PERCH.recoil)) beginPerch(S);
+    if (S.perch) { stepPerch(S, dt, open); return; }
     // Anything else first (a scroll, the deck moving on, another section) ends it early:
     // the case still opens straight away if it is still the one in front.
     if (!S.opened && (section !== 'projetos' || !F.floor || F.floor.node !== S.node || Math.abs(window.scrollY - S.sy) > 24)) {
@@ -4244,6 +4288,7 @@ export async function start({ reduced = false } = {}) {
     const m = S.m0 || (S.m0 = S.media.getBoundingClientRect());
     const [mx, my] = clientToCanvas(m.left + m.width / 2, m.top + m.height / 2);
     const h = S.h0 || (S.h0 = F.h);
+    const x0 = S.x0 != null ? S.x0 : F.x;
     // The flight, drawn from this show's dice the first time round and kept on the
     // screen: off the pad, up and toward us, turning its back on the way; out to one side
     // and on, further from us all the time; round in front of the card (or across it
@@ -4259,7 +4304,7 @@ export async function start({ reduced = false } = {}) {
       const fit = (x, y, sz, over = false) => [clamp(x, sz * h * 0.45 + 12, view.w - sz * h * 0.45 - 12), clamp(y, over ? sz * h * (1 - BODY_C) + 6 : barBottom + sz * h * 0.6, view.h - sz * h * 0.55)];
       const s1 = 1.3 + R[3] * 0.15, s2 = s1 - 0.06 - R[6] * 0.06;
       const c0 = F.y - h * BODY_C;
-      const A = fit(F.x + dir * h * 0.2, c0 - h * 0.45, s1, true);
+      const A = fit(x0 + dir * h * 0.2, c0 - h * 0.45, s1, true);
       const B = fit(mx + dir * h * Math.min(1.4 + R[1] * 1.0, room(dir) - 0.7), c0 + h * (R[2] * 0.6 - 0.1), s2);
       const across = R[4] < 0.4; // (round in front of the card to its other side first)
       const C = fit(mx + dir * h * (across ? -(0.6 + R[5] * 0.6) : 0.45 + R[5] * 0.5), my + h * (0.15 + R[7] * 0.5), 1.18);
@@ -4267,17 +4312,17 @@ export async function start({ reduced = false } = {}) {
       S.dir = dir;
       S.push = Math.sign(mx - C[0]) || -dir; // (the way it comes into the poster: the deck is shoved on that way)
       S.path = flightPath([
-        [0, F.x, c0, 1],
+        [0, x0, c0, 1],
         [0.38, A[0], A[1], s1],
         [0.8, B[0], B[1], s2],
         [1.18, C[0], C[1], 1.18],
         [X - 0.13, mx + (C[0] - mx) * 0.3, my + h * 0.08, 1.07],
         [X, mx, my, 1],
         [X + 0.14, mx + dir * h * 0.3, my - h * 0.3, 1.14], // (thrown back off the poster, toward us)
-        [X + FLY.out, mx + dir * h * 1.3, -h * 1.1, 1.4], // (and away off the top, on the side it came round)
+        [X + FLY.out, mx + dir * h * 0.42, my - h * 0.5, 1.1], // (and hanging there on its jets, should the case be slow to open)
       ], mx, my);
     }
-    let cx = F.x, cy = F.y - h * BODY_C, size = h, yaw = -0.12, tiltA = 0, spin = 0, bank = 0, thrust = 0, hit = false;
+    let cx = x0, cy = F.y - h * BODY_C, size = h, yaw = -0.12, tiltA = 0, spin = 0, bank = 0, thrust = 0, hit = false;
     sink.drive = false;
     sink.target = 0;
     jr.squash = 0;
@@ -4287,7 +4332,7 @@ export async function start({ reduced = false } = {}) {
       jr.squash = 0.08 * sq;
       thrust = (0.25 + 0.6 * u) * (u < 0.7 ? 0.55 + 0.45 * Math.abs(Math.sin(time * 31) * Math.sin(time * 17)) : 1);
       sink.target = STUNT.dip * 2.4 * cardH * sq;
-      cx = F.x + h * 0.012 * Math.sin(time * 70) * u; // shaking on the pad
+      cx = x0 + h * 0.012 * Math.sin(time * 70) * u; // shaking on the pad
       cy += sink.px;
       if (Math.random() < u * 0.9) { // smoke rolling off the card
         root.updateMatrixWorld(true);
@@ -4330,7 +4375,7 @@ export async function start({ reduced = false } = {}) {
       bank = roll * Math.cos(tiltA);
       const gone = smooth(clamp01((f - FLY.cross) / 0.25));
       mixPose(P, POSE.hover, POSE.fly, smooth(clamp01((f - 0.12) / 0.4)) * (1 - 0.5 * gone)); // (arms out, braced, as it hits)
-      thrust = S.t < STUNT.end ? 1 + 0.4 * smooth(clamp01((f - FLY.cross + 0.15) / 0.3)) : 0; // (full burn into the hit and away; off the screen, cut)
+      thrust = 1 + 0.4 * smooth(clamp01((f - FLY.cross + 0.15) / 0.3)) * (1 - smooth(clamp01((f - FLY.cross - 0.1) / 0.2))); // (full burn into the hit)
       jr.squash = -0.08 * Math.sin(Math.PI * clamp01(f / 0.18)) + 0.1 * Math.sin(Math.PI * clamp01((f - FLY.cross) / 0.16)); // (flattened by the hit)
       if (f >= FLY.cross) sink.target = STUNT.dip * 6 * cardH * (1 - smooth(clamp01((f - FLY.cross) / 0.3))); // (the poster takes the blow)
       hit = f >= FLY.cross;
@@ -4338,7 +4383,7 @@ export async function start({ reduced = false } = {}) {
     holdCard(S.card); // (the spring lets go of a card at rest: in the air, say)
     stepSink(dt);
     // The hit: light bursts out of the poster, the deck is shoved the way it came, and
-    // the case opens, all in the same beat; the stage stays up while it flies out.
+    // the case opens, all in the same beat; the stage stays up, over the scene.
     if (hit && !S.burst) {
       S.burst = true;
       sfx('stunt-impact');
@@ -4351,18 +4396,22 @@ export async function start({ reduced = false } = {}) {
       setFace('surprised', 0.8);
       if (!S.opened) {
         doc.style.setProperty('--guide-push', `${S.push * 14}vw`);
-        canvas.classList.add('is-exit');
+        stageOver(true);
         S.opened = true;
         const f = S.done;
         S.done = null;
         if (f) f(true);
       }
     }
+    // (how fast it goes across the screen: the flight over to the case sets off at that)
+    const ox = at.x, oy = at.y, moved = S.t > dt && dt > 1e-4;
     at.x = cx;
     at.y = cy + size * BODY_C; // (its feet: what the root is placed by)
     at.h = size;
     at.yaw = seg.kind === 'ignite' ? at.yaw + wrapPi(-0.12 - at.yaw) * damp(5, dt) : yaw;
     snapAt();
+    S.vx = moved ? clamp((at.x - ox) / dt, -900, 900) : 0;
+    S.vy = moved ? clamp((at.y - oy) / dt, -900, 900) : 0;
     vel.x = vel.y = 0;
     jr.on = true;
     jr.w = smooth(clamp01(S.t / 0.12)); // (the pose eases in over the clips)
@@ -4382,18 +4431,391 @@ export async function start({ reduced = false } = {}) {
     glance.until = performance.now() + 150;
   }
 
-  // Closed again (see update): it flies back in from off the top of the screen, on the
-  // side it left by, and sets down on the card on its jets (a journey, like any other).
-  let popFrom = null, wasDetail = false, retDir = 1;
-  function startReturn(node) {
-    const F = anchorFor('projetos', true);
-    if (reduced || view.dock || !rigOK || trans || scrub.mid || section !== 'projetos' || !F.floor || F.floor.node !== node) return;
-    const h = F.h;
-    Object.assign(at, { x: clamp(F.x + retDir * h * 1.3, h * 0.6, view.w - h * 0.6), y: -h * 0.6, h, yaw: -retDir * 0.9 });
+  // ---------------------------------------------------------------------------
+  // On the open case: sat on its card, holding the X
+  // ---------------------------------------------------------------------------
+  // The stage over an open case. A scene is a modal dialog, in the top layer, over
+  // everything else on the page: for the show the stage stays up (is-over: its own layer
+  // in the scene's View Transition too) and goes into the top layer itself, as a popover
+  // shown after the dialog, so it is drawn over it. It takes no clicks there either.
+  const canPerch = typeof canvas.showPopover === 'function';
+  const stage = { over: false, top: false };
+  function stageLift(on) {
+    if (stage.top === on) return;
+    stage.top = on;
+    try {
+      if (on) {
+        canvas.setAttribute('popover', 'manual');
+        canvas.showPopover();
+      } else canvas.removeAttribute('popover'); // (which takes it out of the top layer)
+    } catch (e) {
+      canvas.removeAttribute('popover');
+      stage.top = false;
+    }
+  }
+  function stageOver(on) {
+    stage.over = on;
+    canvas.classList.toggle('is-over', on);
+    if (!on) stageLift(false);
+  }
+  //   h      its size sat there (px): as big as the room over the card lets it be
+  //   top    sat, how far its crown stands above the edge (body heights)
+  //   pad    from its hip joints down to what it sits on (body heights)
+  //   off    it sits this far to the right of where the X was (body heights; no further
+  //          than the card goes)
+  //   yaw    sat, turned this far out over the corner: its right arm is the near one, its
+  //          legs hang past the card's end and their swing shows from the side
+  //   arm    how far out from its shoulder it carries the X, by its rim (body heights)
+  //   side   the X stands this far from its middle, against its side (body heights)
+  //   lean   how far the X leans toward it, stood on the edge (rad)
+  //   rest   where the shins hang at rest, forward of straight down (rad)
+  //   recoil thrown back off the poster this long before it sets off (s)
+  //   fly    the flight over to the X (s: the least and the most, by how far it is)
+  //   grav   what pulls it back down, once it has the X and has shot up with it (px/s²)
+  //   drop   how far up that climb it lets the X go (of the time to its top)
+  //   wait   how long it waits for the case to open before it goes back down (s)
+  const PERCH = { h: [84, 124], top: 0.73, pad: 0.045, off: 0.3, yaw: 0.42, arm: 0.3, side: 0.19, lean: 0.12, rest: 0.14, recoil: 0.16, fly: [0.8, 1.2], grav: 950, drop: 0.92, wait: 0.8 };
+  // (seat: how much of its weight is on the edge; legs: each shin's swing, angle and
+  // rate; clock: the swing's own time)
+  const perch = { seat: 0, legs: [{ a: 0, v: 0 }, { a: 0, v: 0 }], clock: 0 };
+  const sceneEl = document.getElementById('project-dialog');
+  const infoEl = sceneEl ? sceneEl.querySelector('.detail-info') : null;
+  const closeEl = infoEl ? infoEl.querySelector('.close-btn') : null;
+  // Where the X belongs on the case's card (its middle, wherever the guide has it now),
+  // the card's top edge and its right end, on the canvas. Null until the scene is laid out.
+  function perchSpot() {
+    if (!closeEl || !sceneEl.open) return null;
+    const r = infoEl.getBoundingClientRect();
+    if (r.width < 1) return null;
+    const half = closeEl.offsetWidth / 2;
+    const [x, y] = clientToCanvas(r.left + infoEl.clientLeft + closeEl.offsetLeft + half, r.top + infoEl.clientTop + closeEl.offsetTop + closeEl.offsetHeight / 2);
+    const [right, top] = clientToCanvas(r.right, r.top);
+    return { x, y, top, right, half };
+  }
+  // Room for it over the card: its size there, by how far the card's top is from the
+  // screen's. Where even the smallest would not fit (a short window), the scene makes
+  // room: its top padding grows until the card is far enough down (the scene scrolls,
+  // should that be more than the window has).
+  function perchRoom(G) {
+    const need = PERCH.top * PERCH.h[0] + 14;
+    let top = G.top;
+    if (top < need - 0.5) {
+      // (centred, the card comes down by half of what is added; once the scene overflows,
+      // by all of it: a few goes get it there without ever overshooting)
+      let pad = parseFloat(getComputedStyle(sceneEl).paddingTop) || 0;
+      for (let n = 0; n < 6 && top < need - 0.5; n++) {
+        pad += need - top;
+        sceneEl.style.paddingTop = `${pad.toFixed(1)}px`;
+        const g = perchSpot();
+        if (!g) break;
+        top = g.top;
+      }
+    }
+    return clamp((top - 14) / PERCH.top, PERCH.h[0], PERCH.h[1]);
+  }
+  function beginPerch(S) {
+    if (!S.hit) { S.hit = true; touchdown('feet'); sfx('jet-burst'); } // (opened while it was still on the pad: off it goes)
+    snapRig(); // (out of the show's flight, not cut from it)
+    // (X: the case's X once it has it: where it is, how fast it goes, how far it leans
+    // and turns; free: let go of; down: it has hit the edge)
+    S.perch = { st: 'wait', t: 0, u: 0, A: null, hp: at.h, dur: 1, v0: 0, up: 1, bx: 0, vx: S.vx || 0, vy: S.vy || 0, px: at.x, pv: 0, ax: 0, reach: 0, got: false, take: 0, set: 0, sq: 0, sqv: 0, sat: 0, X: { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, free: false, down: false } };
+    for (const L of perch.legs) L.a = L.v = 0;
+  }
+  // (the scene as it was: the X back where it belongs, no room made over the card)
+  function perchEnd() {
+    perch.seat = 0;
+    shared.uDisc.value.z = 0;
+    if (closeEl) closeEl.style.translate = closeEl.style.rotate = '';
+    if (sceneEl) sceneEl.style.paddingTop = '';
+  }
+  // The case shut again (or it never opened): back down onto the deck, on the jets, a
+  // journey like any other.
+  function leavePerch() {
+    const back = section === 'projetos' && !view.dock && !reduced;
+    endStunt(false);
+    if (back) hopTo('projetos', 'projetos', 'hover');
+  }
+  // A click on it, sat on the case (the stage takes none: the page asks, so that one on
+  // the guide is not one beside the case, which would close it): it starts, and its legs
+  // with it. True if the click was on it.
+  function perchPoke(x, y) {
+    const Q = trans && trans.kind === 'case' ? trans.perch : null;
+    if (!Q || Q.st === 'wait') return false;
+    const [cx, cy] = clientToCanvas(x, y);
+    if (Math.abs(cx - at.x) > at.h * 0.36 || cy < at.y - at.h * 0.82 || cy > at.y + at.h * 0.32) return false;
+    if (Q.st === 'sit') {
+      Q.sqv += 1.3;
+      perch.legs.forEach((L, i) => { L.v += i ? -2 : 2.4; });
+      setFace('surprised', 0.8);
+    }
+    return true;
+  }
+  // The legs, sat on the edge: each shin is a pendulum hung from its knee. Gravity brings
+  // it back down, the joint slows it, the seat's own motion throws it (acc: the seat's
+  // pace changing, along the way the guide faces, over the shin's length), and the guide
+  // kicks them idly (kick: how much it does), one a little after the other and never
+  // quite in step, harder and softer by turns: pushed near the pace gravity gives them,
+  // so they swing wide on little, and die down by themselves when it lets them be.
+  // (g: gravity over the shin's length, 1/s²: a swing a second; drag: what slows it, 1/s;
+  // push: its kick, rad/s²; stop: as far as the knee lets it go, rad, a soft stop there)
+  const LEGS = { g: 38, drag: 1.5, push: 4.4, stop: 0.85 };
+  function stepLegs(dt, acc, kick) {
+    for (let n = dt; n > 1e-6; n -= 1 / 240) {
+      const h = Math.min(n, 1 / 240);
+      perch.clock += h;
+      perch.legs.forEach((L, i) => {
+        const push = kick * LEGS.push * (0.7 + 0.3 * Math.sin(perch.clock * 0.37 + i * 2.1)) * Math.sin(perch.clock * (5.85 + 0.25 * i) + i * Math.PI);
+        const over = Math.max(0, Math.abs(L.a) - LEGS.stop) * Math.sign(L.a);
+        L.v += (-LEGS.g * Math.sin(L.a) - LEGS.drag * L.v - acc * Math.cos(L.a) + push - over * 400 - (over ? L.v * 12 : 0)) * h;
+        L.a += L.v * h;
+      });
+    }
+  }
+  function stepPerch(S, dt, open) {
+    const Q = S.perch;
+    Q.t += dt;
+    if (open) S.seen = true;
+    if (S.seen ? !open : Q.t > PERCH.wait) { leavePerch(); return; }
+    let G = perchSpot();
+    const P = jr.pose || (jr.pose = newPose());
+    let thrust = 0.8, lean = 0, air = 0.5, seat = 0;
+    if (Q.st === 'wait') {
+      // the scene not laid out yet: it hangs on its jets where the poster threw it,
+      // drifting to a stop
+      const k = Math.exp(-4 * dt);
+      at.x += Q.vx * dt;
+      at.y += Q.vy * dt;
+      Q.vx *= k;
+      Q.vy *= k;
+      mixPose(P, POSE.hover, POSE.hover, 0);
+      if (G) {
+        stageLift(false); // (over the scene, which has only just gone up itself)
+        stageLift(true);
+        Q.hp = perchRoom(G);
+        G = perchSpot();
+        if (G) {
+          Q.A = { x: at.x, y: at.y, h: at.h, yaw: at.yaw, vx: Q.vx, vy: Q.vy };
+          Q.dur = clamp(PERCH.fly[0] + Math.hypot(G.x - at.x, G.y - at.y) / 1500, PERCH.fly[0], PERCH.fly[1]);
+          Q.st = 'fly';
+        }
+      }
+    }
+    if (Q.st !== 'wait' && !G) { leavePerch(); return; } // (the scene gone from under it)
+    if (Q.st !== 'wait') {
+      const hp = Q.hp;
+      // Beside the X and a little under it, on its right, where its right hand comes to
+      // its rim, rising past it. Then, the X in that hand, straight up on that line: a
+      // burn that throws it up, and from there it is a thrown thing, slowing as it
+      // climbs, stopped a moment at the top (as high as there is room for over the
+      // card), and falling back, onto the card's top edge at the corner: to the right of
+      // where the X was (it eases over to that on the way down).
+      const gx = Math.min(G.x + hp * 0.38, view.w - hp * 0.35), gy = G.y + hp * 0.5; // (all but over where it will sit)
+      const bx = Q.bx = Math.min(G.x + Math.max(G.half + 12, hp * PERCH.off), G.right - hp * 0.1), by = G.top;
+      const rise = clamp(by - hp - 8, hp * 0.3, hp * 0.8); // (its head stays on the screen, where it can)
+      const v0 = Math.sqrt(2 * PERCH.grav * (gy - by + rise)); // (thrown up at this, it tops out that far over the edge)
+      const yawG = 0.15;
+      if (Q.st === 'fly') {
+        Q.u = Math.min(1, Q.u + dt / Q.dur);
+        const u = Q.u, D = Q.dur, A = Q.A;
+        at.x = hermite(A.x, A.vx * D, gx, 0, u);
+        at.y = hermite(A.y, A.vy * D, gy, -0.6 * v0 * D, u); // (already on its way up as it takes it)
+        at.h = A.h + (hp - A.h) * smooth(u);
+        at.yaw = A.yaw + wrapPi(yawG - A.yaw) * smooth(clamp01(u / 0.8));
+        mixPose(P, POSE.hover, POSE.hover, 0);
+        Q.reach = smooth(clamp01((u - 0.5) / 0.45)); // (its right hand out to it as it comes up)
+        lean = 0.3 * Math.sin(Math.PI * u);
+        if (u >= 1) { // (it has it)
+          Q.st = 'lift';
+          Q.u = 0;
+          Q.got = true;
+          Q.v0 = v0;
+          Q.up = v0 / PERCH.grav; // (the time to the top; and on down to the edge)
+          Q.dur = Q.up + Math.sqrt((2 * rise) / PERCH.grav);
+          sfx('card-tug');
+        }
+      } else if (Q.st === 'lift') {
+        Q.u = Math.min(1, Q.u + dt / Q.dur);
+        const u = Q.u, t = u * Q.dur, top = clamp01(t / Q.up);
+        // (the throw, as it was set off; the card under it may have moved a little since)
+        const y = gy - Q.v0 * t + 0.5 * PERCH.grav * t * t;
+        at.x = gx + (bx - gx) * smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up)));
+        at.y = u < 1 ? Math.min(y, gy) : by;
+        at.h = hp;
+        at.yaw = yawG + (PERCH.yaw - yawG) * smooth(clamp01((u - 0.3) / 0.6));
+        seat = smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up) / 0.9));
+        mixPose(P, POSE.hover, POSE.perch, seat);
+        Q.take = smooth(clamp01(t / 0.16)); // (the X off its place, into the hand)
+        if (top >= PERCH.drop) Q.X.free = true; // (let go of, all but at the top: it drops onto the edge)
+        Q.set = smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up))); // (and the hand comes down behind it, onto its rim)
+        // (the jets: a hard burn off the mark, dying as it climbs; nothing but its weight after)
+        thrust = 1.1 * (1 - smooth(clamp01(top / 0.45)));
+        air = 0.5 * (1 - seat);
+        if (u >= 1) {
+          // down on the edge: the body gives, the card under it too, and its legs are
+          // carried on forward
+          Q.st = 'sit';
+          sfx('land');
+          setFace('surprised', 0.5);
+          Q.sqv = 2.4;
+          holdCard(infoEl);
+          sink.drive = false;
+          sink.target = 0;
+          sink.v += 230;
+          perch.legs.forEach((L, i) => { L.v += 2 - 1.3 * i; }); // (one more than the other: out of step from the start)
+        }
+      } else {
+        Q.sat += dt;
+        at.x = bx;
+        at.y = by;
+        at.h = hp;
+        at.yaw = PERCH.yaw;
+        seat = 1;
+        mixPose(P, POSE.perch, POSE.perch, 0);
+        Q.take = Q.set = 1;
+        Q.X.free = true;
+        thrust = 0;
+        air = 0;
+      }
+    }
+    // the bump of sitting down, a stiff spring
+    for (let n = dt; n > 1e-6; n -= 1 / 120) {
+      const h = Math.min(n, 1 / 120);
+      Q.sqv += (-Q.sq * 240 - Q.sqv * 15) * h;
+      Q.sq += Q.sqv * h;
+    }
+    // its legs: thrown by the seat's motion, kicked idly once it has settled; and the
+    // body rocks back a little against them
+    const pv = dt > 1e-4 ? (at.x - Q.px) / dt : Q.pv;
+    Q.ax += ((dt > 1e-4 ? (pv - Q.pv) / dt : 0) - Q.ax) * damp(18, dt);
+    Q.px = at.x;
+    Q.pv = pv;
+    // (in flight they are the pose's, not the swing's: only what is on the edge is thrown)
+    stepLegs(dt, seat * clamp((Q.ax * Math.sin(at.yaw)) / (0.2 * Q.hp), -40, 40), smooth(clamp01((Q.sat - 0.5) / 1.6)));
+    P.pitch -= 0.035 * seat * (perch.legs[0].a + perch.legs[1].a);
+    perch.seat = seat;
+    stepSink(dt);
     vel.x = vel.y = 0;
-    snap.t = snap.k = 1; // (from there, not blended from wherever the body was)
-    placeRoot();
-    hopTo('projetos', 'projetos', 'hover');
+    jr.on = true;
+    jr.w = 1;
+    jr.pin = 0;
+    jr.air = air;
+    jr.tilt = lean;
+    jr.spin = 0;
+    jr.bank = 0;
+    jr.fly = 0;
+    jr.pitch = 0;
+    jr.squash = Q.sq;
+    jr.hop = 0;
+    jr.jet = thrust;
+    jr.floor = null;
+    seatLift = 0;
+    // it has eyes for the X until it has it; sat, for the visitor (or their pointer)
+    if (G && !Q.got) {
+      [glance.x, glance.y] = [G.x, G.y];
+      glance.until = performance.now() + 150;
+    }
+  }
+  // Its right hand, after the poses, and the X with it. The hand goes out to the X's rim
+  // where it belongs on the card, as it comes up beside it; then the X goes where that
+  // hand goes, held by its rim out at its side. Let go of up there, the X is a thing of
+  // its own: it falls (drawn over to where it is to stand as it does), hits the card's
+  // top edge, bounces, rocks and settles, stood on the edge against the guide's side,
+  // leaning its way. The guide comes down beside it with that arm behind it, as far round
+  // it from the far side as the arm is long: the arm is not drawn where the X is (uDisc)
+  // nor the hand at its rim (uGrip), only the three fingers, posed one by one, hooked
+  // over the rim onto the X's face. The X is the page's own button all along, moved,
+  // never drawn here.
+  const hTo = new THREE.Vector3(), hA = new THREE.Vector3(), hB = new THREE.Vector3(), hIn = new THREE.Vector3(), hPole = new THREE.Vector3();
+  const armR = armSide.indexOf(Math.min(...armSide)); // (the model's own right)
+  const XFALL = { g: 2600, pull: 50, drag: 11, bounce: 0.38, rock: 130, calm: 9 }; // px/s²; toward its spot (1/s², 1/s); kept of a bounce; its rocking (1/s², 1/s)
+  function perchHold(dt) {
+    const Q = trans && trans.kind === 'case' ? trans.perch : null;
+    const G = Q && armR >= 0 && (Q.got || Q.reach >= 0.01) ? perchSpot() : null;
+    if (!G) { shared.uDisc.value.z = 0; return; }
+    const half = G.half, hp = Q.hp, arm = arms[armR], X = Q.X;
+    const GRIP = 1.12; // (carrying it, its palm is just off the rim, the fingers on it)
+    arm[0].getWorldPosition(kS);
+    const [sx, sy] = toCanvas(kS);
+    let masked = false;
+    if (!Q.got) {
+      toWorld(G.x + half * GRIP, G.y, kS.z, hTo);
+      reach(arm, hTo, Q.reach);
+      return;
+    }
+    if (!X.free) {
+      // carried: from its place, out at the guide's side
+      toWorld(G.x + half * GRIP + (sx - hp * PERCH.arm - G.x - half * GRIP) * Q.take, G.y + (sy + hp * 0.03 - G.y) * Q.take, kS.z, hTo);
+      reach(arm, hTo, 1);
+      const [px, py] = toCanvas(arm[2].getWorldPosition(hTo)); // (by where the hand really is)
+      const nx = G.x + (px - half * GRIP - G.x) * Q.take, ny = G.y + (py - G.y) * Q.take;
+      if (dt > 1e-4 && Q.take > 0.05) { // (how fast it goes: let go of, it goes on at that)
+        X.vx += (clamp((nx - X.x) / dt, -900, 900) - X.vx) * damp(20, dt);
+        X.vy += (clamp((ny - X.y) / dt, -900, 900) - X.vy) * damp(20, dt);
+      }
+      X.x = nx;
+      X.y = ny;
+    } else {
+      // on its own: down onto the edge, where it stands
+      const xf = Q.bx - hp * PERCH.side - half, yf = G.top - half + 1;
+      if (!X.down && X.va === 0) X.va = -5; // (it tumbles a little as it goes)
+      for (let n = dt; n > 1e-6; n -= 1 / 240) {
+        const h = Math.min(n, 1 / 240);
+        X.vy += XFALL.g * h;
+        X.vx += ((xf - X.x) * XFALL.pull - X.vx * XFALL.drag) * h;
+        X.x += X.vx * h;
+        X.y += X.vy * h;
+        if (X.y >= yf) {
+          X.y = yf;
+          if (X.vy > 70) {
+            if (!X.down) sfx('card-tug', { gain: 0.6 });
+            X.va += 0.012 * X.vy; // (it rocks with the knock)
+            X.vy *= -XFALL.bounce;
+          } else X.vy = 0;
+          X.down = true;
+        }
+        X.va += ((PERCH.lean - X.a) * XFALL.rock - X.va * XFALL.calm) * h;
+        X.a += X.va * h;
+      }
+      // The hand: behind it, at its rim, and the fingers over the rim. Where on the rim:
+      // from the far side round toward the near one, the first place its arm is long
+      // enough for (o: out from the X's middle there, on the screen).
+      const wpp = (view.wpp * (CAM_Z - kS.z)) / CAM_Z, z0 = kS.z; // (a pixel, at its shoulder's distance)
+      const palm = fingers.length ? fingers[Math.min(1, fingers.length - 1)][0].getWorldPosition(hA).distanceTo(fingers[Math.min(1, fingers.length - 1)][1].getWorldPosition(hB)) / wpp : half * 0.4;
+      const L = hp * 0.38;
+      let ox = -1, oy = 0;
+      for (let deg = 180; deg >= 30; deg -= 10) {
+        ox = Math.cos((deg * Math.PI) / 180);
+        oy = -Math.sin((deg * Math.PI) / 180);
+        if (Math.hypot(X.x + (half - palm) * ox - sx, X.y + (half - palm) * oy - sy) <= L) break;
+      }
+      const rx = X.x + half * ox, ry = X.y + half * oy;
+      // (the wrist a palm's length in from the rim, behind the X; the elbow back, out of sight)
+      toWorld(rx - (palm - 2) * ox, ry - (palm - 2) * oy, z0, hTo);
+      reach(arm, hTo, Q.set, hPole.set(0, 0.15, -1).normalize());
+      // The fingers: side by side along the rim, their knuckles at it; each comes
+      // round the edge toward us and lies back over the X's face.
+      hIn.set(-ox, oy, 0); // (in toward the X's middle, in the world: up is up there)
+      fingers.forEach(([wrist, f1, f2, tip], i) => {
+        const along = (i - (fingers.length - 1) / 2) * hp * 0.036;
+        toWorld(rx + ox - along * oy, ry + oy + along * ox, z0, hTo);
+        swing(wrist, f1, hTo, Q.set);
+        const l1 = f1.getWorldPosition(hA).distanceTo(f2.getWorldPosition(hB));
+        hTo.copy(hA).addScaledVector(hIn, l1 * 0.85).z += l1 * 0.55;
+        swing(f1, f2, hTo, Q.set);
+        if (!tip) return;
+        const l2 = f2.getWorldPosition(hA).distanceTo(tip.getWorldPosition(hB));
+        hTo.copy(hA).addScaledVector(hIn, l2).z += l2 * 0.1;
+        swing(f2, tip, hTo, Q.set);
+      });
+      const pr = renderer.getPixelRatio();
+      shared.uDisc.value.set(X.x * pr, (view.h - X.y) * pr, half * pr);
+      shared.uGrip.value.set(rx * pr, (view.h - ry) * pr, half * 0.8 * pr);
+      masked = true;
+    }
+    if (!masked) shared.uDisc.value.z = 0;
+    const tr = `${(X.x - G.x).toFixed(1)}px ${(X.y - G.y).toFixed(1)}px`, ro = `${X.a.toFixed(3)}rad`;
+    if (closeEl.style.translate !== tr) closeEl.style.translate = tr;
+    if (closeEl.style.rotate !== ro) closeEl.style.rotate = ro;
   }
 
   function updateSeatMark() {
@@ -4691,13 +5113,11 @@ export async function start({ reduced = false } = {}) {
         at.yaw += wrapPi(goal.yaw - at.yaw) * k;
       }
     }
-    // a case it opened was closed again (the scene gone, not only closing): it flies back
-    // down onto the card
-    const detail = sceneOpen();
-    if (wasDetail && !detail && popFrom) startReturn(popFrom);
-    if (!detail) popFrom = null;
-    wasDetail = detail;
     stepTransit(dt);
+    // (the stage is over a scene for the show alone: with any other scene open it is out
+    // of the way again at once; with none, once the scene's way out has run, which it is
+    // a layer of)
+    if (stage.over && !(trans && trans.kind === 'case') && (sceneOpen() || !doc.classList.contains('vt'))) stageOver(false);
     if (!(trans && trans.kind === 'case')) stepSink(dt); // (the card it dented springs back)
     // (off the tunnels: portals and wake at rest, nothing behind the cards)
     if (tun.active && !tun.drove) leaveTunnel();
@@ -4765,6 +5185,7 @@ export async function start({ reduced = false } = {}) {
     } else if (ledgeRun) soleY(); // (only to know where its feet are: see stepHeard)
     aimHead(dt, now, level);
     gripCard(dt);
+    perchHold(dt);
     maskTunnel();
     applyCheer(dt);
     stepPhones(dt);
@@ -4828,7 +5249,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)) }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get perch() { const Q = trans && trans.kind === 'case' ? trans.perch : null; return { st: Q ? Q.st : null, u: Q ? +Q.u.toFixed(2) : 0, hp: Q ? Math.round(Q.hp) : 0, seat: +perch.seat.toFixed(2), legs: perch.legs.map((L) => +L.a.toFixed(3)), over: stage.over, top: stage.top }; }, get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)), seen: heard.feet.map((F) => +F.y.toFixed(4)) }; } };
   return window.__avatar;
 }
 
@@ -4847,20 +5268,31 @@ function abyssalize(source, shared) {
     if ('metalness' in m) { m.metalness = look.metal ?? 0.2; m.roughness = look.rough ?? 0.5; }
   }
   m.userData.uClip = { value: 0 }; // 1 = this part can pass behind the contact card
+  m.userData.uArm = { value: 0 }; // 1 = this part can pass behind an open case's X...
+  m.userData.uFing = { value: [-1, -1, -1, -1, -1, -1] }; // ...all but what these bones of its skeleton move: the fingers
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, shared);
     sh.uniforms.uClip = m.userData.uClip;
+    sh.uniforms.uArm = m.userData.uArm;
+    sh.uniforms.uFing = m.userData.uFing;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vDPos;\nuniform mat4 uInvRoot;')
-      .replace('#include <skinning_vertex>', '#include <skinning_vertex>\nvDPos = (uInvRoot * modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vDPos;\nvarying float vFing;\nuniform mat4 uInvRoot;\nuniform float uFing[6];')
+      .replace('#include <skinning_vertex>', `#include <skinning_vertex>
+        vDPos = (uInvRoot * modelMatrix * vec4(transformed, 1.0)).xyz;
+        vFing = 0.0;
+        #ifdef USE_SKINNING
+        for (int i = 0; i < 6; i++) vFing += dot(skinWeight, vec4(lessThan(abs(skinIndex - uFing[i]), vec4(0.5))));
+        #endif`);
     sh.fragmentShader = sh.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
         varying vec3 vDPos;
+        varying float vFing;
         uniform float uDissolve; uniform float uTime; uniform float uNoiseScale; uniform float uHeight;
         uniform vec3 uRim; uniform vec3 uEdge;
         uniform float uClip; uniform float uClipAll; uniform float uCardOn; uniform vec4 uCardRect; uniform vec4 uAllRect;
+        uniform float uArm; uniform vec3 uDisc; uniform vec3 uGrip;
         float aHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float aNoise(vec3 x) {
           vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -4874,6 +5306,8 @@ function abyssalize(source, shared) {
         `#include <clipping_planes_fragment>
         if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
+        if (uArm > 0.5 && uDisc.z > 0.0 && vFing < 0.5
+            && (distance(gl_FragCoord.xy, uDisc.xy) < uDisc.z || distance(gl_FragCoord.xy, uGrip.xy) < uGrip.z)) discard;
         if (uClipAll > 0.5) {
           bool aIn = gl_FragCoord.x > uAllRect.x && gl_FragCoord.x < uAllRect.z && gl_FragCoord.y > uAllRect.y && gl_FragCoord.y < uAllRect.w;
           if (aIn) discard;
