@@ -667,9 +667,10 @@ export async function start({ reduced = false } = {}) {
     sfx('chirp-' + name); // (its voice: a phrase for each)
   }
   // The hello on reaching a section. At the contact card with a field already in
-  // focus it skips the wave and takes hold of the card straight away.
+  // focus it skips the wave and takes hold of the card straight away; with the card
+  // still to fetch and its place in view, bringing it in is the hello.
   function greet(id, name) {
-    if (id === 'contato' && formFocused()) return;
+    if (id === 'contato' && (formFocused() || delivSoon())) return;
     react(name);
   }
   function formFocused() {
@@ -1189,7 +1190,9 @@ export async function start({ reduced = false } = {}) {
         return { x: W * 0.5, y: H * 0.3, h, yaw: runner.yaw };
       }
       case 'contato': {
-        const r = nodes.terminal ? nodes.terminal.getBoundingClientRect() : null;
+        // (the card's own place, even while it is still out of sight or on its way in:
+        // see stepDeliver)
+        const r = nodes.terminal ? homeRect() : null;
         const h = Math.min(H * 0.24, 220);
         // tucked against the card's lower-left corner, both hands on its edge
         if (r) {
@@ -1198,7 +1201,8 @@ export async function start({ reduced = false } = {}) {
           // right side, where it dropped, until the case rides up out of the way)
           const c = ledgeMode() ? lastCase().getBoundingClientRect() : null;
           const w = c && c.right > x - h * 0.4 ? smooth(clamp01((c.bottom - (y - h * 0.95)) / (h * 0.12))) : 0;
-          return { x: x + (Math.max(x, c ? c.right + h * 0.45 : x) - x) * w, y, h, yaw: 0.6, grip: w < 0.01 };
+          // (clear: nothing over the spot; grip: and the card in its place, to hold)
+          return { x: x + (Math.max(x, c ? c.right + h * 0.45 : x) - x) * w, y, h, yaw: 0.6, clear: w < 0.01, grip: w < 0.01 && deliv.st === 'home' };
         }
         return { x: W * 0.5, y: H * 0.85, h, yaw: 0.4 };
       }
@@ -1273,6 +1277,20 @@ export async function start({ reduced = false } = {}) {
   const tug = { x: 0, v: 0 }; // a jolt on the card when the focus moves: a springy wobble
   let tugAsked = 0; // when a pull was asked for before the hands were on the card
   let cardStyled = false;
+  let cardTr = '', cardRo = ''; // (what was last written to it, so a still card isn't rewritten every frame)
+  let cardDX = 0; // how far off its place the card is drawn right now (deliv.x as last written)
+  // The contact card's entrance (see stepDeliver). st: 'home' (in its place), 'parked'
+  // (out of sight off the left edge), 'fetch', 'push', 'tuck' (the guide bringing it in),
+  // 'slide' (let go midway, it slides on into place by itself); x: how far the card is
+  // from its place (px, never right of it); t: time into a leg; X0: where the push set
+  // off; from: where the fetch set off
+  const deliv = { st: 'home', x: 0, t: 0, X0: 0, from: null };
+  // The card's own place: where it is drawn, less how far off it it is drawn (what is on
+  // the page, not deliv.x, which may be a frame ahead of it)
+  function homeRect() {
+    const r = nodes.terminal.getBoundingClientRect();
+    return { left: r.left - cardDX, right: r.right - cardDX, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+  }
   let scrollY = window.scrollY, scrollD = 0, scrollV = 0, lean = 0; // (scrollD: how far the page went in this frame)
   // The scroll's pace right now (px a second), quicker to tell than scrollV, which is
   // smoothed for the lean: the way it went after the earliest step of the last moments,
@@ -1385,7 +1403,8 @@ export async function start({ reduced = false } = {}) {
   function hopTo(id, prev, skForce) {
     // (flying through a tunnel, or off its spot on a scrolled flight, it sets off from
     // there, still in the air)
-    const airborne = trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.fly > 0 || (jr.on && jr.pin < 0.5));
+    // (bringing the contact card in, it is on the jets wherever it is)
+    const airborne = delivBusy() || (trans && trans.kind === 'enter' ? trans.phase === 'fly' : trans && trans.kind === 'hop' ? jr.air > 0.5 : scrub.mid && (jr.air > 0.5 || jr.fly > 0 || (jr.on && jr.pin < 0.5)));
     if (trans && trans.kind === 'send') settleSend(null);
     // (off the end of the last case it springs from where it is on the card, or drops
     // from where it hangs past it: not from the deck's middle)
@@ -1406,7 +1425,7 @@ export async function start({ reduced = false } = {}) {
     // only while low over that spot): the one it was leaving. In mid-air: none, so it
     // keeps the snapshot. Nearly or fully down: the one it was heading to.
     const pq = trans && trans.kind === 'hop' ? trans.t / trans.dur : -1;
-    const from = (trans && trans.kind === 'enter') || onLedge ? null
+    const from = (trans && trans.kind === 'enter') || onLedge || delivBusy() ? null
       : pq < 0 ? prev
       : pq < trans.ph.T0 ? trans.from
       : sk === 'fall' ? null
@@ -2101,6 +2120,16 @@ export async function start({ reduced = false } = {}) {
     } else if (pi >= 0 && pi < ORDER.length - 1 && ledgeMode() && t < pi + LEDGE.edge && scrub.u > pi + LEDGE.edge + 1e-4 && scrub.u <= pi + 1) {
       // Taken back onto the card's hold with it down by the next section (or still on its
       // way there): it flies back up onto the card on the clock, the same way.
+      if (delivBusy()) {
+        // (out bringing the contact card in, nowhere near the spot that flight sets off
+        // from: it goes straight from where it is)
+        jumping = true;
+        scrub.leap = true;
+        scrub.scrolledAt = now;
+        travelTo(ORDER[Math.round(t)]);
+        scrub.on = false;
+        return;
+      }
       const s = (scrub.u - pi - LEDGE.edge) / (1 - LEDGE.edge);
       ledgeWay('up', s);
       const step = (1 - LEDGE.edge) * ledgeRate(s, true) * dt;
@@ -3411,7 +3440,8 @@ export async function start({ reduced = false } = {}) {
     if (now < glance.until) return [glance.x, glance.y];
     const idle = !pointer.has || now - pointer.at > 1800;
     if (idle && focusTarget && focusTarget.isConnected) {
-      const r = focusTarget.getBoundingClientRect();
+      // (the contact card out of its place: where it belongs, not off the screen's edge)
+      const r = focusTarget === nodes.terminal ? homeRect() : focusTarget.getBoundingClientRect();
       return clientToCanvas(r.left + r.width / 2, r.top + r.height / 2);
     }
     if (pointer.has) return clientToCanvas(pointer.x, pointer.y);
@@ -3657,6 +3687,174 @@ export async function start({ reduced = false } = {}) {
     return [v.x / (view.wpp * k) + view.w / 2, view.h / 2 - v.y / (view.wpp * k)];
   }
 
+  // Contact: the guide brings the card in. Out of sight, the card waits off the left
+  // edge of the screen (parked whenever its place is out of view, so it is never seen
+  // going). Once the guide is at Conexão with that place in view, it flies off to the
+  // left to fetch it (fetch), comes back pushing it across to its place with both
+  // hands on its left edge (push), and turns into the hold, its far arm going round
+  // behind the card (tuck). Taken away midway (a jump, the scroll back up), it leaves
+  // the card to glide on into place by itself, or still parked if none of it shows.
+  //   fetch, push, tuck  the legs (s)   gap  hands to feet, across (body heights)
+  //   lean  into the push (tilt, rad)   yaw  facing the card as it pushes
+  //   show  the place in view enough to bring it in: its top above this share of the screen
+  // (show: low enough that its shoulders, kept above the screen's bottom, come level
+  // with the card's side rather than its top corner)
+  const DELIV = { fetch: 0.62, push: 1.6, tuck: 0.7, gap: 0.37, lean: 0.62, yaw: 1.2, show: 0.6 };
+  // pushing on the jets: legs trailing and paddling, the body leaning into the card
+  const POSE_PUSH = { pitch: 0.18, thigh: [0.12, -0.95, -0.2], shin: [0.07, -0.98, -0.18], kick: 0.55, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 1 };
+  const delivBusy = () => deliv.st === 'fetch' || deliv.st === 'push' || deliv.st === 'tuck';
+  const delivOn = () => !!nodes.terminal && !reduced && !view.dock;
+  const holdH = () => Math.min(view.h * 0.24, 220); // (its size at the card: see anchorFor)
+  // parked: far enough off the left edge for the guide behind it to be out of sight too
+  const parkX = (home, h) => -(home.right + (DELIV.gap + 0.9) * h);
+  // about to be fetched, with its place already in view (see greet)
+  function delivSoon() {
+    return delivOn() && deliv.st === 'parked' && homeRect().top < window.innerHeight * DELIV.show;
+  }
+  // a leg cut short with the guide away from its spot (off the left edge, or out
+  // pushing): it flies back to it on the jets, not drifting there upright
+  function delivReturn() {
+    const B = anchorFor('contato');
+    if (section === 'contato' && !trans && Math.hypot(B.x - at.x, B.y - at.y) > holdH() * 0.6) hopTo('contato', 'contato', 'fall');
+  }
+  // a field focused while it is out of sight (the keyboard can't scroll sideways to it):
+  // the card straight to its place. (Clicked, or already in view on the card sliding in,
+  // the push goes on: the card doesn't jump from under the pointer.)
+  function deliverNow(field, byPointer) {
+    if (deliv.st === 'home') return;
+    if (deliv.st !== 'parked' && deliv.st !== 'fetch') {
+      const f = field && field.getBoundingClientRect();
+      if (byPointer || (f && f.left >= 0)) return;
+    }
+    const was = delivBusy();
+    deliv.st = 'home';
+    deliv.x = 0;
+    if (was) delivReturn();
+  }
+  function stepDeliver(dt) {
+    if (!delivOn()) { deliv.st = 'home'; deliv.x = 0; return; }
+    const home = homeRect(), vh = window.innerHeight, h = holdH();
+    // taken away midway: on into place by itself (at the pace it had), or still parked
+    // if none of it shows
+    if (delivBusy() && (trans || jr.on || section !== 'contato')) deliv.st = home.right + deliv.x <= 0 ? 'parked' : deliv.st === 'push' ? 'slide' : 'home';
+    // its place scrolled back out of view before it got there: parked again (none of it
+    // shows; with a field in it focused, on into place instead), and the guide back to
+    // its spot to wait
+    if ((deliv.st === 'fetch' || deliv.st === 'push' || deliv.st === 'slide') && home.top >= vh) {
+      const busy = delivBusy();
+      deliv.st = !formFocused() ? 'parked' : deliv.st === 'fetch' ? 'home' : 'slide';
+      if (busy) delivReturn();
+    }
+    if (deliv.st === 'slide') {
+      deliv.t += dt;
+      const u = clamp01(deliv.t / DELIV.push);
+      deliv.x = Math.min(0, hermite(deliv.X0, -deliv.X0 * 1.2, 0, 0, u));
+      if (u < 1) return;
+      deliv.st = 'home';
+      deliv.x = 0;
+    }
+    if (deliv.st === 'home') {
+      if (deliv.x !== 0) {
+        deliv.x *= 1 - damp(5, dt);
+        if (deliv.x > -0.5) deliv.x = 0;
+      }
+      // its place out of view: parked off the left edge, ready to be brought in (and
+      // its one-shot reveal spent now, so it never plays in the middle of the push)
+      if ((home.top >= vh || home.bottom <= 0) && !formFocused()) {
+        deliv.st = 'parked';
+        nodes.terminal.classList.add('is-in');
+      } else return;
+    }
+    if (deliv.st === 'parked') {
+      deliv.x = parkX(home, h);
+      const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < h * 0.6;
+      if (section !== 'contato' || trans || jr.on || scrub.mid || !goal || !goal.clear || !near || home.top >= vh * DELIV.show) return;
+      // (a hello still going when the place comes into view: cut short, off it goes)
+      if (oneShot) { oneShot = false; fadeTo(baseName, 0.3); }
+      deliv.st = 'fetch';
+      deliv.t = 0;
+      deliv.from = { x: at.x, y: at.y, yaw: at.yaw };
+      snapRig(); // (out of the float, the drift and the lean, blended, not in one frame)
+    }
+    // a leg: it has the frame (no resting spring), on the clock
+    deliv.t += dt;
+    const holdY = Math.min(home.bottom + h * 0.16, view.h * 0.96);
+    const P = jr.pose || (jr.pose = newPose());
+    jr.on = true;
+    vel.x = vel.y = 0;
+    jr.pin = jr.spin = jr.bank = jr.hop = jr.squash = jr.pitch = 0;
+    jr.floor = null;
+    head.face = 0; // (its facing is laid out here: no turning round on its own)
+    at.h = h;
+    if (deliv.st === 'fetch') {
+      // off to the left from a standstill, turning to face that way and laying itself
+      // out level, out past the edge
+      const u = clamp01(deliv.t / DELIV.fetch), A = deliv.from, xOut = -h * 1.1;
+      at.x = hermite(A.x, 0, xOut, (xOut - A.x) * 1.8, u);
+      at.y = A.y + (holdY - A.y) * smooth(u) - h * 0.1 * Math.sin(Math.PI * u);
+      at.yaw = A.yaw + wrapPi(-YAW.fly - A.yaw) * smooth(clamp01(u / 0.3));
+      const lvl = smooth(clamp01((u - 0.12) / 0.45));
+      mixPose(P, POSE.hover, POSE.fly, lvl);
+      jr.w = smooth(clamp01(u / 0.15));
+      jr.tilt = TILT.hover + (TILT.fly * 0.85 - TILT.hover) * lvl;
+      jr.fly = lvl;
+      jr.air = 0.3 * lvl;
+      jr.jet = 0.55 + 0.45 * smooth(clamp01(u / 0.3));
+      [glance.x, glance.y] = [at.x - h * 3, at.y - h * 0.6];
+      glance.until = performance.now() + 150;
+      if (u < 1) return;
+      // (out of sight: round behind the card, facing back the way it came, the card
+      // brought up to just off the edge so it shows at once)
+      deliv.st = 'push';
+      deliv.t = 0;
+      deliv.X0 = -(home.right + 0.2 * h);
+    }
+    if (deliv.st === 'push') {
+      // the card: in briskly from just off the left edge, slowing all the way into its
+      // place; the guide behind it, hands on its edge, leaning in on the jets and easing
+      // off (the start's pace no more than 3x the way's, or it would overshoot)
+      const u = clamp01(deliv.t / DELIV.push);
+      deliv.x = Math.min(0, hermite(deliv.X0, -deliv.X0 * 1.2, 0, 0, u));
+      const ease = smooth(clamp01((u - 0.5) / 0.5)); // (braking into its place)
+      at.x = home.left + deliv.x - DELIV.gap * h;
+      at.y = holdY;
+      at.yaw = DELIV.yaw;
+      mixPose(P, POSE_PUSH, POSE_PUSH, 0);
+      jr.w = 1;
+      jr.tilt = DELIV.lean * (1 - 0.4 * ease);
+      jr.fly = 0;
+      jr.air = 0.12;
+      jr.jet = 0.95 - 0.5 * ease;
+      [glance.x, glance.y] = [home.left + deliv.x + h, at.y - h * 0.55];
+      glance.until = performance.now() + 150;
+      if (u < 1) return;
+      // in its place: a last shove carries it a touch on, and it springs back
+      deliv.x = 0;
+      tug.v -= 3.4;
+      sfx('card-tug');
+      deliv.st = 'tuck';
+      deliv.t = 0;
+    }
+    // tuck: into the hold, its far arm round behind the card (see gripCard)
+    const u = clamp01(deliv.t / DELIV.tuck), k = smooth(u);
+    const B = anchorFor('contato');
+    at.x = home.left - DELIV.gap * h + (B.x - (home.left - DELIV.gap * h)) * k;
+    at.y = holdY;
+    at.yaw = DELIV.yaw + wrapPi(B.yaw - DELIV.yaw) * k;
+    mixPose(P, POSE_PUSH, POSE_PUSH, 0);
+    jr.w = 1 - k;
+    jr.tilt = DELIV.lean * 0.6 * (1 - k);
+    jr.fly = 0;
+    jr.air = 0.12 * (1 - k);
+    jr.jet = 0.45 * (1 - smooth(clamp01(u / 0.7)));
+    if (u < 1) return;
+    // holding it: the rest is gripCard's, as on any arrival (hands already on it)
+    deliv.st = 'home';
+    goal = anchorFor('contato');
+    snapTo(goal);
+    grip.w = 1;
+  }
+
   // Contact: it holds the terminal card by its left edge. When the focus moves to
   // another field it gives the card a jolt, as if it had moved the cursor itself.
   const gripTo = new THREE.Vector3();
@@ -3665,16 +3863,27 @@ export async function start({ reduced = false } = {}) {
     tug.x += tug.v * dt;
     const card = nodes.terminal;
     const here = section === 'contato' && !view.dock && card;
-    // the card wobbles with the jolt (individual transform properties compose with
-    // the card's own transform and transitions)
-    if (here && !reduced && (Math.abs(tug.x) > 0.002 || Math.abs(tug.v) > 0.02)) {
-      card.style.translate = `${(-tug.x * 16).toFixed(2)}px ${(tug.x * 4).toFixed(2)}px`;
-      card.style.rotate = `${(-tug.x * 2.6).toFixed(3)}deg`;
+    // the card wobbles with the jolt, and stands off its place while it is brought in
+    // (individual transform properties compose with the card's own transform and
+    // transitions; this is the one place that writes them)
+    const wobble = here && !reduced && (Math.abs(tug.x) > 0.002 || Math.abs(tug.v) > 0.02);
+    if (card && (wobble || deliv.x !== 0)) {
+      const tx = deliv.x - (wobble ? tug.x * 16 : 0), ty = wobble ? tug.x * 4 : 0;
+      const tr = `${tx.toFixed(2)}px ${ty.toFixed(2)}px`, ro = wobble ? `${(-tug.x * 2.6).toFixed(3)}deg` : '';
+      if (tr !== cardTr) { card.style.translate = tr; cardTr = tr; } // (parked, it is the same every frame)
+      if (ro !== cardRo) { card.style.rotate = ro; cardRo = ro; }
+      cardDX = deliv.x;
       cardStyled = true;
     } else if (cardStyled) {
       card.style.translate = '';
       card.style.rotate = '';
+      cardTr = cardRo = '';
+      cardDX = 0;
       cardStyled = false;
+    }
+    if (card) {
+      const wc = deliv.st === 'push' || deliv.st === 'slide' ? 'translate' : ''; // (a layer of its own only while it slides)
+      if (card.style.willChange !== wc) card.style.willChange = wc;
     }
     const near = goal && Math.hypot(goal.x - at.x, goal.y - at.y) < at.h * 0.25;
     const on = !!(here && goal.grip && near && !trans && !scrub.mid && !oneShot && arms.length);
@@ -3688,15 +3897,37 @@ export async function start({ reduced = false } = {}) {
     // whatever of that arm overlaps the card is hidden.
     // (not while it flies in or away: then the whole arm stays in view)
     const hopFlying = trans && trans.kind === 'hop' && trans.phase === 'travel';
+    // (pushing the card in, both hands stay in view on its edge; the far one goes round
+    // behind it as it turns into the hold)
+    const pushing = here && (deliv.st === 'push' || deliv.st === 'tuck');
+    const tk = deliv.st === 'tuck' ? smooth(clamp01(deliv.t / DELIV.tuck)) : 0;
     const atCard = card && !view.dock && (here
-      ? goal && goal.grip && !hopFlying && (!jr.on || jr.air < 0.3)
+      ? (deliv.st === 'tuck' && tk > 0.15) || (goal && goal.grip && !hopFlying && (!jr.on || jr.air < 0.3))
       : trans && trans.from === 'contato' && (trans.phase === 'out' || (hopFlying && jr.air < 0.3)));
     shared.uCardOn.value = atCard ? 1 : 0;
-    if (!card || view.dock || (!atCard && grip.w < 0.01)) return;
-    const r = card.getBoundingClientRect();
+    if (!card || view.dock || (!atCard && !pushing && grip.w < 0.01)) return;
+    // (parked as the hands let go, scrolling away, or off to fetch it: they let go of
+    // where it was, not reach after it off the left edge)
+    const r = deliv.st === 'parked' || deliv.st === 'fetch' ? homeRect() : card.getBoundingClientRect();
     const [ox, oy] = clientToCanvas(r.left, r.top);
     const pr = renderer.getPixelRatio();
     shared.uCardRect.value.set(ox * pr, (view.h - oy - r.height) * pr, (ox + r.width) * pr, (view.h - oy) * pr);
+    if (pushing && arms.length) {
+      // both hands flat on the card's left edge at shoulder height (the far one just
+      // short of it, so none of it is cut off yet), then (tuck) on to where they hold
+      // it: the far one round behind the edge, slipping out of sight as it goes (the
+      // clip comes on just as it reaches the edge, see atCard), the near one lower, in front
+      const k = tk;
+      arms.forEach((arm, i) => {
+        arm[0].getWorldPosition(kS);
+        const [, sy] = toCanvas(kS);
+        const yP = sy + at.h * (i === 0 ? -0.01 : 0.05), yH = sy + at.h * (i === 0 ? 0.02 : 0.12);
+        const xP = ox + (i === 0 ? -at.h * 0.03 : 3), xH = i === 0 ? ox + at.h * 0.1 : ox + 7;
+        toWorld(xP + (xH - xP) * k, clamp(yP + (yH - yP) * k, oy + 18, oy + r.height - 18), kS.z, gripTo);
+        reach(arm, gripTo, 1);
+      });
+      return;
+    }
     // keep reaching while the weight fades (leaving the section), so the arms ease off
     if (grip.w < 0.01 || !arms.length) return;
     const w = grip.w * grip.w * (3 - 2 * grip.w);
@@ -4280,6 +4511,7 @@ export async function start({ reduced = false } = {}) {
   let reactIdx = 0;
   const clicks = [];
   hit.addEventListener('click', () => {
+    if (delivBusy()) return; // (busy bringing the contact card in)
     const now = performance.now();
     clicks.push(now);
     while (clicks.length && now - clicks[0] > 2500) clicks.shift();
@@ -4324,7 +4556,11 @@ export async function start({ reduced = false } = {}) {
     // entering a field, the first one included: it pulls the card it holds, as if
     // it moved the cursor there itself
     let lastField = null;
+    let pressed = -1e9; // (a field reached with the pointer, not the keyboard)
+    form.addEventListener('pointerdown', () => { pressed = performance.now(); }, { passive: true });
     form.addEventListener('focusin', (e) => {
+      // (the card not in its place yet: there now, where the field can be seen)
+      deliverNow(e.target, performance.now() - pressed < 600);
       const field = e.target.matches('input, textarea') ? e.target : null;
       if (!reduced && field && field !== lastField) pullCard();
       if (field) lastField = field;
@@ -4414,6 +4650,7 @@ export async function start({ reduced = false } = {}) {
     pollSection(now);
     stepScrub(dt, now);
     stepRunner(dt);
+    stepDeliver(dt); // (bringing the contact card in, it has the frame: no resting spring)
 
     if (!trans && !jr.on && tunnelOn()) stepTunnel(dt, now);
     if (!trans && !jr.on) {
@@ -4591,7 +4828,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)) }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)) }; } };
   return window.__avatar;
 }
 
