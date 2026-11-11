@@ -51,7 +51,6 @@
       'jet-burst': { gain: 0.4, cool: 0.9 },
       'fly-by': { gain: 0.38, cool: 1.5 },
       footstep: { gain: 0.16, cool: 0.07, vary: 0.08 }, // (its run comes down on two feet close together)
-      'mist-puff': { gain: 0.32, cool: 0.25, vary: 0.05 },
       dissolve: { gain: 0.36, cool: 0.8 },
       reform: { gain: 0.36, cool: 0.8 },
       'portal-in': { gain: 0.38, cool: 0.3 },

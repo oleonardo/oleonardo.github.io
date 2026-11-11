@@ -1784,7 +1784,7 @@ export async function start({ reduced = false } = {}) {
         trans.fire = true;
         return cloudRect();
       }
-      if (!reduced) { react('jump'); puff(true); } // (quiet: the transmission is what is heard)
+      if (!reduced) { react('jump'); puff(); }
       return null;
     },
     result(ok) {
@@ -3060,10 +3060,10 @@ export async function start({ reduced = false } = {}) {
     return m.localToWorld(out);
   }
 
-  // Click: a soft cloud breathes out of the chest
-  function puff(quiet) {
+  // Click: a soft cloud breathes out of the chest (silent: the voice that comes
+  // with it is what is heard)
+  function puff() {
     if (reduced) return;
-    if (!quiet) sfx('mist-puff');
     root.updateMatrixWorld(true);
     const c = new THREE.Vector3(0, modelH * 0.62, modelH * 0.1).applyMatrix4(root.matrixWorld);
     const H = at.h * view.wpp;
