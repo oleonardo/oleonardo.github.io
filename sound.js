@@ -1,6 +1,6 @@
 /**
  * Leonardo de Oliveira · Abissal
- * sound.js: the sound of the sea. Off until the visitor asks for it: no audio file is
+ * sound.js: the site's sound. Off until the visitor asks for it: no audio file is
  * fetched and no AudioContext exists before the first switch-on, and nothing at all
  * happens on save-data connections (the switch stays hidden there). A visitor who left
  * it on finds it on again: by itself where the browser allows, else at their first click.
@@ -135,6 +135,19 @@
   };
   window.abissalAudio = api;
   doc.dataset.sound = state;
+
+  // The gate (html.gate, set in the head once per visit): with sound or without, asked
+  // before anything moves. window.abissalGate settles once it has been answered and the
+  // sound is as asked (on and its effects in, or off), so the guide waits on it and
+  // comes in already as chosen. No gate: it is settled from the start.
+  const gateEl = document.getElementById('sound-gate');
+  let gateDone;
+  window.abissalGate = new Promise((res) => { gateDone = res; });
+  const gated = doc.classList.contains('gate') && !!gateEl;
+  if (!gated || !AC || !btn || !able) {
+    doc.classList.remove('gate');
+    gateDone();
+  }
   if (!AC || !btn || !able) return;
 
   // ---------------------------------------------------------------------------
@@ -671,7 +684,76 @@
   // (the pointer on the switch: the file sets off, so the click finds it on its way)
   btn.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') fetchBed().catch(() => {}); }, { once: true });
 
-  if (store.get(KEY) === '1') {
+  // ---------------------------------------------------------------------------
+  // The gate: the visitor's answer is the gesture the browser wants, so "with sound"
+  // starts it right there, and the gate waits (a little, never long) for the bed and the
+  // guide's effects, so its entrance is heard from the first ignition.
+  // ---------------------------------------------------------------------------
+  const GATE_KEY = 'abissal_gate';
+  const GATE_WAIT_MS = 4000; // (a slow line: the gate lifts anyway, and the sound catches up)
+  const GATE_OUT_MS = 700; // (its fade: see .sound-gate in style.css)
+  function runGate() {
+    const onBtn = gateEl.querySelector('[data-gate="on"]');
+    const offBtn = gateEl.querySelector('[data-gate="off"]');
+    const label = onBtn.querySelector('.gate-label');
+    const behind = Array.from(document.querySelectorAll('body > header, body > main, body > .skip-link'));
+    for (const el of behind) el.inert = true;
+    gateEl.hidden = false;
+    let answered = false;
+
+    function lift() {
+      try { sessionStorage.setItem(GATE_KEY, '1'); } catch (e) { /* private mode */ }
+      for (const el of behind) el.inert = false;
+      gateEl.classList.add('is-leaving');
+      doc.classList.remove('gate'); // (the page's own entrance plays as the gate fades)
+      document.removeEventListener('keydown', onKey);
+      gateDone();
+      setTimeout(() => { gateEl.hidden = true; }, GATE_OUT_MS);
+    }
+    // on, with the guide's effects in: or as far as it got in the time allowed
+    function settled() {
+      return new Promise((res) => {
+        const t = setTimeout(res, GATE_WAIT_MS);
+        const done = () => { clearTimeout(t); res(); };
+        const check = () => {
+          if (state === 'loading') return;
+          document.removeEventListener('abissal:sound', check);
+          if (state !== 'on') return done(); // (off, or armed: not to be had right now)
+          loadEffects(false);
+          Promise.all(Object.values(fxLoad).map((p) => p && p.catch(() => {}))).then(done);
+        };
+        document.addEventListener('abissal:sound', check);
+        check();
+      });
+    }
+    function answer(on) {
+      if (answered) return;
+      answered = true;
+      onBtn.disabled = offBtn.disabled = true;
+      if (!on) {
+        disable();
+        lift();
+        return;
+      }
+      onBtn.setAttribute('aria-busy', 'true');
+      label.textContent = 'Afinando…';
+      enable(); // (inside the click: the browser lets it start)
+      loadEffects(false);
+      settled().then(lift);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    }
+    onBtn.addEventListener('click', () => answer(true));
+    offBtn.addEventListener('click', () => answer(false));
+    document.addEventListener('keydown', onKey);
+    // (the bed sets off at once: most of it is here by the time the visitor has read)
+    fetchBed().catch(() => {});
+    (store.get(KEY) === '0' ? offBtn : onBtn).focus({ preventScroll: true });
+  }
+
+  if (gated) runGate();
+  else if (store.get(KEY) === '1') {
     setState('armed');
     arm();
     // (by itself, where it may: tried once the page is in view)

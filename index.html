@@ -6,7 +6,13 @@
       (function (d, c) {
         d.classList.add("js");
         // the sound switch has its place in the top bar from the first paint (sound.js shows it)
-        if ((window.AudioContext || window.webkitAudioContext) && !c.saveData && !/(^|-)2g$/.test(c.effectiveType || "")) d.classList.add("snd");
+        if ((window.AudioContext || window.webkitAudioContext) && !c.saveData && !/(^|-)2g$/.test(c.effectiveType || "")) {
+          d.classList.add("snd");
+          // the sound gate: once per visit, before the guide comes in (sound.js runs it)
+          var seen = null;
+          try { seen = sessionStorage.getItem("abissal_gate"); } catch (e) { /* private mode */ }
+          if (!seen) d.classList.add("gate");
+        }
       })(document.documentElement, navigator.connection || {});
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -54,6 +60,26 @@
   </head>
   <body>
     <canvas id="abyss" class="abyss" aria-hidden="true"></canvas>
+
+    <!-- Sound gate: the first thing on a visit, so the guide comes in already with sound (or without) -->
+    <div id="sound-gate" class="sound-gate" role="dialog" aria-modal="true" aria-labelledby="gate-title" aria-describedby="gate-copy" hidden>
+      <div class="gate-panel">
+        <p class="kicker mono">Antes da decolagem</p>
+        <h2 id="gate-title" class="gate-title">Vai decolar <em>com som?</em></h2>
+        <p id="gate-copy" class="gate-copy">
+          O guia tem voz, jetpack e trilha própria. Com fones fica ainda melhor.
+        </p>
+        <div class="gate-actions">
+          <button type="button" class="btn btn-amber gate-on" data-gate="on">
+            <span class="sound-bars gate-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span class="gate-label">Com som</span>
+          </button>
+          <button type="button" class="btn btn-ghost gate-off" data-gate="off">Sem som</button>
+        </div>
+        <p class="gate-note mono">Dá pra mudar a qualquer momento em <b>SOM</b>, no topo da página.</p>
+      </div>
+    </div>
+
     <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
 
     <header class="topbar">

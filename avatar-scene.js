@@ -4348,8 +4348,9 @@ export async function start({ reduced = false } = {}) {
   // Loop
   // ---------------------------------------------------------------------------
   let raf = 0, running = false, last = 0, tick = 0;
+  let begun = false; // (nothing is drawn before the guide's entrance: see Go)
   function wake() {
-    if (running || document.hidden) return;
+    if (!begun || running || document.hidden) return;
     running = true;
     last = 0;
     raf = requestAnimationFrame(frame);
@@ -4565,6 +4566,10 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Go
   // ---------------------------------------------------------------------------
+  // The sound gate first (sound.js): the guide comes in once the visitor has said with
+  // sound or without, so its entrance is already heard (or already quiet), headphones on.
+  if (window.abissalGate) await window.abissalGate;
+  begun = true;
   const visibleSection = $$('main > section').find((s) => {
     const r = s.getBoundingClientRect();
     return r.top <= window.innerHeight * 0.45 && r.bottom > window.innerHeight * 0.45;

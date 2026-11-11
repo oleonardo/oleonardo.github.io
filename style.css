@@ -2415,6 +2415,143 @@ html.vt:not(.vt-close):has(.avatar-stage.is-exit) .work-stage {
   }
 }
 
+/* ---------- sound gate ----------
+   The first thing on a visit where there is sound to offer (html.gate, set in the head
+   once per session): with sound or without, chosen before the guide comes in, so it
+   arrives already as chosen. The page waits behind it, its entrance held still. */
+.sound-gate[hidden] {
+  display: none;
+}
+
+html.gate {
+  overflow: hidden;
+}
+
+html.gate .sound-gate[hidden],
+.sound-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top, 0px)) var(--gutter) max(24px, env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(70vmax circle at 50% 42%, rgba(45, 141, 164, 0.16), transparent 60%),
+    rgba(5, 8, 16, 0.94);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition:
+    opacity 0.7s var(--ease-out),
+    visibility 0s linear 0.7s;
+}
+
+.sound-gate.is-leaving {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.gate-panel {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: min(100%, 520px);
+  text-align: center;
+}
+
+.gate-panel .kicker {
+  margin: 0;
+}
+
+.gate-title {
+  margin: 0;
+  font-size: clamp(34px, 4.2vw, 56px);
+  font-weight: 700;
+  font-stretch: 75%;
+  line-height: 1;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+
+.gate-title em {
+  font-style: normal;
+  color: var(--biolight);
+}
+
+.gate-copy {
+  max-width: 42ch;
+  margin: 0;
+  color: var(--mist);
+  font-size: clamp(15px, 1.2vw, 17px);
+  line-height: 1.6;
+}
+
+.gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.gate-actions .btn {
+  min-width: 168px;
+}
+
+/* (the bars ride the sound's own state, like the switch's; on the amber plate, in its ink) */
+.gate-bars i {
+  background: currentColor !important;
+  box-shadow: none !important;
+}
+
+.gate-on[aria-busy="true"] {
+  cursor: progress;
+}
+
+.gate-note {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--mist);
+}
+
+.gate-note b {
+  font-weight: inherit;
+  color: var(--foam);
+}
+
+/* the page's entrance waits behind the gate, and plays as it lifts */
+html.gate :is(.topbar, .eyebrow, .hero-actions, .legend, .scroll-cue) {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .gate-panel > * {
+    animation: rise 0.9s var(--ease-out) backwards;
+  }
+
+  .gate-panel > :nth-child(2) {
+    animation-delay: 0.08s;
+  }
+
+  .gate-panel > :nth-child(3) {
+    animation-delay: 0.16s;
+  }
+
+  .gate-panel > :nth-child(4) {
+    animation-delay: 0.24s;
+  }
+
+  .gate-panel > :nth-child(5) {
+    animation-delay: 0.32s;
+  }
+
+  .sound-gate.is-leaving .gate-panel {
+    transform: translateY(-10px) scale(0.985);
+    transition: transform 0.7s var(--ease-out);
+  }
+}
+
 /* ==========================================================================
    RESPONSIVE
    ========================================================================== */
