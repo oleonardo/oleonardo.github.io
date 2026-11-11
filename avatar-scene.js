@@ -65,6 +65,9 @@ const MODEL = {
   // ...and only its fingers come over the X's rim: each from the wrist out (the bone to
   // its knuckle, then the finger's two)
   grip: [['Palm1.R', 'Index.R', 'Index2.R'], ['Palm2.R', 'Middle1.R', 'Middle2.R'], ['Palm3.R', 'Ring1.R', 'Ring2.R']],
+  // The left palm, where the port it fires from opens: the wrist bone and the middle
+  // finger's two (the palm lies along the first, and faces the way the finger curls)
+  palm: ['Palm2.L', 'Middle1.L', 'Middle2.L'],
 };
 
 const CLIPS = {
@@ -1818,6 +1821,8 @@ export async function start({ reduced = false } = {}) {
     caseNow,
     caseStop: () => endStunt(false),
     perchPoke,
+    // (the show goes on to the open case: its video is the guide's to start, see perchBlast)
+    perching: () => !!(trans && trans.kind === 'case' && trans.opened),
     beginSend,
     fire() {
       sfx('transmit');
@@ -4130,7 +4135,10 @@ export async function start({ reduced = false } = {}) {
   // falls back down to sit on the edge beside it, at the corner
   // where the X was, its right arm down behind the X and only its fingers showing over
   // the rim, its legs swinging (stepPerch). The X is still the way to close the case:
-  // closed, it flies back down and lands on the deck.
+  // closed, it flies back down and lands on the deck. The case's video waits for all of
+  // that: sat, the guide brings up its left hand, a ring of light opens in its palm, and
+  // it fires three quick bolts out of it into the video's play button; the video starts
+  // on the last hit (perchBlast).
   // ---------------------------------------------------------------------------
   // The show as a timeline, in seconds: the ignition, the flight round to the front of
   // the card and into it, and hanging there a moment, thrown back.
@@ -4247,6 +4255,7 @@ export async function start({ reduced = false } = {}) {
     snapRig(); // (cut short in mid-air, it comes down to the card instead of jumping there)
     trans = null;
     if (S.perch) perchEnd();
+    else if (S.opened) playRelease(); // (off between the hit and setting out for the case: the same)
     sink.drive = false;
     sink.target = 0;
     seatLift = 0;
@@ -4481,6 +4490,7 @@ export async function start({ reduced = false } = {}) {
   const sceneEl = document.getElementById('project-dialog');
   const infoEl = sceneEl ? sceneEl.querySelector('.detail-info') : null;
   const closeEl = infoEl ? infoEl.querySelector('.close-btn') : null;
+  const playEl = sceneEl ? sceneEl.querySelector('.scene-play') : null;
   // Where the X belongs on the case's card (its middle, wherever the guide has it now),
   // the card's top edge and its right end, on the canvas. Null until the scene is laid out.
   function perchSpot() {
@@ -4518,13 +4528,16 @@ export async function start({ reduced = false } = {}) {
     snapRig(); // (out of the show's flight, not cut from it)
     // (X: the case's X once it has it: where it is, how fast it goes, how far it leans
     // and turns; free: let go of; down: it has hit the edge)
-    S.perch = { st: 'wait', t: 0, u: 0, A: null, hp: at.h, dur: 1, v0: 0, up: 1, bx: 0, vx: S.vx || 0, vy: S.vy || 0, px: at.x, pv: 0, ax: 0, reach: 0, got: false, take: 0, set: 0, sq: 0, sqv: 0, sat: 0, X: { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, free: false, down: false } };
+    S.perch = { st: 'wait', t: 0, u: 0, A: null, hp: at.h, dur: 1, v0: 0, up: 1, bx: 0, rk: null, fired: false, vx: S.vx || 0, vy: S.vy || 0, px: at.x, pv: 0, ax: 0, reach: 0, got: false, take: 0, set: 0, sq: 0, sqv: 0, sat: 0, X: { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, free: false, down: false } };
     for (const L of perch.legs) L.a = L.v = 0;
   }
   // (the scene as it was: the X back where it belongs, no room made over the card)
   function perchEnd() {
     perch.seat = 0;
     shared.uDisc.value.z = 0;
+    blastOff();
+    // (off before it fired, the case still open: the video starts all the same)
+    playRelease();
     if (closeEl) closeEl.style.translate = closeEl.style.rotate = '';
     if (sceneEl) sceneEl.style.paddingTop = '';
   }
@@ -4715,6 +4728,230 @@ export async function start({ reduced = false } = {}) {
       glance.until = performance.now() + 150;
     }
   }
+  // What starts the case's video. Sat on the case, the guide brings its left hand up at
+  // its side, clear of its head, and turns its palm out, between us and the video. In
+  // the middle of the palm a port opens, set in the hand itself: a small iris, six
+  // blades of the hand's own steel that turn as they draw back, a dark hole behind them
+  // and a core in it that comes up white as it charges. Then three bolts out of it, one
+  // after the other, straight off the palm and quick, each a streak with a trail of
+  // motes, into the video's play button; the hand kicks with each. The last hit is a
+  // click on that button: the page starts the video (app.js: holdVideo). Then the iris
+  // shuts and the hand comes down: closed, nothing of it shows. Not fired at all if the
+  // video is already running (the visitor started it); a click on the button meanwhile
+  // is as good as the hit, and what is in the air fizzles out.
+  //   wait   sat this long before the hand comes up (s);  open: the iris opening (s)
+  //   charge the core coming up, before the first bolt (s);  gap: between bolts (s)
+  //   pace   px a second;  len: a bolt's length; r: the port's radius (body heights: a
+  //          hole in the palm, a good deal smaller than the hand)
+  //   arc    how far each bolt goes over the straight line (a share of the distance)
+  const BLAST = { wait: 0.5, open: 0.34, charge: 0.2, gap: 0.12, pace: 2300, len: 0.22, r: 0.034, arc: [0.07, -0.03, 0.12], shut: 0.3 };
+  const blast = (() => {
+    const lit = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+    // (drawn over the hand it is set in, back to front in this order)
+    const over = (m) => Object.assign(m, { transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+    const WHITE = 0xeafffb;
+    // The port, one unit across its rim, facing +z: the hole, the core in it, the iris
+    // over them (six triangles, rim to middle, redrawn as it opens), its rim, and what
+    // light it throws. Set in the palm at the bones' own measure and handed to the wrist
+    // bone, so it is part of the hand in every pose.
+    const port = new THREE.Group();
+    const hole = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24), over(new THREE.MeshBasicMaterial({ color: 0x03060c })));
+    const core = new THREE.Mesh(new THREE.CircleGeometry(0.66, 20), lit(WHITE, 0));
+    const irisGeo = new THREE.BufferGeometry();
+    irisGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(54), 3));
+    irisGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(54).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+    const iris = new THREE.Mesh(irisGeo, over(new THREE.MeshStandardMaterial({ color: MODEL.palette.Grey.color, metalness: 0.45, roughness: 0.4 })));
+    const rim = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 6), over(new THREE.MeshStandardMaterial({ color: MODEL.palette.Main.color, metalness: 0.5, roughness: 0.38, emissive: TEAL, emissiveIntensity: 0.3 })));
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(1.7, 24), lit(TEAL, 0));
+    [hole, core, iris, rim, halo].forEach((o, i) => { o.renderOrder = 3 + i; o.frustumCulled = false; port.add(o); });
+    port.visible = false;
+    const chain = MODEL.palm.map((n) => bonesByName[bare(n)]);
+    let set = false;
+    if (chain.every(Boolean)) {
+      const [wrist, k1, k2] = chain;
+      model.updateMatrixWorld(true);
+      const W = model.worldToLocal(wrist.getWorldPosition(new THREE.Vector3()));
+      const along = model.worldToLocal(k1.getWorldPosition(new THREE.Vector3())).sub(W);
+      const face = model.worldToLocal(k2.getWorldPosition(new THREE.Vector3())).sub(W).sub(along);
+      const L = along.length() || 1;
+      along.divideScalar(L);
+      face.addScaledVector(along, -face.dot(along));
+      if (face.lengthSq() < 1e-10) face.set(-1, 0, 0); // (the left palm faces the body)
+      face.normalize();
+      port.position.copy(W).addScaledVector(along, L * 0.55).addScaledVector(face, modelH * 0.012);
+      port.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), face);
+      port.scale.setScalar(modelH * BLAST.r);
+      model.add(port);
+      wrist.attach(port);
+      set = true;
+    }
+    // a bolt: one unit long, along +y: a white core in a teal sheath
+    const bolts = BLAST.arc.map(() => {
+      const g = new THREE.Group();
+      const sheath = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), lit(TEAL, 0.5));
+      sheath.scale.set(0.26, 1, 0.26);
+      const hot = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 6), lit(WHITE, 1));
+      hot.scale.set(0.11, 0.82, 0.11);
+      g.add(sheath, hot);
+      g.traverse((o) => { o.frustumCulled = false; o.renderOrder = 9; });
+      g.visible = false;
+      scene.add(g);
+      return g;
+    });
+    // (the iris at k, 0 shut to 1 open: each blade from its two corners on the rim to a
+    // tip that turns out from the middle to the rim between them, leaving a six-sided hole)
+    const drawIris = (k) => {
+      const a = irisGeo.attributes.position, r = 0.866 * k;
+      for (let i = 0; i < 6; i++) {
+        const a0 = (i / 6) * TAU, a1 = ((i + 1) / 6) * TAU, at = a0 + TAU / 12 + (1 - k) * 1.1;
+        a.setXYZ(i * 3, Math.cos(a0), Math.sin(a0), 0);
+        a.setXYZ(i * 3 + 1, Math.cos(a1), Math.sin(a1), 0);
+        a.setXYZ(i * 3 + 2, Math.cos(at) * r, Math.sin(at) * r, 0);
+      }
+      a.needsUpdate = true;
+    };
+    drawIris(0);
+    return { port: set ? port : null, core, rim, halo, bolts, drawIris, scale: modelH * BLAST.r };
+  })();
+  function blastOff() {
+    if (blast.port) blast.port.visible = false;
+    for (const g of blast.bolts) g.visible = false;
+  }
+  const armL = armSide.indexOf(Math.max(...armSide)); // (the model's own left)
+  // (waiting: the button up and not yet lit, the case open and not on its way out)
+  const playWaits = () => !!playEl && !playEl.hidden && !playEl.classList.contains('is-lit') && doc.classList.contains('is-detail');
+  // the video's play button while the video waits on it (its middle, on the canvas)
+  function playSpot() {
+    if (!playWaits() || !sceneEl.open) return null;
+    const r = playEl.getBoundingClientRect();
+    return r.width > 0 ? clientToCanvas(r.left + r.width / 2, r.top + r.height / 2) : null;
+  }
+  // The held video let go without a shot (the guide off before it fired). Should the
+  // scene not be up yet, the page starts it itself as it opens (app.js: openProject).
+  function playRelease() {
+    if (playWaits()) playEl.click();
+  }
+  const bP = new THREE.Vector3(), bQ = new THREE.Vector3(), bN = new THREE.Vector3(), bZ = new THREE.Vector3(0, 0, 1);
+  function sparks(x, y, n, speed, H) {
+    const o = toWorld(x, y, 0.6, bQ);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + Math.random() * 0.4, sp = H * speed * (0.5 + Math.random());
+      spawn(o.x, o.y, o.z, Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.4) * H * 0.3, 0.3 + Math.random() * 0.4, 0.8);
+    }
+  }
+  function perchBlast(Q, dt) {
+    const T = playSpot();
+    let R = Q.rk;
+    if (!R) {
+      if (Q.st !== 'sit' || Q.fired || Q.sat < BLAST.wait || !T || armL < 0 || !blast.port) return;
+      R = Q.rk = { st: 'open', t: 0, to: T, shots: [], next: 0, last: -9 };
+    }
+    R.t += dt;
+    const hp = Q.hp, H = hp * view.wpp, arm = arms[armL], sL = armSide[armL];
+    // The visitor started the video meanwhile, or the case is closing: no need of it.
+    // What is in the air fizzles out where it is, and the iris shuts (from as far open
+    // and as bright as it had got).
+    if (!T && R.st !== 'shut') {
+      for (const S of R.shots) if (!S.hit) { S.hit = true; sparks(S.x, S.y, 6, 0.3, H); }
+      Q.fired = true;
+      R.w = R.st === 'open' ? smooth(clamp01(R.t / BLAST.open)) : 1;
+      R.c = R.st === 'open' ? 0 : R.st === 'charge' ? smooth(clamp01(R.t / BLAST.charge)) : 0.5;
+      R.st = 'shut';
+      R.t = 0;
+    }
+    if (T) R.to = T;
+    // how far open the iris is, and the hand up with it: at its side, a little forward,
+    // clear of its head (the elbow out and down); each bolt kicks it back
+    const fade = R.st === 'shut' ? 1 - smooth(clamp01(R.t / BLAST.shut)) : 1;
+    const open = R.st === 'open' ? smooth(clamp01(R.t / BLAST.open)) : R.st === 'shut' ? (R.w ?? 1) * fade : 1;
+    const kick = Math.exp(-(R.t - R.last) / 0.07) * (R.st === 'fire' ? 1 : 0);
+    model.worldToLocal(arm[0].getWorldPosition(hTo));
+    hTo.set(hTo.x + sL * (0.29 + 0.04 * kick) * modelH, hTo.y + (0.24 - 0.07 * kick) * modelH, hTo.z + 0.2 * modelH);
+    reach(arm, model.localToWorld(hTo), open, hPole.set(sL, -0.5, -0.2).normalize().transformDirection(model.matrixWorld));
+    // (its target on the canvas from the hand, and in the world: up is up there)
+    const P = blast.port;
+    const [qx, qy] = toCanvas(arm[2].getWorldPosition(bP));
+    const dx = R.to[0] - qx, dy = R.to[1] - qy, d = Math.hypot(dx, dy) || 1;
+    // The palm turned out: the forearm rolled about its own length until the port
+    // faces between us and the button (as far as it is open).
+    P.updateWorldMatrix(true, false);
+    bN.set(0, 0, 1).transformDirection(P.matrixWorld);
+    arm[1].getWorldPosition(bQ);
+    hA.subVectors(bP, bQ).normalize(); // (along the forearm)
+    hB.set((dx / d) * 0.7, (-dy / d) * 0.7, 0.75).normalize();
+    bN.addScaledVector(hA, -bN.dot(hA));
+    hB.addScaledVector(hA, -hB.dot(hA));
+    if (bN.lengthSq() > 1e-8 && hB.lengthSq() > 1e-8) turnBone(arm[1], hA, Math.atan2(hA.dot(bQ.crossVectors(bN, hB)), bN.dot(hB)) * open);
+    // the port in it: the iris as far open, the core as bright as the charge
+    const charge = R.st === 'open' ? 0 : R.st === 'charge' ? smooth(clamp01(R.t / BLAST.charge)) : R.st === 'fire' ? 0.6 + 0.4 * kick : (R.c ?? 0.5) * fade;
+    blast.drawIris(open);
+    blast.core.material.opacity = charge;
+    blast.halo.material.opacity = 0.3 * charge;
+    blast.rim.material.emissiveIntensity = 0.3 + 1.2 * charge;
+    P.visible = open > 0.01;
+    P.updateWorldMatrix(true, false);
+    const [px, py] = toCanvas(P.getWorldPosition(bP)); // (where the bolts come out)
+    if (R.st !== 'shut') {
+      [glance.x, glance.y] = R.to;
+      glance.until = performance.now() + 150;
+    }
+    if (R.st === 'open' && R.t >= BLAST.open) { R.st = 'charge'; R.t = 0; sfx('jet-ignite', { gain: 0.5 }); }
+    else if (R.st === 'charge' && R.t >= BLAST.charge) { R.st = 'fire'; R.t = 0; R.next = 0; }
+    else if (R.st === 'shut' && R.t >= BLAST.shut) {
+      blastOff();
+      Q.rk = null;
+      return;
+    }
+    if (R.st === 'fire') {
+      // the next bolt off the hand
+      if (R.shots.length < blast.bolts.length && R.t >= R.next) {
+        R.shots.push({ t: 0, x: px, y: py, from: [px, py], arc: BLAST.arc[R.shots.length], dur: clamp(d / BLAST.pace, 0.22, 0.42), hit: false });
+        R.next = R.t + BLAST.gap;
+        R.last = R.t;
+        if (R.shots.length === 1) sfx('jet-burst', { gain: 0.5 });
+        sparks(px, py, 5, 0.35, H);
+        Q.sqv += 0.45; // (it rocks back with each)
+        perch.legs.forEach((L) => { L.v -= 0.8; });
+      }
+    }
+    // the bolts in the air: a shallow arc from where each left the hand to the button
+    let flying = 0;
+    R.shots.forEach((S, i) => {
+      const g = blast.bolts[i];
+      if (S.hit) { g.visible = false; return; }
+      S.t += dt;
+      const u = clamp01(S.t / S.dur), q = 1 - u;
+      const [x0, y0] = S.from, [x1, y1] = R.to;
+      const far = Math.hypot(x1 - x0, y1 - y0);
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2 - far * S.arc;
+      const tx = 2 * q * (cx - x0) + 2 * u * (x1 - cx), ty = 2 * q * (cy - y0) + 2 * u * (y1 - cy), tl = Math.hypot(tx, ty) || 1;
+      S.x = q * q * x0 + 2 * q * u * cx + u * u * x1;
+      S.y = q * q * y0 + 2 * q * u * cy + u * u * y1;
+      const len = hp * BLAST.len * (0.5 + 0.5 * smooth(clamp01(u / 0.2))); // (it draws out as it leaves)
+      toWorld(S.x - (tx / tl) * len * 0.4, S.y - (ty / tl) * len * 0.4, 0.6, g.position);
+      g.scale.setScalar(len * view.wpp);
+      g.rotation.z = Math.atan2(-ty, tx) - Math.PI / 2;
+      g.visible = true;
+      const tail = toWorld(S.x - (tx / tl) * len, S.y - (ty / tl) * len, 0.6, bQ);
+      for (let n = 2; n > 0; n--) spawn(tail.x, tail.y, tail.z, (Math.random() - 0.5) * 0.25 * H, (Math.random() - 0.5) * 0.25 * H, 0, 0.25 + Math.random() * 0.3, 0.85);
+      if (u < 1) { flying++; return; }
+      // the hit: sparks off the button; on the last one, the video starts
+      S.hit = true;
+      g.visible = false;
+      const last = i === blast.bolts.length - 1;
+      sparks(x1, y1, last ? 44 : 12, last ? 1.1 : 0.6, H);
+      if (!last) return;
+      sfx('stunt-impact', { gain: 0.6 });
+      Q.fired = true;
+      playEl.click();
+      // (and the guide is pleased with itself)
+      setFace('surprised', 0.7);
+      Q.sqv += 1.1;
+      perch.legs.forEach((L, k) => { L.v += k ? 2.6 : -2.2; });
+    });
+    if (R.st === 'fire' && R.shots.length === blast.bolts.length && !flying) { R.st = 'shut'; R.t = 0; }
+  }
+
   // Its right hand, after the poses, and the X with it. The hand goes out to the X's rim
   // where it belongs on the card, as it comes up beside it; then the X goes where that
   // hand goes, held by its rim out at its side. Let go of up there, the X is a thing of
@@ -4730,6 +4967,7 @@ export async function start({ reduced = false } = {}) {
   const XFALL = { g: 2600, pull: 50, drag: 11, bounce: 0.38, rock: 130, calm: 9 }; // px/s²; toward its spot (1/s², 1/s); kept of a bounce; its rocking (1/s², 1/s)
   function perchHold(dt) {
     const Q = trans && trans.kind === 'case' ? trans.perch : null;
+    if (Q) perchBlast(Q, dt);
     const G = Q && armR >= 0 && (Q.got || Q.reach >= 0.01) ? perchSpot() : null;
     if (!G) { shared.uDisc.value.z = 0; return; }
     const half = G.half, hp = Q.hp, arm = arms[armR], X = Q.X;

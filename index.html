@@ -385,8 +385,12 @@
       <div class="scene-panel detail-panel">
         <div class="video-frame detail-video">
           <video id="detail-video" playsinline controls preload="none" width="1280" height="720"></video>
+          <!-- held until the guide's shot hits it (app.js: holdVideo); a click starts it too -->
+          <button class="scene-play" type="button" id="detail-play" aria-label="Reproduzir vídeo" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor" /></svg>
+          </button>
           <span class="hud-corners" aria-hidden="true"></span>
-          <p class="hud-rec mono" aria-hidden="true"><i></i>REC [PLAYING]</p>
+          <p class="hud-rec mono" aria-hidden="true"><i></i><span id="detail-rec">REC [PLAYING]</span></p>
           <p class="hud-telemetry mono" aria-hidden="true">SYS_FREQ: 60Hz // CORE_STREAM_OK // 1080P</p>
         </div>
         <div class="detail-info capsule">

@@ -110,6 +110,8 @@
     welcomeVideo: $('#welcome-video'),
     detail: $('#project-dialog'),
     detailVideo: $('#detail-video'),
+    detailPlay: $('#detail-play'),
+    detailRec: $('#detail-rec'),
   };
   const projectNames = el.projects.map((p) => $('.project-title', p).textContent.trim());
 
@@ -613,7 +615,8 @@
     caseShow = node;
     show.then((go) => {
       caseShow = null;
-      if (go) openProject(node.dataset.project, node);
+      // (the guide goes on to the case and starts the video itself, once it is sat there)
+      if (go) openProject(node.dataset.project, node, !!(guide.perching && guide.perching()));
     });
   }
   // (off to another case meanwhile: the show stops and nothing opens)
@@ -779,6 +782,7 @@
       if (video) video.pause();
       sceneClosed(dialog);
       if (dialog === el.detail) {
+        holdVideo(false);
         el.detailVideo.removeAttribute('src');
         el.detailVideo.load();
       }
@@ -833,7 +837,45 @@
   $('#hero-welcome-btn').addEventListener('click', openWelcome);
   el.welcomeVideo.addEventListener('ended', () => closeScene(el.welcome));
 
-  function openProject(key, node) {
+  // The case's video, held: opened by the guide's show, it waits (its play button up,
+  // the HUD on standby) until the guide, sat on the case, fires into that
+  // button. A click on the button, or on the player's own, starts it just the same.
+  let heldTimer = 0;
+  function holdVideo(on) {
+    clearTimeout(heldTimer);
+    el.detail.classList.toggle('is-held', on);
+    if (el.detailPlay) {
+      el.detailPlay.classList.remove('is-lit');
+      el.detailPlay.hidden = !on;
+    }
+    if (el.detailRec) el.detailRec.textContent = on ? 'STANDBY [IGNIÇÃO]' : 'REC [PLAYING]';
+  }
+  if (el.detailPlay) {
+    el.detailPlay.addEventListener('click', (e) => {
+      const v = el.detailVideo;
+      const p = v.play();
+      if (!p || !p.catch) return;
+      // The guide's shot is no visitor's click: where a video with sound may only be
+      // started by one (Safari), it starts without sound instead, and the player's own
+      // controls bring the sound back. Refused even so, the button stays up to be clicked.
+      p.catch((err) => {
+        if (e.isTrusted || !err || err.name !== 'NotAllowedError' || !el.detail.classList.contains('is-held')) return;
+        v.muted = true;
+        const q = v.play();
+        if (q && q.catch) q.catch(() => { v.muted = false; });
+      });
+    });
+    // (started, however it was: the button flares and goes)
+    el.detailVideo.addEventListener('play', () => {
+      if (!el.detail.classList.contains('is-held')) return;
+      el.detail.classList.remove('is-held');
+      el.detailPlay.classList.add('is-lit');
+      if (el.detailRec) el.detailRec.textContent = 'REC [PLAYING]';
+      heldTimer = setTimeout(() => holdVideo(false), 500);
+    });
+  }
+
+  function openProject(key, node, hold) {
     const data = PROJECTS[key];
     if (!data) return;
     $('#detail-tags').textContent = data.tag;
@@ -847,14 +889,20 @@
     const v = el.detailVideo;
     v.poster = data.poster;
     v.src = data.video;
+    v.muted = false; // (see the play button: a start without sound is for that once)
     openNode = node || null;
     const show = () => {
       s.detail = true;
       doc.classList.add('is-detail');
       openScene(el.detail);
+      // (held for a guide that has given up meanwhile, the scene only now up: it starts)
+      const guide = window.avatarGuide;
+      if (el.detail.classList.contains('is-held') && !(guide && guide.perching && guide.perching())) el.detailPlay.click();
     };
+    holdVideo(!!hold && !!el.detailPlay);
     if (portal(node ? $('.project-media', node) : null, $('.video-frame', el.detail), show)) el.detail.classList.add('via-portal');
     else show();
+    if (hold && el.detailPlay) return;
     const p = v.play();
     if (p && p.catch) p.catch(() => {});
   }

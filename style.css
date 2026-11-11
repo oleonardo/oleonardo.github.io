@@ -1998,6 +1998,66 @@ html[data-sound="on"] .sound-bars i {
     linear-gradient(var(--c), var(--c)) bottom right / 1px 18px no-repeat;
 }
 
+/* The case's video held for the guide's shot (app.js: holdVideo): the play button in
+   the middle of the frame, pinging like the one on the card; hit (or clicked), it
+   flares and goes. */
+.scene-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
+  padding: 0;
+  border: 1px solid var(--amber);
+  border-radius: 50%;
+  background: var(--amber);
+  color: var(--amber-ink);
+  cursor: pointer;
+  box-shadow: 0 12px 44px -10px rgba(0, 0, 0, 0.85);
+  transition:
+    transform 0.4s var(--ease-out),
+    opacity 0.4s ease;
+}
+
+.scene-play[hidden] {
+  display: none;
+}
+
+.scene-play::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--amber);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: ping 1.8s var(--ease-out) infinite;
+}
+
+.scene-play svg {
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+}
+
+.scene-play:hover {
+  transform: scale(1.08);
+}
+
+.scene-play.is-lit {
+  transform: scale(1.9);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scene-play.is-lit::before {
+  animation: none;
+  opacity: 0;
+}
+
 .hud-rec,
 .hud-telemetry {
   position: absolute;
