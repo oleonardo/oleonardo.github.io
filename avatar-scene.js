@@ -15,25 +15,54 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const MODEL = {
   url: 'assets/avatar/placeholder-robot.glb',
+  // Two faces that meet at less than this (rad) are one curved surface, shaded smooth;
+  // sharper than that is an edge of the armor, and stays one.
+  crease: 0.9,
+  // The suit's build, in body heights (see "The armor"). A chibi: half of it is helmet,
+  // an egg taller than it is wide, its chin down on the chest; under that a small slim
+  // body, a chest that narrows to the waist, thin arms that end in heavy gauntlets,
+  // legs that end in boots (the lower leg is the boot: no foot on the end of it).
+  //   head   the helmet: how wide and how deep it is, and how high off the ground its
+  //          chin is (its crown is the old head's)
+  //   body   how wide and how deep the body is (slimmer than the model's torso, whose
+  //          height it keeps); chest: how far its front stands out past that depth
+  //   core   the core in the chest: how high up the body, and its radius in the body's width
+  //   thigh  the thigh under its plates, at the knee and at the hip
+  //   boot   the boot's radius at the knee, down the shin, and at the bell of its foot
+  //   arm    the upper arm's sleeve; fore: the forearm under its plates, at the elbow
+  //          and at the wrist; pad: a pauldron's reach
+  //   reach  the model's forearms are as long as its legs: the suit's are this much of
+  //          them; hand: and its hands, which shrink with them, this much bigger again
+  suit: { head: { w: 0.44, d: 0.49, chin: 0.5 }, body: [0.22, 0.2], chest: 0.06, core: [0.54, 0.132], thigh: [0.04, 0.046], boot: [0.047, 0.056, 0.08], arm: 0.037, fore: [0.031, 0.049], pad: 0.068, reach: 0.6, hand: 1.62 },
   // Abissal palette: trench-blue shell, steel-blue joints, softly glowing teal eyes.
   palette: {
-    Main: { color: 0x1b2b44, metal: 0.5, rough: 0.38 },
-    Grey: { color: 0x3d5a78, metal: 0.4, rough: 0.42 },
+    // (what is left of the model's own shell, its hands, and what was built to match it,
+    // the jetpack, the sockets of its cores: the suit's metals, see below)
+    Main: { color: 0x0e6f80, metal: 0.92, rough: 0.3, rim: 0.2 },
+    Grey: { color: 0x8296ab, metal: 0.95, rough: 0.32, rim: 0.15 },
     Black: { color: 0x050810, emissive: 0x63e6d2, glow: 0.6 },
     Jet: { color: 0x0a0f18, emissive: 0xffb35c, glow: 0 }, // the jetpack's nozzles (glow set by the thrust)
     Pad: { color: 0x0a0f18, metal: 0.15, rough: 0.75 }, // the headphones' cushions
     Beat: { color: 0x050810, emissive: 0x63e6d2, glow: 0 }, // the ring on each cup (glow set by the music)
+    // The suit (see "The armor"): painted metal under a clear coat. Its shell is the
+    // site's teal, deep; its faceplate and trim the site's amber, as a pale gold.
+    // (rim: how much of the body's teal edge-glow a look takes: metal shows its own light)
+    Suit: { color: 0x0e6f80, metal: 0.92, rough: 0.3, rim: 0.2 },
+    Gold: { color: 0xd9a55c, metal: 0.95, rough: 0.26, rim: 0.12 },
+    Steel: { color: 0x8296ab, metal: 0.95, rough: 0.32, rim: 0.15 }, // soles
+    Under: { color: 0x05080d, metal: 0.15, rough: 0.8, rim: 0 }, // the under-suit: the dark between the plates, the joints
+    Eye: { color: 0x050810, emissive: 0x63e6d2, glow: 1.15 }, // the eyes in it (brightness set by the face)
   },
   // Headphones, measured in the head's own box so another head needs no new numbers:
   // across in half-widths from its middle, up in heights from its underside; sizes in
   // half-widths.
   phones: {
     reach: 1.13, // a cup's middle, out from the head's middle
-    ear: 0.36, // the ears' height
-    crown: 1.13, // the top of the band's arch
+    ear: 0.46, // the cups' height: where the head is widest (the band follows the head's outline up from there, and over)
     cup: [0.3, 0.15], // a cup's radius and thickness (slim: the right arm swings close by in Wave and Dance)
     pad: [0.33, 0.06], // its cushion
     ring: [0.19, 0.026], // the glowing ring on its outer face
@@ -65,9 +94,16 @@ const MODEL = {
   // ...and only its fingers come over the X's rim: each from the wrist out (the bone to
   // its knuckle, then the finger's two)
   grip: [['Palm1.R', 'Index.R', 'Index2.R'], ['Palm2.R', 'Middle1.R', 'Middle2.R'], ['Palm3.R', 'Ring1.R', 'Ring2.R']],
-  // The left palm, where the port it fires from opens: the wrist bone and the middle
-  // finger's two (the palm lies along the first, and faces the way the finger curls)
-  palm: ['Palm2.L', 'Middle1.L', 'Middle2.L'],
+  // The palms, where the port it fires from opens: for each hand, its wrist bone and
+  // the middle finger's two (the palm lies along the first, and faces the way the finger curls)
+  palms: [['Palm2.L', 'Middle1.L', 'Middle2.L'], ['Palm2.R', 'Middle1.R', 'Middle2.R']],
+  // ...and the hand opened flat round it: for each hand (by its wrist bone), its fingers,
+  // each from the wrist out (the bone to its knuckle, then the finger's two), and its
+  // thumb's two
+  hands: [
+    { wrist: 'Palm2.L', fingers: [['Palm1.L', 'Index.L', 'Index2.L'], ['Palm2.L', 'Middle1.L', 'Middle2.L'], ['Palm3.L', 'Ring1.L', 'Ring2.L']], thumb: ['Thumb.L', 'Thumb2.L'] },
+    { wrist: 'Palm2.R', fingers: [['Palm1.R', 'Index.R', 'Index2.R'], ['Palm2.R', 'Middle1.R', 'Middle2.R'], ['Palm3.R', 'Ring1.R', 'Ring2.R']], thumb: ['Thumb.R', 'Thumb2.R'] },
+  ],
 };
 
 const CLIPS = {
@@ -158,6 +194,33 @@ export async function start({ reduced = false } = {}) {
   rimLight.position.set(-4, 3, -6);
   scene.add(rimLight);
 
+  // What its armor reflects: there is no room round it to mirror, so one is made, the
+  // site's own lights hung in the dark (a broad pale key above and in front, the teal
+  // rim behind, an amber glow low at one side, a sea-blue lift from under it), and
+  // filtered once into an environment for every metal in the scene.
+  {
+    const pm = new THREE.PMREMGenerator(renderer);
+    const room = new THREE.Scene();
+    room.add(new THREE.Mesh(new THREE.SphereGeometry(40, 24, 12), new THREE.MeshBasicMaterial({ color: 0x04070d, side: THREE.BackSide })));
+    const panel = (w, h, color, k, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(k), side: THREE.DoubleSide }));
+      m.position.set(x, y, z);
+      m.lookAt(0, 0, 0);
+      room.add(m);
+    };
+    panel(26, 12, 0xdbe8f4, 2.4, 6, 17, 14);
+    panel(12, 26, 0x63e6d2, 3, -19, 4, -10);
+    panel(8, 8, 0xffb35c, 2.2, 17, -7, 7);
+    panel(30, 8, 0x2d8da4, 1.1, 0, -15, 2);
+    // (and what polished metal needs to look polished: long bright strips to run down it)
+    panel(4, 30, 0xffffff, 3.2, -14, 6, 16);
+    panel(4, 30, 0xffffff, 2.2, 15, 4, 14);
+    panel(40, 3, 0xcfe6ff, 1.6, 0, 24, 0);
+    scene.environment = pm.fromScene(room, 0.03).texture;
+    pm.dispose();
+    room.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  }
+
   // ---------------------------------------------------------------------------
   // Model
   // ---------------------------------------------------------------------------
@@ -202,11 +265,24 @@ export async function start({ reduced = false } = {}) {
   const arms = MODEL.arms.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean));
   // (the fingers that grip the X: wrist bone, the two of the finger, and its tip)
   const fingers = MODEL.grip.map((chain) => chain.map((n) => bonesByName[bare(n)])).filter((c) => c.every(Boolean)).map((c) => [...c, c[2].children[0] || null]);
+  // (each arm's hand, to open flat: its fingers the same way, and its thumb's two and tip)
+  const hands = arms.map((arm) => {
+    const H = MODEL.hands.find((h) => bonesByName[bare(h.wrist)] === arm[2]);
+    if (!H) return null;
+    const chains = [...H.fingers, H.thumb].map((c) => c.map((n) => bonesByName[bare(n)]));
+    if (!chains.every((c) => c.every(Boolean))) return null;
+    const thumb = chains.pop();
+    return { fingers: chains.map((c) => [...c, c[2].children[0] || null]), thumb: [...thumb, thumb[1].children[0] || null] };
+  });
   model.traverse((o) => {
     if (o.isBone && o.name === MODEL.headBone && !headBone) headBone = o;
     if (o.isBone && o.name === MODEL.neckBone && !neckBone) neckBone = o;
     if (!o.isMesh) return;
     o.frustumCulled = false;
+    // (the model is cut in flat facets: its curves are shaded round, its real edges kept)
+    // (the model is cut at a hundredth of its size, finer than that pass can tell two
+    // corners apart: it is done at a thousand times that, and put back)
+    if (!o.morphTargetDictionary) o.geometry = toCreasedNormals(o.geometry.clone().scale(1e3, 1e3, 1e3), MODEL.crease).scale(1e-3, 1e-3, 1e-3);
     o.material = abyssalize(o.material, shared);
     meshes.push(o);
     if (o.name === MODEL.face.mesh && o.morphTargetDictionary) faceMesh = o;
@@ -334,6 +410,21 @@ export async function start({ reduced = false } = {}) {
   // (back is -z), then handed to the torso bone. Its parts take the same Abissal look,
   // dissolve and card masks as the body; the nozzles' amber glow follows the thrust.
   const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0, lit: false };
+  // (the core in its chest, built with the jetpack below: its ring, its middle, the
+  // light it throws; flare: how hard it is driven just now, by what the palm fires)
+  const chest = { group: null, ring: null, mid: null, halo: null, flare: 0 };
+  // (the suit's body is slimmer than the model's: what is built on the torso, the
+  // jetpack, the core and the suit's own plates, is built to this: the model's torso
+  // box, made so wide and so deep about its own middle)
+  const slim = (b) => {
+    if (!b) return b;
+    const [bw, bd] = MODEL.suit.body.map((k) => k * modelH), cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    b.min.x = cx - bw / 2;
+    b.max.x = cx + bw / 2;
+    b.min.z = cz - bd / 2;
+    b.max.z = cz + bd / 2;
+    return b;
+  };
   {
     let torsoBone = null, torsoMesh = null;
     model.traverse((o) => { if (!torsoBone && o.isBone && /^Torso(_\d+)?$/.test(bare(o.name))) torsoBone = o; });
@@ -343,7 +434,7 @@ export async function start({ reduced = false } = {}) {
       model.updateMatrixWorld(true);
       const tb = new THREE.Box3().setFromObject(torsoMesh);
       const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
-      tb.applyMatrix4(inv);
+      slim(tb.applyMatrix4(inv));
       const tw = tb.max.x - tb.min.x, th = tb.max.y - tb.min.y;
       const look = (name) => abyssalize(new THREE.MeshStandardMaterial({ name }), shared);
       const shell = look('Main'), metal = look('Grey'), glow = look('Jet');
@@ -354,7 +445,7 @@ export async function start({ reduced = false } = {}) {
       };
       const flameOut = flame(0xffb35c, 0.5), flameIn = flame(0xfff0d8, 0.85);
       const g = new THREE.Group();
-      const r = tw * 0.17, len = th * 0.62;
+      const r = tw * 0.19, len = th * 0.62;
       const plate = new THREE.Mesh(new THREE.BoxGeometry(tw * 0.62, len * 1.05, r * 0.5), metal);
       g.add(plate);
       for (const sx of [-1, 1]) {
@@ -393,7 +484,439 @@ export async function start({ reduced = false } = {}) {
       g.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
       jet.group = g;
       jet.glow = glow;
+      // The core in its chest: what all of it runs on, and what the port in its palm
+      // draws from. On a dark face, a ring and a middle that glow the way its eyes do
+      // (teal, the middle near white), with a soft light thrown out past its housing.
+      // It breathes slowly, burns up with the jets and flares when the palm fires (see
+      // stepChest). Built in model space from the torso's own size (front is +z) and
+      // handed to the torso bone, like the jetpack; same looks, dissolve and card masks
+      // as the body.
+      const R = tw * MODEL.suit.core[1];
+      const c = new THREE.Group();
+      const ringM = look('Black'), midM = look('Black');
+      midM.emissive.setHex(0xeafffb);
+      const put = (mesh, z) => { mesh.position.z = z; c.add(mesh); return mesh; };
+      // (down in a well of the breastplate: the suit builds the well round it and sets
+      // it at its floor, see "The armor". Here: its dark face, its ring, its middle,
+      // and its light)
+      put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.84, 32), look('Pad')), 0);
+      put(new THREE.Mesh(new THREE.RingGeometry(R * 0.42, R * 0.62, 40), ringM), R * 0.02);
+      put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.28, 28), midM), R * 0.035);
+      const halo = put(new THREE.Mesh(new THREE.CircleGeometry(R * 1.5, 28), flame(0x63e6d2, 0)), R * 0.3);
+      halo.renderOrder = 1;
+      c.userData.halo = halo;
+      c.position.set((tb.min.x + tb.max.x) / 2, tb.min.y + th * MODEL.suit.core[0], tb.max.z + (tb.max.z - tb.min.z) * MODEL.suit.chest);
+      model.add(c);
+      torsoBone.attach(c);
+      c.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      Object.assign(chest, { group: c, ring: ringM, mid: midM, halo: halo.material });
     }
+  }
+
+  // The armor. The model is a toy robot cut in flat facets, a box of a head on a stick
+  // body: the guide wears a suit over it. Every rigid part of the model is hidden (it
+  // stays where it is: everything that measures the body, its floor, its soles, the
+  // motes it dissolves into, still reads the old shape) and in its place, on the same
+  // bones, is a smooth shell built here from the model's own measures and MODEL.suit: a
+  // helmet with a faceplate and two eyes of light, a slim breastplate, pauldrons, arms
+  // with heavy cuffs and legs that end in boots: a chibi, nearly half of it helmet. Its
+  // hands are the model's own, out of the suit's cuffs. The suit is painted metal under a clear coat (teal,
+  // with a pale gold faceplate and steel joints): no pattern on it, only the room's
+  // lights running over its curves. Same dissolve and card masks as the body.
+  const visor = { eyes: [], mat: null, shell: null, y0: 0, blink: 2 + Math.random() * 3 };
+  {
+    model.updateMatrixWorld(true);
+    const S = MODEL.suit;
+    const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+    const V = (o) => model.worldToLocal(o.getWorldPosition(new THREE.Vector3()));
+    const look = (name) => Object.assign(abyssalize(new THREE.MeshPhysicalMaterial({ name, clearcoat: name === 'Under' ? 0 : 1, clearcoatRoughness: 0.14 }), shared), { side: THREE.DoubleSide }); // (the under-suit is matte: no coat on it)
+    // (an original part's box, in model space: by its name, or its group's)
+    const boxOf = (name) => {
+      const b = new THREE.Box3();
+      for (const o of meshes) {
+        let own = false;
+        for (let n = o; n && !n.isBone; n = n.parent) if (bare(n.name).replace(/_\d+$/, '') === bare(name)) own = true;
+        if (own) b.union(new THREE.Box3().setFromObject(o));
+      }
+      return b.isEmpty() ? null : b.applyMatrix4(inv);
+    };
+    const hang = (bone, obj) => {
+      model.add(obj);
+      bone.attach(obj);
+      obj.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      return obj;
+    };
+    // (an outline as a function: the radius at a height, both 0..1, through a smooth curve)
+    const radius = (outline) => {
+      const pts = new THREE.SplineCurve(outline.map(([r, y]) => new THREE.Vector2(r, y))).getPoints(120);
+      return (y) => {
+        let i = 1;
+        while (i < pts.length - 1 && pts[i].y < y) i++;
+        const a = pts[i - 1], b = pts[i], k = clamp01((y - a.y) / Math.max(1e-6, b.y - a.y));
+        return a.x + (b.x - a.x) * k;
+      };
+    };
+    // A patch of shell, cut to any outline: u across and v up it, each 0..1, put where
+    // `at(u, v, out)` says, and shaded smooth.
+    const patch = (nu, nv, at) => {
+      const pos = new Float32Array((nu + 1) * (nv + 1) * 3), idx = [];
+      const P = new THREE.Vector3();
+      for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
+        const k = j * (nu + 1) + i;
+        at(i / nu, j / nv, P).toArray(pos, k * 3);
+        if (i < nu && j < nv) idx.push(k, k + 1, k + nu + 1, k + 1, k + nu + 2, k + nu + 1);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      return g;
+    };
+    const suit = look('Suit'), gold = look('Gold'), steel = look('Steel'), under = look('Under');
+    const T = modelH, UP = new THREE.Vector3(0, 1, 0), O = new THREE.Vector3(); // (T: lengths below are in body heights)
+    // (what is built here keeps its edges: two faces that meet at more than this are a
+    // plate's rim, not a curve. Done at a thousand times the size, as for the model)
+    const crisp = (g) => toCreasedNormals(g.scale(1e3, 1e3, 1e3), 0.5).scale(1e-3, 1e-3, 1e-3);
+    // (which way is out of a surface, at a place on it. inside: a point within it, or
+    // what gives one for a place: out is away from that)
+    const q0 = new THREE.Vector3(), q1 = new THREE.Vector3(), q2 = new THREE.Vector3(), q3 = new THREE.Vector3(), q4 = new THREE.Vector3();
+    const outOf = (at, u, v, inside, n) => {
+      const e = 1e-3;
+      at(Math.min(1, u + e), v, q0).sub(at(Math.max(0, u - e), v, q1));
+      at(u, Math.min(1, v + e), q2).sub(at(u, Math.max(0, v - e), q1));
+      n.crossVectors(q0, q2);
+      at(u, v, q3);
+      q3.sub(typeof inside === 'function' ? inside(q3, q4) : inside);
+      if (!(n.length() > 1e-3 * q0.length() * q2.length())) n.copy(q3); // (where the surface closes to a point: straight out)
+      n.normalize();
+      return n.dot(q3) < 0 ? n.negate() : n;
+    };
+    // A plate of armor: a piece of shell with a thickness, laid on a surface. at(u, v,
+    // out) is the surface under it, u across and v up, each 0..1 (any outline: by where
+    // it puts them); the plate stands t off that, and its rim is cut in two: a chamfer
+    // `edge` wide down most of its thickness, which is what catches the light, then a
+    // short wall down into what it lies on (lengths). What makes the suit armor is
+    // these: plate over plate, each rim a line of light, the dark between them.
+    //   base    it lies on another plate: that one's thickness
+    //   keep    sides whose rim is left square (l r b t): where it closes to a point
+    //   wrap    it goes all the way round in u (a band: no rim that way)
+    //   swell   (u, v) => how much of t, there
+    //   solid   (u, v) => no rim there (where two of its sides meet each other)
+    //   gap     under it, this much wider all round, a strip of the dark it is laid on
+    //   dark    that strip's look (the under-suit's, if not given)
+    const plate = (nu, nv, at, t, edge, mat, opt = {}) => {
+      const { base = 0, keep = '', wrap = false, inside = O, swell = null, solid = null, gap = 0 } = opt;
+      const run = (f) => {
+        let L = 0;
+        f(0, q0);
+        for (let i = 1; i <= 8; i++) { L += q0.distanceTo(f(i / 8, q1)); q0.copy(q1); }
+        return Math.max(L, 1e-9);
+      };
+      const lenU = run((k, o) => at(k, 0.5, o)), lenV = run((k, o) => at(0.5, k, o));
+      const rims = { l: !wrap && !keep.includes('l'), r: !wrap && !keep.includes('r'), b: !keep.includes('b'), t: !keep.includes('t') };
+      const cuts = (n, b, lo, hi) => {
+        const a = lo ? b : 0, z = hi ? 1 - b : 1, c = [];
+        if (lo) c.push(0, 0); // (twice: the wall's foot and the chamfer's, one over the other)
+        for (let i = 0; i <= n; i++) c.push(a + (z - a) * (i / n));
+        if (hi) c.push(1, 1);
+        return c;
+      };
+      const us = cuts(nu, Math.min(0.3, edge / lenU), rims.l, rims.r), vs = cuts(nv, Math.min(0.3, edge / lenV), rims.b, rims.t);
+      const W = us.length, H = vs.length, pos = new Float32Array(W * H * 3), idx = [], n = new THREE.Vector3(), p = new THREE.Vector3();
+      for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+        const u = us[i], v = vs[j], k = j * W + i;
+        // (how far in from a rim it is: 0 the wall's foot, 1 the chamfer's, more: the plate's face)
+        const m = solid && solid(u, v) ? 2 : Math.min(rims.l ? i : 2, rims.r ? W - 1 - i : 2, rims.b ? j : 2, rims.t ? H - 1 - j : 2), sw = swell ? swell(u, v) : 1;
+        outOf(at, u, v, inside, n);
+        at(u, v, p).addScaledVector(n, base + (m === 0 ? -0.3 * t : t * sw * (m === 1 && sw > 0 ? 0.4 : 1))).toArray(pos, k * 3);
+        if (i < W - 1 && j < H - 1) idx.push(k, k + 1, k + W, k + 1, k + W + 1, k + W);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setIndex(idx);
+      const mesh = new THREE.Mesh(crisp(geo), mat);
+      if (!gap) return mesh;
+      const mu = wrap ? 0 : (2 * gap) / lenU, mv = (2 * gap) / lenV, g = new THREE.Group();
+      g.add(mesh, plate(nu, nv, (u, v, o) => at(0.5 + (u - 0.5) * (1 + mu), 0.5 + (v - 0.5) * (1 + mv), o), t * 0.3, edge * 0.5, opt.dark || under, { base, keep, wrap, inside, solid, swell }));
+      return g;
+    };
+    // (a piece turned round an axis, from its outline: [radius, height] up it)
+    const turned = (pts, mat, seg = 40) => new THREE.Mesh(crisp(new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg)), mat);
+    // (a part's pieces made one mesh a look: fewer things to draw. Not those that must
+    // stay themselves: the eyes, which blink; the helmet's shell, which is measured)
+    const fuse = (root) => {
+      root.updateMatrixWorld(true);
+      const back = new THREE.Matrix4().copy(root.matrixWorld).invert(), by = new Map(), gone = [];
+      root.traverse((o) => {
+        if (!o.isMesh || o.userData.own) return;
+        const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+        for (const k of Object.keys(geo.attributes)) if (k !== 'position' && k !== 'normal') geo.deleteAttribute(k);
+        geo.applyMatrix4(new THREE.Matrix4().multiplyMatrices(back, o.matrixWorld));
+        if (!by.has(o.material)) by.set(o.material, []);
+        by.get(o.material).push(geo);
+        gone.push(o);
+      });
+      for (const o of gone) o.removeFromParent();
+      for (const [mat, geos] of by) root.add(new THREE.Mesh(mergeGeometries(geos), mat));
+      return root;
+    };
+    // A limb's own frame: its foot on the joint `lo`, +y up it to the joint `hi` (L
+    // long). round: a place on it, so far round (0: its front) and so high (0..1), its
+    // radius by height; axis: its middle, there; toward: how far round it a direction
+    // of the model's lies.
+    const stand = (lo, hi) => {
+      const A = V(lo), B = V(hi), g = new THREE.Group();
+      g.position.copy(A);
+      g.quaternion.setFromUnitVectors(UP, B.clone().sub(A).normalize());
+      const back = g.quaternion.clone().invert();
+      return { g, L: A.distanceTo(B), toward: (x, y, z) => { const d = new THREE.Vector3(x, y, z).applyQuaternion(back); return Math.atan2(d.x, d.z); } };
+    };
+    const round = (L, rf) => (phi, y, o) => { const r = rf(y); return o.set(r * Math.sin(phi), y * L, r * Math.cos(phi)); };
+    const axis = (p, o) => o.set(0, p.y, 0);
+    const EDGE = 0.008 * T;
+    // (a band right round a limb, from one height to another; a plate on one side of
+    // it; the under-suit of it; a ball of a joint)
+    const band = (S0, y0, y1, t, mat, opt) => plate(36, Math.max(2, Math.round((y1 - y0) * 14)), (u, v, o) => S0(u * TAU, y0 + (y1 - y0) * v, o), t * T, EDGE, mat, { wrap: true, inside: axis, ...opt });
+    const shield = (S0, phi0, half, y0, y1, t, mat, opt) => plate(16, Math.max(4, Math.round((y1 - y0) * 20)), (u, v, o) => S0(phi0 + (u * 2 - 1) * half(v), y0 + (y1 - y0) * v, o), t * T, EDGE, mat, { inside: axis, ...opt });
+    const tube = (S0, mat) => new THREE.Mesh(patch(28, 10, (u, v, o) => S0(u * TAU, v, o)), mat);
+    const ball = (r, mat, x = 0, y = 0, z = 0) => new THREE.Mesh(new THREE.SphereGeometry(r * T, 28, 18).translate(x, y, z), mat);
+
+    // The helmet. Not a ball: an egg, taller than it is wide, broadest at the cheeks, a
+    // little under its middle, drawn in above to the crown and below to a small chin
+    // (the headphones are cut to it, below). Its shell is the suit's teal, and on it,
+    // plate over plate: a mask of pale gold from the cheekbones down to the chin, a chin
+    // piece under that; over the mask a heavy brow, gold too, up to the top of the
+    // forehead, whose lower edge slants down to the middle, and under that edge the two
+    // eyes of light (what they do is the face's: see the visor, below); a raised plate
+    // from a notch in the brow back over the crown; a guard round each side of the jaw
+    // and one round the nape, with the dark of the under-suit in the hollow of each
+    // cheek, between mask and guard. No ears: the headphones sit on its sides.
+    const hb = headBone ? boxOf('Head') : null;
+    if (hb) {
+      // (the old head was a wide flat box: this is narrower than that and taller, its
+      // crown where the old one was, its chin lower, over the neck)
+      const y0 = S.head.chin * T, w = S.head.w * T, h = hb.max.y - y0, d = S.head.d * T;
+      const R = radius([[0.42, 0], [0.7, 0.04], [0.9, 0.12], [0.98, 0.24], [1, 0.42], [0.975, 0.58], [0.87, 0.72], [0.69, 0.84], [0.43, 0.94], [0.001, 1]]);
+      // (a place on it: so far round from the front, so high)
+      const skin = (phi, y, out) => {
+        const r = R(y), jaw = 0.9 + 0.1 * smooth(clamp01(y / 0.3)), c = Math.cos(phi);
+        return out.set(r * Math.sin(phi) * (w / 2) * jaw, y * h, r * c * (d / 2) * (c > 0 ? 0.94 : 1));
+      };
+      const g = new THREE.Group(), mid = new THREE.Vector3(0, h * 0.5, 0);
+      g.position.set((hb.min.x + hb.max.x) / 2, y0, (hb.min.z + hb.max.z) / 2);
+      visor.shell = new THREE.Mesh(patch(72, 44, (u, v, o) => skin((u * 2 - 1) * Math.PI, v, o)), suit); // (what the headphones are cut to)
+      visor.shell.userData.own = true;
+      g.add(visor.shell);
+      const P = (nu, nv, at, t, mat, opt) => plate(nu, nv, at, t * T, 0.011 * T, mat, { inside: mid, gap: 0.006 * T, ...opt });
+      const MASK = 0.011, BROW = 0.022;
+      for (const side of [-1, 1]) g.add(P(10, 10, (u, v, o) => skin(side * (0.3 + 0.95 * u), 0.04 + 0.36 * v, o), 0.002, under, { gap: 0 })); // (the hollow of a cheek)
+      g.add(P(12, 6, (u, v, o) => skin((u * 2 - 1) * (0.36 + 0.1 * v), 0.02 + 0.13 * v, o), 0.006, gold, { gap: 0 })); // (the chin piece)
+      // (the mask: narrow at the chin, out along the jaw, and wide at once at the cheekbone)
+      const fw = (y) => (y < 0.36 ? 0.36 + 0.36 * smooth(clamp01((y - 0.06) / 0.3)) : 0.72 + 0.48 * smooth(clamp01((y - 0.36) / 0.07)));
+      g.add(P(44, 30, (u, v, o) => { const y = 0.07 + 0.49 * v; return skin((u * 2 - 1) * fw(y), y, o); }, MASK, gold));
+      // (the brow: its lower edge just over the eyes, down to the middle, level past them.
+      // Not as wide as the mask is at the cheekbones: those stand out past it)
+      const yb = (phi) => clamp(0.395 + 0.215 * (Math.abs(phi) - 0.15), 0.395, 0.515);
+      g.add(P(44, 16, (u, v, o) => { const phi = (u * 2 - 1) * 1.04 * (1 - 0.08 * v), lo = yb(phi); return skin(phi, lo + (0.8 - lo) * v, o); }, BROW, gold));
+      // (the plate over the crown: from its notch in the brow, widening over the top and
+      // down the back. So wide, whatever the helmet is there: at the very top, all of it)
+      const xw = (v) => w * (0.085 + 0.085 * smooth(clamp01(v / 0.3))) * (1 - 0.25 * smooth(clamp01((v - 0.75) / 0.25)));
+      const cy = (v) => Math.min(v > 0.5 ? 1 - (v - 0.5) * 1.3 : 0.64 + v * 0.72, 0.9995);
+      const ca = (v) => Math.asin(Math.min(1, xw(v) / Math.max(1e-9, R(cy(v)) * (w / 2))));
+      g.add(P(10, 48, (u, v, o) => skin(v > 0.5 ? Math.PI - (u * 2 - 1) * ca(v) : (u * 2 - 1) * ca(v), cy(v), o), 0.013, suit,
+        { gap: 0, solid: (u, v) => ca(v) > 1.45, swell: (u, v) => 1 + 1.6 * (1 - smooth(clamp01((v - 0.2) / 0.1))) })); // (thick at the notch: it stands over the brow there)
+      for (const side of [-1, 1]) {
+        // (a jaw guard: its front edge along the mask's, a slot of the dark between them, wider at the top)
+        g.add(P(18, 10, (u, v, o) => { const y = 0.02 + 0.33 * v, a = fw(y) + 0.09 + 0.14 * v; return skin(side * (a + (1.94 - a) * u), y, o); }, 0.011, suit));
+        g.add(P(10, 8, (u, v, o) => skin(side * (1.3 + 0.72 * u), 0.39 + (0.25 - 0.06 * u) * v, o), 0.008, suit)); // (a temple's plate, where an ear would be)
+      }
+      g.add(P(24, 6, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.16, 0.02 + 0.2 * v, o), 0.009, suit)); // (the nape's)
+      const eyeM = look('Eye'), n = new THREE.Vector3();
+      for (const side of [-1, 1]) {
+        // (an eye: from near the middle out and up, thicker toward its outer end; on the
+        // mask, under the brow's edge)
+        const at = (u, v, o) => skin(side * (0.15 + 0.52 * u), 0.365 + 0.085 * u + (v - 0.5) * (0.04 + 0.05 * u), o);
+        const eye = new THREE.Mesh(patch(12, 2, (u, v, o) => { outOf(at, u, v, mid, n); return at(u, v, o).addScaledVector(n, (MASK + 0.003) * T); }), eyeM);
+        // (its socket: a thin frame of dark round it)
+        g.add(new THREE.Mesh(patch(12, 2, (u, v, o) => { const a = -0.035 + 1.07 * u, b = -0.13 + 1.26 * v; outOf(at, a, b, mid, n); return at(a, b, o).addScaledVector(n, (MASK + 0.0015) * T); }), under));
+        eye.userData.own = true;
+        g.add(eye);
+        visor.eyes.push(eye);
+      }
+      Object.assign(visor, { mat: eyeM, y0: h * 0.41 });
+      hang(headBone, fuse(g));
+    }
+
+    // The body: small and slim (slimmer than the model's: see slim), broadest at the
+    // chest and drawn in to the waist. Under all of it the dark under-suit; on that, a
+    // plate on each side of the chest and between them, over their edges, the sternum
+    // plate, the thickest, and in the middle of that the core: in a well countersunk in
+    // the plate (so the core is in the armor, not on it); a back plate (the jetpack is
+    // on that); under the chest two lames round the waist, the upper over the lower, a
+    // gold plate on each flank; then the under-suit, bare, and a plate round the hips;
+    // a collar under the helmet's chin.
+    const tb = slim(boxOf('Torso')), body = bonesByName.Torso_1 || bonesByName.Torso || rigBody;
+    if (tb && body) {
+      const w = tb.max.x - tb.min.x, h = tb.max.y - tb.min.y, d0 = tb.max.z - tb.min.z, d = d0 * (1 + S.chest);
+      const TR = radius([[0.001, 0], [0.6, 0.015], [0.8, 0.08], [0.72, 0.24], [0.78, 0.36], [0.96, 0.52], [1, 0.66], [0.99, 0.82], [0.8, 0.95], [0.45, 1]]);
+      const K = 0.92, STERN = 0.017; // (the under-suit, to the body's size; the sternum plate's thickness: the core is sunk in that)
+      const skin = (phi, v, o) => { const r = TR(v) * K; return o.set(r * Math.sin(phi) * (w / 2), v * h, r * Math.cos(phi) * (d / 2)); };
+      const g = new THREE.Group();
+      g.position.set((tb.min.x + tb.max.x) / 2, tb.min.y, (tb.min.z + tb.max.z) / 2 + (d0 * S.chest) / 2);
+      g.add(new THREE.Mesh(patch(64, 36, (u, v, o) => skin((u * 2 - 1) * Math.PI, v, o)), under));
+      const P = (nu, nv, at, t, mat, opt) => plate(nu, nv, at, t * T, EDGE, mat, { inside: axis, gap: 0.005 * T, ...opt });
+      const dip = (phi) => 0.04 * (1 - smooth(clamp01(Math.abs(phi) / 1.3))); // (a chevron: lowest in the middle)
+      [[0.32, 0.43, 0.0095], [0.24, 0.34, 0.0075]].forEach(([a, b, t]) =>
+        g.add(P(48, 5, (u, v, o) => { const phi = (u * 2 - 1) * Math.PI; return skin(phi, a + (b - a) * v - dip(phi), o); }, t, suit, { wrap: true }))); // (the lames)
+      g.add(P(48, 5, (u, v, o) => skin((u * 2 - 1) * Math.PI, 0.03 + 0.12 * v, o), 0.009, suit, { wrap: true })); // (the plate round the hips: between it and the lames, the under-suit, bare)
+      for (const side of [-1, 1]) g.add(P(12, 6, (u, v, o) => skin(side * (1.05 + 0.7 * u), 0.33 + 0.14 * v, o), 0.004, gold, { base: 0.0095 * T, gap: 0 })); // (a flank's)
+      const low = (phi) => 0.42 + 0.08 * smooth(clamp01(Math.abs(phi) / 1.25));
+      for (const side of [-1, 1]) g.add(P(24, 16, (u, v, o) => { const phi = side * (0.34 + 0.94 * u), lo = low(phi); return skin(phi, lo + (0.965 - lo) * v, o); }, 0.01, suit)); // (a side of the chest)
+      // (the sternum plate: a keystone, widest at the top. Sunk to nothing where the
+      // core's well is cut in it, see below)
+      const yc = S.core[0] * h, Rc = S.core[1] * w, bp = new THREE.Vector3();
+      const stern = (u, v, o) => skin((u * 2 - 1) * (0.42 + 0.22 * v), 0.34 + 0.625 * v, o);
+      g.add(P(28, 30, stern, STERN, suit, { swell: (u, v) => { stern(u, v, bp); return -0.2 + 1.2 * smooth(clamp01((Math.hypot(bp.x, bp.y - yc) / Rc - 1) / 0.5)); } }));
+      g.add(P(40, 14, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.8, 0.42 + 0.545 * v, o), 0.01, suit)); // (the back plate)
+      g.add(P(48, 3, (u, v, o) => skin(u * TAU, 0.9 + 0.1 * v, o), 0.014, suit, { wrap: true, gap: 0 })); // (the collar)
+      // The core's housing. The core is IN the sternum plate: a well countersunk in it,
+      // nothing standing above the plate and no other metal round it. From the plate's
+      // face a chamfer down and in to the well's mouth, a flat seat round the mouth, and
+      // a short wall down to the floor, just over the under-suit: the core lies on that.
+      // The plate is not flat, and it leans back toward the waist: the well is sunk
+      // square to the plate where the core is (its mouth one flat ring, under the
+      // plate's face all round), and the core lies square to that.
+      if (chest.group) {
+        const c = chest.group, top = new THREE.Vector3(), M = 48;
+        const face = (x, y, o) => { const v = y / h, r = TR(v) * K * (w / 2); return skin(Math.asin(clamp(x / r, -1, 1)), v, o).setZ(o.z + STERN * T); }; // (the plate's face, at a place across and up it)
+        // (the plate round the core: its middle there, and which way it faces)
+        const mid = face(0, yc, new THREE.Vector3()), nrm = new THREE.Vector3(), rim = [];
+        for (let i = 0; i < M; i++) rim.push(face(Rc * Math.cos((i / M) * TAU), yc + Rc * Math.sin((i / M) * TAU), new THREE.Vector3()).sub(mid));
+        for (let i = 0; i < M; i++) nrm.add(top.crossVectors(rim[i], rim[(i + 1) % M]));
+        nrm.normalize();
+        if (nrm.z < 0) nrm.negate();
+        // (how far out of the plate's face, along that: the floor, and the seat over it)
+        const floor = (0.003 - STERN) * T, seat = Math.max(floor + 0.002 * T, Math.min(...rim.map((q) => q.dot(nrm))) - 0.004 * T);
+        const e1 = new THREE.Vector3(1, 0, 0).addScaledVector(nrm, -nrm.x).normalize(), e2 = new THREE.Vector3().crossVectors(nrm, e1);
+        // (its rings, from the foot of the wall out: how far out, in the core's radius,
+        // and how far out of the face; the last, on the face itself)
+        const rings = [[0.9, floor], [0.94, seat], [1, seat], [1.5, null]], N = 56, pos = [], idx = [];
+        rings.forEach(([rho, hgt], j) => {
+          for (let i = 0; i <= N; i++) {
+            const a = (i / N) * TAU;
+            top.copy(mid).addScaledVector(e1, Rc * rho * Math.cos(a)).addScaledVector(e2, Rc * rho * Math.sin(a));
+            if (hgt === null) face(top.x, top.y, top).addScaledVector(nrm, 0.0008 * T);
+            else top.addScaledVector(nrm, hgt);
+            pos.push(top.x, top.y, top.z);
+            if (i < N && j < rings.length - 1) { const q = j * (N + 1) + i; idx.push(q, q + 1, q + N + 1, q + 1, q + N + 2, q + N + 1); }
+          }
+        });
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+        geo.setIndex(idx);
+        g.add(new THREE.Mesh(crisp(geo), suit));
+        // (and the core itself, down in it: its face on the well's floor)
+        model.attach(c);
+        c.position.copy(g.position).add(mid).addScaledVector(nrm, floor);
+        c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), nrm);
+        c.userData.halo.position.z = 0.003 * T - floor;
+        body.attach(c);
+      }
+      hang(body, fuse(g));
+    }
+
+    // The legs. A thigh: plates of the suit's teal over the under-suit, a strip of gold
+    // down its outer side, a cap over the hip. A dark knee, a cop over the front of it. And a boot,
+    // which is the whole lower leg, from the knee to the ground, in tiers: a slim shin,
+    // a guard down the front of it and a plate down the calf, a gold band round the
+    // ankle, and under that the bell of the boot, standing well out from the shin on a
+    // flat shelf and wider still to the ground, on a flat steel sole. There is no foot
+    // on the end of it (the old foot is hidden with the rest: the boot stands where its
+    // sole stood).
+    legs.forEach((leg) => {
+      const F = stand(leg.lower, leg.upper), g = F.g;
+      const TH = round(F.L, (y) => (S.thigh[0] + (S.thigh[1] - S.thigh[0]) * y) * T);
+      g.add(tube(TH, under), ball(S.thigh[1] * 0.96, under, 0, F.L, 0));
+      // (in plates, the under-suit in the seams between: one round the front, from the
+      // inside of the leg to its outer side; one behind; and down the outer side between
+      // them a strip of gold, lower than they are)
+      const ot = F.toward(leg.side, 0, 0);
+      g.add(shield(TH, ot - leg.side * 1.7, () => 1.15, 0.1, 0.97, 0.009, suit));
+      g.add(shield(TH, ot + leg.side * 1.5, () => 0.95, 0.12, 0.95, 0.009, suit));
+      g.add(shield(TH, ot, (v) => 0.44 - 0.06 * v, 0.14, 0.9, 0.0055, gold));
+      // (and over the hip, a cap: a piece of a ball, tipped out)
+      const hip = new THREE.Group(), hr = S.thigh[1] * 1.0 * T, ho = new THREE.Vector3(leg.side, 0, 0).applyQuaternion(g.quaternion.clone().invert());
+      hip.position.set(0, F.L, 0);
+      hip.quaternion.setFromUnitVectors(UP, UP.clone().addScaledVector(ho, 0.9).normalize());
+      hip.add(plate(28, 8, (u, v, o) => o.set(hr * Math.sin(1.25 * v) * Math.cos(u * TAU), hr * Math.cos(1.25 * v), hr * Math.sin(1.25 * v) * Math.sin(u * TAU)), 0.009 * T, EDGE, suit, { wrap: true, keep: 'b' }));
+      g.add(hip);
+      hang(leg.upper, fuse(g));
+      const B = stand(leg.end, leg.lower), b = B.g, L = B.L, [rk, rs, rf] = S.boot.map((r) => r * T), SK = 0.0075;
+      const SH = round(L, (y) => rs - SK * T - (rs - rk) * smooth(clamp01((y - 0.55) / 0.45))); // (the shin, under its plates)
+      b.add(tube(SH, under), ball(S.thigh[0] * 0.98, under, 0, L, 0)); // (and the knee)
+      b.add(band(SH, 0.3, 0.93, SK, suit));
+      b.add(band(SH, 0.36, 0.5, 0.0075, suit, { base: SK * T })); // (the ankle's collar: the tier between the shin and the bell)
+      b.add(shield(SH, 0, (v) => 0.95 - 0.3 * v, 0.5, 0.94, 0.01, suit, { base: SK * T, gap: 0.004 * T }));
+      b.add(shield(SH, Math.PI, (v) => 0.8 - 0.1 * v, 0.5, 0.9, 0.007, suit, { base: SK * T }));
+      // (the cop over the knee: a piece of a ball round it, in front)
+      const kc = new THREE.Vector3(0, L, 0), rc = S.thigh[0] * 1.12 * T;
+      b.add(plate(14, 10, (u, v, o) => { const e = -0.6 + 1.35 * v, a = (u * 2 - 1) * (1 - 0.3 * v); return o.set(rc * Math.cos(e) * Math.sin(a), L + rc * 1.15 * Math.sin(e), rc * Math.cos(e) * Math.cos(a)); }, 0.012 * T, EDGE, suit, { inside: kc }));
+      // (the bell: turned. Up its wall to a lip, the lip cut back, and a shelf in to the shin)
+      b.add(turned([[rs * 0.8, L * 0.02], [rf * 0.97, L * 0.02], [rf, L * 0.07], [rf * 0.93, L * 0.325], [rf * 0.93 - 0.007 * T, L * 0.325 + 0.007 * T], [rs - 0.002 * T, L * 0.375]], suit));
+      b.add(turned([[0.001, 0], [rf * 0.9, 0], [rf * 0.95, L * 0.012], [rf * 0.95, L * 0.035], [0.001, L * 0.035]], steel));
+      hang(leg.lower, fuse(b));
+    });
+    // The arms. A pauldron over each shoulder, in two layers: a cap, and under its edge
+    // a second lame (they ride on the upper arm: its top is always capped). The upper
+    // arm a sleeve of gold. A dark elbow. And a gauntlet, which is the forearm: heavy,
+    // and heavier toward the wrist; a thick cuff at the end of it, a gold band above
+    // that, a long plate down its back from over the elbow; the hand out of its end.
+    arms.forEach((arm, i) => {
+      // (the left arm goes behind the contact card, the right behind a case's X: so do their shells)
+      const side = armSide[i], mine = (name) => { const m = look(name); m.userData[side > 0 ? 'uClip' : 'uArm'].value = 1; return m; };
+      const mSuit = mine('Suit'), mGold = mine('Gold'), mUnder = mine('Under');
+      const U = stand(arm[1], arm[0]), g = U.g;
+      const UA = round(U.L, (y) => (S.arm - 0.008 + 0.003 * y) * T);
+      g.add(tube(UA, mUnder), ball(S.arm - 0.003, mUnder));
+      g.add(band(UA, 0.14, 0.88, 0.008, mGold));
+      // (the pauldron: on the shoulder, set a little out from it and tipped out; flatter than a ball)
+      const pg = new THREE.Group(), out = new THREE.Vector3(side, 0, 0).applyQuaternion(g.quaternion.clone().invert());
+      pg.position.set(0, U.L - 0.006 * T, 0).addScaledVector(out, 0.014 * T);
+      pg.quaternion.setFromUnitVectors(UP, UP.clone().addScaledVector(out, 0.47).normalize());
+      const ell = (rx, ry, rz) => (th, az, o) => o.set(rx * T * Math.sin(th) * Math.cos(az), ry * T * Math.cos(th), rz * T * Math.sin(th) * Math.sin(az));
+      const E1 = ell(S.pad * 0.92, S.pad * 0.66, S.pad), E2 = ell(S.pad * 0.84, S.pad * 0.7, S.pad * 0.92);
+      pg.add(ball(S.pad * 0.5, under));
+      pg.add(plate(36, 8, (u, v, o) => E2(1.0 + 0.95 * v, u * TAU, o), 0.008 * T, EDGE, suit, { wrap: true }));
+      pg.add(plate(36, 12, (u, v, o) => E1(1.4 * v, u * TAU, o), 0.012 * T, 0.01 * T, suit, { wrap: true, keep: 'b' }));
+      g.add(pg);
+      hang(arm[0], fuse(g));
+      // (the gauntlet is built at the model's forearm, which is then shortened, and it
+      // with it: its sizes here are made up for that)
+      const F = stand(arm[2], arm[1]), f = F.g, s = 1 / S.reach;
+      const FA = round(F.L, (y) => (S.fore[0] + (S.fore[1] - S.fore[0]) * Math.pow(Math.max(0, 1 - y), 1.3)) * T * s);
+      f.add(tube(FA, mUnder));
+      f.add(band(FA, 0.14, 0.97, 0.009 * s, mSuit));
+      f.add(band(FA, 0.14, 0.42, 0.009 * s, mSuit, { base: 0.009 * s * T }));
+      f.add(band(FA, 0.4, 0.475, 0.006 * s, mGold, { base: 0.009 * s * T }));
+      f.add(shield(FA, F.toward(side, 0.35, -0.2), (v) => 1.0 - 0.4 * v, 0.46, 1.05, 0.011 * s, mSuit, { base: 0.009 * s * T, gap: 0.004 * s * T, dark: mUnder }));
+      f.add(new THREE.Mesh(new THREE.CircleGeometry(FA(0, 0.15, new THREE.Vector3()).z, 28).rotateX(Math.PI / 2).translate(0, F.L * 0.15, 0), mUnder)); // (the dark in the cuff's mouth, round the wrist)
+      hang(arm[1], fuse(f));
+    });
+    for (const o of meshes) if (!o.isSkinnedMesh) o.visible = false;
+    // Its arms. The model's forearms are great faceted gauntlets as long as its legs:
+    // those are not drawn (the suit's cuffs are there instead: only the hands show, out
+    // of their ends), and the forearm bones are shortened, hands and cuffs with them,
+    // the hands then made up again, so that the arms are a chibi's: down to the hip.
+    for (const o of meshes) if (o.isSkinnedMesh) o.material.userData.uSkip.value.set(...arms.map((arm) => o.skeleton.bones.indexOf(arm[1])), -1, -1);
+    for (const o of meshes) if (o.isSkinnedMesh) o.material.color.setHex(MODEL.palette.Suit.color); // (gloves: the fingers in the suit's teal, like the gauntlet they come out of)
+    for (const arm of arms) {
+      arm[1].scale.multiplyScalar(S.reach);
+      for (const b of arm[1].children) if (b.isBone) b.scale.multiplyScalar(S.hand);
+    }
+    model.updateMatrixWorld(true);
+    // (QA: the old parts' boxes and the joints, in body heights)
+    const nb = (b) => (b ? [b.min, b.max].map((v) => v.toArray().map((x) => +(x / modelH).toFixed(3))) : null);
+    visor.dbg = { T: modelH, skins: meshes.filter((o) => o.isSkinnedMesh).map((o) => [o.name, o.material.name, '#' + o.material.color.getHexString()]), head: nb(hb), torso: nb(tb), foot: nb(boxOf('Foot.L')), hand: nb(boxOf('Hand.L')), joints: Object.fromEntries([['hip', legs[0].upper], ['knee', legs[0].lower], ['ankle', legs[0].end], ['shoulder', arms[0][0]], ['elbow', arms[0][1]], ['wrist', arms[0][2]]].map(([k, o]) => [k, V(o).toArray().map((x) => +(x / modelH).toFixed(3))])) };
   }
 
   // The headphones: there while the sound is on, and only then. Switched on, they take
@@ -408,12 +931,15 @@ export async function start({ reduced = false } = {}) {
     const C = MODEL.phones;
     model.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(headBone.matrixWorld).invert();
-    const hb = new THREE.Box3(), hv = new THREE.Vector3(), hm = new THREE.Matrix4();
+    const hb = new THREE.Box3(), hv = new THREE.Vector3(), hm = new THREE.Matrix4(), pts = [];
     headBone.traverse((o) => {
-      if (!o.isMesh) return;
+      if (!o.isMesh || (visor.shell && o !== visor.shell)) return; // (the helmet, where it wears one: not the old head under it)
       hm.multiplyMatrices(inv, o.matrixWorld);
       const a = o.geometry.attributes.position;
-      for (let i = 0; i < a.count; i++) hb.expandByPoint(hv.fromBufferAttribute(a, i).applyMatrix4(hm));
+      for (let i = 0; i < a.count; i++) {
+        hb.expandByPoint(hv.fromBufferAttribute(a, i).applyMatrix4(hm));
+        pts.push(hv.x, hv.y, hv.z);
+      }
     });
     if (hb.isEmpty()) console.warn('[avatar] no headphones: no mesh rides on the head bone to measure them from');
     else {
@@ -422,17 +948,33 @@ export async function start({ reduced = false } = {}) {
       const look = (name) => abyssalize(new THREE.MeshStandardMaterial({ name }), mine);
       const shell = look('Grey'), pad = look('Pad'), glow = look('Beat');
       const g = new THREE.Group();
-      const rig = new THREE.Group(); // its origin on the line through the ears
-      rig.position.set((hb.min.x + hb.max.x) / 2, hb.min.y + C.ear * hh, (hb.min.z + hb.max.z) / 2);
-      g.add(rig);
-      // the band: an arch from ear to ear over the top of the head
-      const reach = C.reach * hw, rise = (C.crown - C.ear) * hh;
-      const arch = [];
-      for (let i = 0; i <= 24; i++) {
-        const a = (i / 24) * Math.PI;
-        arch.push(new THREE.Vector3(Math.cos(a) * reach, Math.sin(a) * rise, 0));
+      // (the head's own axis: across where it is widest, not the middle of its box, which
+      // a face flatter than the back of the head puts behind it. And its outline there,
+      // seen from in front: how far out it is, by height)
+      const cx = (hb.min.x + hb.max.x) / 2, earY = hb.min.y + C.ear * hh, slab = (hb.max.z - hb.min.z) * 0.06;
+      let zc = 0, far = -1;
+      for (let i = 0; i < pts.length; i += 3) if (Math.abs(pts[i] - cx) > far) { far = Math.abs(pts[i] - cx); zc = pts[i + 2]; }
+      const BINS = 18, wide = new Array(BINS + 1).fill(0);
+      for (let i = 0; i < pts.length; i += 3) {
+        if (Math.abs(pts[i + 2] - zc) > slab || pts[i + 1] < earY) continue;
+        const k = Math.round(((pts[i + 1] - earY) / Math.max(1e-9, hb.max.y - earY)) * BINS);
+        wide[k] = Math.max(wide[k], Math.abs(pts[i] - cx));
       }
-      const band = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(arch), 48, C.band[0] * hw, 8, false), shell);
+      const rig = new THREE.Group(); // its origin on the line through the ears
+      rig.position.set(cx, earY, zc);
+      g.add(rig);
+      // the band: from ear to ear over the top of the head, the head's own outline
+      // stood off it by what the cups stand off its sides
+      const reach = C.reach * hw, clear = Math.max(0, reach - (wide[0] || hw)), half = [];
+      for (let k = 0; k <= BINS; k++) if (k === 0 || k === BINS || wide[k] > 0) half.push(new THREE.Vector2(k === BINS ? 0 : wide[k], ((hb.max.y - earY) * k) / BINS));
+      const arch = half.map((q, i) => {
+        const a = half[Math.max(0, i - 1)], b = half[Math.min(half.length - 1, i + 1)], tx = b.x - a.x, ty = b.y - a.y, tl = Math.hypot(tx, ty) || 1;
+        return i === half.length - 1 ? new THREE.Vector3(0, q.y + clear, 0) : new THREE.Vector3(q.x + (ty / tl) * clear, q.y - (tx / tl) * clear, 0);
+      });
+      arch[0].set(reach, 0, 0);
+      for (let i = arch.length - 2; i >= 0; i--) arch.push(new THREE.Vector3(-arch[i].x, arch[i].y, 0));
+      const over = new THREE.CatmullRomCurve3(arch);
+      const band = new THREE.Mesh(new THREE.TubeGeometry(over, 64, C.band[0] * hw, 8, false), shell);
       band.scale.z = C.band[1];
       rig.add(band);
       const [rc, tc] = C.cup, [rp, tp] = C.pad, [rr, rt] = C.ring;
@@ -455,8 +997,8 @@ export async function start({ reduced = false } = {}) {
       const spots = [];
       for (let i = 0; i < C.motes; i++) {
         if (i % 2 === 0) {
-          const a = Math.random() * Math.PI, j = C.band[0] * hw * 1.6;
-          spots.push({ part: 0, x: Math.cos(a) * reach + (Math.random() - 0.5) * j, y: Math.sin(a) * rise + (Math.random() - 0.5) * j, z: (Math.random() - 0.5) * j * C.band[1] });
+          const q = over.getPoint(Math.random()), j = C.band[0] * hw * 1.6;
+          spots.push({ part: 0, x: q.x + (Math.random() - 0.5) * j, y: q.y + (Math.random() - 0.5) * j, z: (Math.random() - 0.5) * j * C.band[1] });
         } else {
           const side = i % 4 === 1 ? -1 : 1, a = Math.random() * TAU, r = rc * hw * (0.5 + 0.55 * Math.random());
           spots.push({ part: side, x: side * (Math.random() - 0.3) * tc * hw, y: Math.sin(a) * r, z: Math.cos(a) * r });
@@ -642,7 +1184,7 @@ export async function start({ reduced = false } = {}) {
 
   // Bones posed on top of the clips: reset to the clean clip pose before every update
   // (bones a clip doesn't animate would otherwise keep last frame's offsets).
-  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...fingers.flatMap((c) => c.slice(0, 3)), ...cheerBones.map((c) => c.bone), ...rigBones])]
+  const restPose = [...new Set([headBone, neckBone, ...arms.flat(), ...fingers.flatMap((c) => c.slice(0, 3)), ...hands.flatMap((h) => (h ? [...h.fingers.flatMap((c) => c.slice(0, 3)), ...h.thumb.slice(0, 2)] : [])), ...cheerBones.map((c) => c.bone), ...rigBones])]
     .filter(Boolean).map((bone) => ({ bone, q: bone.quaternion.clone(), p: bone.position.clone() }));
 
   // Animation
@@ -4742,49 +5284,103 @@ export async function start({ reduced = false } = {}) {
   //   wait   sat this long before the hand comes up (s);  open: the iris opening (s)
   //   charge the core coming up, before the first bolt (s);  gap: between bolts (s)
   //   pace   px a second;  len: a bolt's length; r: the port's radius (body heights: a
-  //          hole in the palm, a good deal smaller than the hand)
+  //          hole in the palm, a good deal smaller than the hand);  at: where it is in
+  //          the palm, from the wrist to the middle knuckle
   //   arc    how far each bolt goes over the straight line (a share of the distance)
-  const BLAST = { wait: 0.5, open: 0.34, charge: 0.2, gap: 0.12, pace: 2300, len: 0.22, r: 0.034, arc: [0.07, -0.03, 0.12], shut: 0.3 };
+  const BLAST = { wait: 0.5, open: 0.5, charge: 0.2, gap: 0.12, pace: 2300, len: 0.22, r: 0.036, at: 0.3, arc: [0.07, -0.03, 0.12], shut: 0.3 };
   const blast = (() => {
     const lit = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
     // (drawn over the hand it is set in, back to front in this order)
     const over = (m) => Object.assign(m, { transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
     const WHITE = 0xeafffb;
-    // The port, one unit across its rim, facing +z: the hole, the core in it, the iris
-    // over them (six triangles, rim to middle, redrawn as it opens), its rim, and what
-    // light it throws. Set in the palm at the bones' own measure and handed to the wrist
-    // bone, so it is part of the hand in every pose.
-    const port = new THREE.Group();
-    const hole = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24), over(new THREE.MeshBasicMaterial({ color: 0x03060c })));
-    const core = new THREE.Mesh(new THREE.CircleGeometry(0.66, 20), lit(WHITE, 0));
+    // The port, one unit across its rim, facing +z: a hatch in the middle of the palm,
+    // in the hand's own plating, and behind it an energy core, the way a repulsor is.
+    // From the back: the bottom of a shallow round well sunk into the hand; the core in
+    // it (a wide soft glow, a bright ring, a white-hot middle); the well's wall (seen
+    // from inside, so the far side shows as the hand turns); the iris that covers it
+    // (six blades of the same shell as the hand, a hair's gap between them, redrawn as
+    // they draw back); a raised round rim of the joints' steel; and the light the core
+    // throws out past it. The shell and steel are the body's own looks (same light, same
+    // glow on the edges, same dissolve). One in each palm, set there at the bones' own
+    // measure and handed to the wrist bone, so it is part of the hand in every pose
+    // (they share their looks: only one is ever open).
+    const plate = (name, side) => Object.assign(abyssalize(new THREE.MeshStandardMaterial({ name }), shared), { transparent: true, depthTest: false, depthWrite: false, side });
+    const holeM = over(new THREE.MeshBasicMaterial({ color: 0x02040a }));
+    const glowM = lit(TEAL, 0), ringM = lit(0xa6f5ea, 0), coreM = lit(WHITE, 0), haloM = lit(TEAL, 0);
+    const wallM = plate('Grey', THREE.BackSide), irisM = plate('Main', THREE.DoubleSide), rimM = plate('Grey', THREE.DoubleSide);
+    rimM.emissive.copy(TEAL);
+    rimM.emissiveIntensity = 0;
     const irisGeo = new THREE.BufferGeometry();
     irisGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(54), 3));
     irisGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(54).map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
-    const iris = new THREE.Mesh(irisGeo, over(new THREE.MeshStandardMaterial({ color: MODEL.palette.Grey.color, metalness: 0.45, roughness: 0.4 })));
-    const rim = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 6), over(new THREE.MeshStandardMaterial({ color: MODEL.palette.Main.color, metalness: 0.5, roughness: 0.38, emissive: TEAL, emissiveIntensity: 0.3 })));
-    const halo = new THREE.Mesh(new THREE.CircleGeometry(1.7, 24), lit(TEAL, 0));
-    [hole, core, iris, rim, halo].forEach((o, i) => { o.renderOrder = 3 + i; o.frustumCulled = false; port.add(o); });
-    port.visible = false;
-    const chain = MODEL.palm.map((n) => bonesByName[bare(n)]);
-    let set = false;
-    if (chain.every(Boolean)) {
+    const DEEP = 0.5; // (how deep the well is, in its own radius)
+    const parts = [
+      [new THREE.CircleGeometry(0.82, 28).translate(0, 0, -DEEP), holeM],
+      [new THREE.CircleGeometry(0.8, 28).translate(0, 0, -DEEP * 0.96), glowM],
+      [new THREE.RingGeometry(0.44, 0.6, 36).translate(0, 0, -DEEP * 0.92), ringM],
+      [new THREE.CircleGeometry(0.33, 24).translate(0, 0, -DEEP * 0.88), coreM],
+      [new THREE.CylinderGeometry(0.88, 0.82, DEEP, 28, 1, true).rotateX(Math.PI / 2).translate(0, 0, -DEEP / 2), wallM],
+      [irisGeo, irisM],
+      [new THREE.TorusGeometry(0.94, 0.09, 8, 36), rimM],
+      [new THREE.CircleGeometry(1.45, 28).translate(0, 0, 0.02), haloM],
+    ];
+    model.updateMatrixWorld(true);
+    // (for each arm: the port in its palm, or none where the hand's bones are not found)
+    const ports = arms.map((arm) => {
+      const chain = (MODEL.palms.find((c) => bonesByName[bare(c[0])] === arm[2]) || []).map((n) => bonesByName[bare(n)]);
+      if (chain.length < 3 || !chain.every(Boolean)) return null;
       const [wrist, k1, k2] = chain;
-      model.updateMatrixWorld(true);
+      const port = new THREE.Group();
+      parts.forEach(([geo, mat], i) => {
+        const o = new THREE.Mesh(geo, mat);
+        o.renderOrder = 3 + i;
+        o.frustumCulled = false;
+        port.add(o);
+      });
+      port.visible = false;
       const W = model.worldToLocal(wrist.getWorldPosition(new THREE.Vector3()));
       const along = model.worldToLocal(k1.getWorldPosition(new THREE.Vector3())).sub(W);
       const face = model.worldToLocal(k2.getWorldPosition(new THREE.Vector3())).sub(W).sub(along);
       const L = along.length() || 1;
       along.divideScalar(L);
       face.addScaledVector(along, -face.dot(along));
-      if (face.lengthSq() < 1e-10) face.set(-1, 0, 0); // (the left palm faces the body)
+      if (face.lengthSq() < 1e-10) face.set(-Math.sign(W.x) || -1, 0, 0); // (a palm faces the body)
       face.normalize();
-      port.position.copy(W).addScaledVector(along, L * 0.55).addScaledVector(face, modelH * 0.012);
+      port.position.copy(W).addScaledVector(along, L * BLAST.at).addScaledVector(face, modelH * 0.012);
       port.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), face);
       port.scale.setScalar(modelH * BLAST.r);
       model.add(port);
       wrist.attach(port);
-      set = true;
-    }
+      return port;
+    });
+    // What a bolt leaves where it bursts on the screen (see stepSalvo), all facing us: a
+    // flash, white-hot in the middle and thinning outward (three discs, one in the
+    // other), rays shot out of it, a thin ring of amber running out from it and a teal
+    // one after.
+    const booms = BLAST.arc.map(() => {
+      const g = new THREE.Group();
+      const flash = new THREE.Group();
+      const glow = [[1, TEAL, 0.2], [0.6, AMBER, 0.45], [0.3, WHITE, 1]].map(([r, color, a]) => {
+        const m = new THREE.Mesh(new THREE.CircleGeometry(r, 36), lit(color, 0));
+        m.userData.a = a;
+        flash.add(m);
+        return m;
+      });
+      const rays = new THREE.Group();
+      const rayM = lit(WHITE, 0);
+      for (let i = 0; i < 7; i++) {
+        const ray = new THREE.Mesh(new THREE.PlaneGeometry(0.035 + 0.02 * (i % 3), 1.5 + 0.5 * (i % 2)), rayM);
+        ray.rotation.z = (i / 7) * Math.PI + 0.2 * (i % 2);
+        rays.add(ray);
+      }
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 56), lit(AMBER, 0));
+      const wake = new THREE.Mesh(new THREE.RingGeometry(0.965, 1, 56), lit(TEAL, 0));
+      g.add(flash, rays, ring, wake);
+      g.traverse((o) => { o.frustumCulled = false; o.renderOrder = 10; });
+      g.visible = false;
+      scene.add(g);
+      return { g, flash, glow, rays, rayM, ring, wake, t: -1 };
+    });
     // a bolt: one unit long, along +y: a white core in a teal sheath
     const bolts = BLAST.arc.map(() => {
       const g = new THREE.Group();
@@ -4801,21 +5397,124 @@ export async function start({ reduced = false } = {}) {
     // (the iris at k, 0 shut to 1 open: each blade from its two corners on the rim to a
     // tip that turns out from the middle to the rim between them, leaving a six-sided hole)
     const drawIris = (k) => {
-      const a = irisGeo.attributes.position, r = 0.866 * k;
+      const a = irisGeo.attributes.position, r = 0.866 * k, GAP = 0.06; // (the seam between two blades)
       for (let i = 0; i < 6; i++) {
         const a0 = (i / 6) * TAU, a1 = ((i + 1) / 6) * TAU, at = a0 + TAU / 12 + (1 - k) * 1.1;
-        a.setXYZ(i * 3, Math.cos(a0), Math.sin(a0), 0);
-        a.setXYZ(i * 3 + 1, Math.cos(a1), Math.sin(a1), 0);
-        a.setXYZ(i * 3 + 2, Math.cos(at) * r, Math.sin(at) * r, 0);
+        const xs = [Math.cos(a0), Math.cos(a1), Math.cos(at) * r], ys = [Math.sin(a0), Math.sin(a1), Math.sin(at) * r];
+        const mx = (xs[0] + xs[1] + xs[2]) / 3, my = (ys[0] + ys[1] + ys[2]) / 3;
+        for (let v = 0; v < 3; v++) a.setXYZ(i * 3 + v, xs[v] + (mx - xs[v]) * GAP, ys[v] + (my - ys[v]) * GAP, 0);
       }
       a.needsUpdate = true;
     };
     drawIris(0);
-    return { port: set ? port : null, core, rim, halo, bolts, drawIris, scale: modelH * BLAST.r };
+    return { ports, glow: glowM, ring: ringM, core: coreM, rim: rimM, halo: haloM, bolts, booms, drawIris };
   })();
   function blastOff() {
-    if (blast.port) blast.port.visible = false;
+    for (const P of blast.ports) if (P) P.visible = false;
     for (const g of blast.bolts) g.visible = false;
+  }
+  // A hand opened flat (weighted): each finger laid straight out along its own bone of
+  // the palm, bent back a touch (off the way the palm faces), and the thumb out to its
+  // side. The palm's facing is the port's.
+  const oD = new THREE.Vector3(), oN = new THREE.Vector3(), oA = new THREE.Vector3(), oB = new THREE.Vector3();
+  function openHand(i, w) {
+    const Hd = hands[i], P = blast.ports[i];
+    if (!Hd || w < 0.001) return;
+    P.updateWorldMatrix(true, false);
+    oN.set(0, 0, 1).transformDirection(P.matrixWorld);
+    const lay = (bone, next, dir) => {
+      if (!next) return;
+      const l = bone.getWorldPosition(oA).distanceTo(next.getWorldPosition(oB));
+      swing(bone, next, oB.copy(oA).addScaledVector(dir, l), w);
+    };
+    for (const [wrist, f1, f2, tip] of Hd.fingers) {
+      oD.subVectors(f1.getWorldPosition(oA), wrist.getWorldPosition(oB)).normalize().addScaledVector(oN, -0.14).normalize();
+      lay(f1, f2, oD);
+      lay(f2, tip, oD);
+    }
+    // (the thumb: out the way it already leaves the palm, square to the fingers, and a little along them)
+    const [t1, t2, tip] = Hd.thumb, mid = Hd.fingers[1];
+    oD.subVectors(mid[1].getWorldPosition(oA), mid[0].getWorldPosition(oB)).normalize(); // (along the palm)
+    hTo.subVectors(t2.getWorldPosition(oA), t1.getWorldPosition(oB));
+    hTo.addScaledVector(oD, -hTo.dot(oD)).addScaledVector(oN, -hTo.dot(oN));
+    if (hTo.lengthSq() < 1e-10) return;
+    oD.multiplyScalar(0.45).add(hTo.normalize()).addScaledVector(oN, -0.1).normalize();
+    lay(t1, t2, oD);
+    lay(t2, tip, oD);
+  }
+  // The hand set square (weighted): turned at the wrist until its palm faces the way
+  // `to` and its fingers point up, the way a hand is held up to say stop.
+  const mA = new THREE.Matrix4(), mB = new THREE.Matrix4(), qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), qI = new THREE.Quaternion();
+  function palmUp(i, to, w) {
+    const Hd = hands[i], P = blast.ports[i];
+    if (!Hd || w < 0.001) return;
+    const mid = Hd.fingers[1];
+    P.updateWorldMatrix(true, false);
+    oN.set(0, 0, 1).transformDirection(P.matrixWorld); // (the way it faces now, and its fingers lie)
+    oD.subVectors(mid[1].getWorldPosition(oA), mid[0].getWorldPosition(oB));
+    oD.addScaledVector(oN, -oD.dot(oN)).normalize();
+    mA.makeBasis(oD, oN, oA.crossVectors(oD, oN));
+    oB.copy(to).normalize(); // (wanted: facing that way, and up, square to it)
+    hTo.set(0, 1, 0).addScaledVector(oB, -oB.y);
+    if (hTo.lengthSq() < 1e-6) return;
+    hTo.normalize();
+    mB.makeBasis(hTo, oB, oA.crossVectors(hTo, oB));
+    qB.setFromRotationMatrix(mB).multiply(qA.setFromRotationMatrix(mA).invert());
+    qB.copy(qI.identity().slerp(qB, w));
+    for (const [wrist] of Hd.fingers) { // (the palm's bones all turn about the wrist)
+      wrist.parent.updateWorldMatrix(true, false);
+      wrist.parent.getWorldQuaternion(qParent);
+      wrist.quaternion.premultiply(qSw.copy(qB).premultiply(qTmp.copy(qParent).invert()).multiply(qParent));
+      wrist.updateMatrixWorld(true);
+    }
+    // (the thumb hangs off the forearm, beside the palm's bones, not off them: it is
+    // carried round the wrist with them, the same turn)
+    const t1 = Hd.thumb[0], piv = mid[0];
+    if (t1.parent === piv.parent) {
+      t1.parent.getWorldQuaternion(qParent);
+      qSw.copy(qB).premultiply(qTmp.copy(qParent).invert()).multiply(qParent);
+      t1.quaternion.premultiply(qSw);
+      t1.position.sub(piv.position).applyQuaternion(qSw).add(piv.position);
+      t1.updateMatrixWorld(true);
+    }
+  }
+  // A hand up and its palm out: arm i raised at its side, a little forward, clear of the
+  // head, the elbow under it so that the forearm stands up, by as much as the port is
+  // open; the forearm rolled about its own length, and the hand turned at the wrist,
+  // until the palm faces the way `to` (in the world) with its fingers up; the hand
+  // opened flat; and the port drawn in the palm, its iris so far open and its core as
+  // bright as the charge. Each bolt kicks the hand back. Returns where the port is, in
+  // the world.
+  function palmOut(i, open, kick, to, charge) {
+    const arm = arms[i], s = armSide[i], P = blast.ports[i];
+    model.worldToLocal(arm[0].getWorldPosition(hTo));
+    hTo.set(hTo.x + s * (0.25 + 0.03 * kick) * modelH, hTo.y + (0.2 - 0.06 * kick) * modelH, hTo.z + (0.16 - 0.05 * kick) * modelH);
+    reach(arm, model.localToWorld(hTo), open, hPole.set(s * 0.6, -1, -0.15).normalize().transformDirection(model.matrixWorld));
+    P.updateWorldMatrix(true, false);
+    bN.set(0, 0, 1).transformDirection(P.matrixWorld);
+    arm[2].getWorldPosition(bP);
+    hA.subVectors(bP, arm[1].getWorldPosition(bQ)).normalize(); // (along the forearm)
+    hB.copy(to);
+    bN.addScaledVector(hA, -bN.dot(hA));
+    hB.addScaledVector(hA, -hB.dot(hA));
+    if (bN.lengthSq() > 1e-8 && hB.lengthSq() > 1e-8) turnBone(arm[1], hA, Math.atan2(hA.dot(bQ.crossVectors(bN, hB)), bN.dot(hB)) * open);
+    // the hand comes square and opens first, flat, fingers up and thumb out; then the
+    // hatch in its palm
+    palmUp(i, to, open);
+    openHand(i, smooth(clamp01(open / 0.55)));
+    const iris = smooth(clamp01((open - 0.35) / 0.65));
+    blast.drawIris(iris);
+    chest.flare = Math.max(chest.flare, charge); // (what the palm draws, the chest gives)
+    // (the core: alight as it charges, breathing a little, flaring with each bolt)
+    const beat = 0.86 + 0.14 * Math.sin(time * 9);
+    blast.glow.opacity = 0.5 * charge;
+    blast.ring.opacity = Math.min(1, charge * 1.1) * beat;
+    blast.core.opacity = Math.min(1, charge * 1.25);
+    blast.halo.opacity = 0.3 * charge * beat;
+    blast.rim.emissiveIntensity = 0.9 * charge;
+    for (const O of blast.ports) if (O) O.visible = O === P && iris > 0.01;
+    P.updateWorldMatrix(true, false);
+    return P.getWorldPosition(bP);
   }
   const armL = armSide.indexOf(Math.max(...armSide)); // (the model's own left)
   // (waiting: the button up and not yet lit, the case open and not on its way out)
@@ -4831,7 +5530,7 @@ export async function start({ reduced = false } = {}) {
   function playRelease() {
     if (playWaits()) playEl.click();
   }
-  const bP = new THREE.Vector3(), bQ = new THREE.Vector3(), bN = new THREE.Vector3(), bZ = new THREE.Vector3(0, 0, 1);
+  const bP = new THREE.Vector3(), bQ = new THREE.Vector3(), bN = new THREE.Vector3(), bT = new THREE.Vector3(), bY = new THREE.Vector3(0, 1, 0);
   function sparks(x, y, n, speed, H) {
     const o = toWorld(x, y, 0.6, bQ);
     for (let i = 0; i < n; i++) {
@@ -4843,11 +5542,11 @@ export async function start({ reduced = false } = {}) {
     const T = playSpot();
     let R = Q.rk;
     if (!R) {
-      if (Q.st !== 'sit' || Q.fired || Q.sat < BLAST.wait || !T || armL < 0 || !blast.port) return;
+      if (Q.st !== 'sit' || Q.fired || Q.sat < BLAST.wait || !T || armL < 0 || !blast.ports[armL] || salvo.st) return;
       R = Q.rk = { st: 'open', t: 0, to: T, shots: [], next: 0, last: -9 };
     }
     R.t += dt;
-    const hp = Q.hp, H = hp * view.wpp, arm = arms[armL], sL = armSide[armL];
+    const hp = Q.hp, H = hp * view.wpp, arm = arms[armL];
     // The visitor started the video meanwhile, or the case is closing: no need of it.
     // What is in the air fizzles out where it is, and the iris shuts (from as far open
     // and as bright as it had got).
@@ -4860,37 +5559,16 @@ export async function start({ reduced = false } = {}) {
       R.t = 0;
     }
     if (T) R.to = T;
-    // how far open the iris is, and the hand up with it: at its side, a little forward,
-    // clear of its head (the elbow out and down); each bolt kicks it back
+    // how far open the iris is (the hand up with it), how bright its core, and the palm
+    // turned between us and the button
     const fade = R.st === 'shut' ? 1 - smooth(clamp01(R.t / BLAST.shut)) : 1;
     const open = R.st === 'open' ? smooth(clamp01(R.t / BLAST.open)) : R.st === 'shut' ? (R.w ?? 1) * fade : 1;
     const kick = Math.exp(-(R.t - R.last) / 0.07) * (R.st === 'fire' ? 1 : 0);
-    model.worldToLocal(arm[0].getWorldPosition(hTo));
-    hTo.set(hTo.x + sL * (0.29 + 0.04 * kick) * modelH, hTo.y + (0.24 - 0.07 * kick) * modelH, hTo.z + 0.2 * modelH);
-    reach(arm, model.localToWorld(hTo), open, hPole.set(sL, -0.5, -0.2).normalize().transformDirection(model.matrixWorld));
-    // (its target on the canvas from the hand, and in the world: up is up there)
-    const P = blast.port;
-    const [qx, qy] = toCanvas(arm[2].getWorldPosition(bP));
-    const dx = R.to[0] - qx, dy = R.to[1] - qy, d = Math.hypot(dx, dy) || 1;
-    // The palm turned out: the forearm rolled about its own length until the port
-    // faces between us and the button (as far as it is open).
-    P.updateWorldMatrix(true, false);
-    bN.set(0, 0, 1).transformDirection(P.matrixWorld);
-    arm[1].getWorldPosition(bQ);
-    hA.subVectors(bP, bQ).normalize(); // (along the forearm)
-    hB.set((dx / d) * 0.7, (-dy / d) * 0.7, 0.75).normalize();
-    bN.addScaledVector(hA, -bN.dot(hA));
-    hB.addScaledVector(hA, -hB.dot(hA));
-    if (bN.lengthSq() > 1e-8 && hB.lengthSq() > 1e-8) turnBone(arm[1], hA, Math.atan2(hA.dot(bQ.crossVectors(bN, hB)), bN.dot(hB)) * open);
-    // the port in it: the iris as far open, the core as bright as the charge
     const charge = R.st === 'open' ? 0 : R.st === 'charge' ? smooth(clamp01(R.t / BLAST.charge)) : R.st === 'fire' ? 0.6 + 0.4 * kick : (R.c ?? 0.5) * fade;
-    blast.drawIris(open);
-    blast.core.material.opacity = charge;
-    blast.halo.material.opacity = 0.3 * charge;
-    blast.rim.material.emissiveIntensity = 0.3 + 1.2 * charge;
-    P.visible = open > 0.01;
-    P.updateWorldMatrix(true, false);
-    const [px, py] = toCanvas(P.getWorldPosition(bP)); // (where the bolts come out)
+    const [qx, qy] = toCanvas(arm[0].getWorldPosition(bP));
+    const qd = Math.hypot(R.to[0] - qx, R.to[1] - qy) || 1;
+    const [px, py] = toCanvas(palmOut(armL, open, kick, bT.set(((R.to[0] - qx) / qd) * 0.7, (-(R.to[1] - qy) / qd) * 0.7, 0.75).normalize(), charge)); // (where the bolts come out)
+    const d = Math.hypot(R.to[0] - px, R.to[1] - py) || 1;
     if (R.st !== 'shut') {
       [glance.x, glance.y] = R.to;
       glance.until = performance.now() + 150;
@@ -4930,7 +5608,7 @@ export async function start({ reduced = false } = {}) {
       const len = hp * BLAST.len * (0.5 + 0.5 * smooth(clamp01(u / 0.2))); // (it draws out as it leaves)
       toWorld(S.x - (tx / tl) * len * 0.4, S.y - (ty / tl) * len * 0.4, 0.6, g.position);
       g.scale.setScalar(len * view.wpp);
-      g.rotation.z = Math.atan2(-ty, tx) - Math.PI / 2;
+      g.rotation.set(0, 0, Math.atan2(-ty, tx) - Math.PI / 2);
       g.visible = true;
       const tail = toWorld(S.x - (tx / tl) * len, S.y - (ty / tl) * len, 0.6, bQ);
       for (let n = 2; n > 0; n--) spawn(tail.x, tail.y, tail.z, (Math.random() - 0.5) * 0.25 * H, (Math.random() - 0.5) * 0.25 * H, 0, 0.25 + Math.random() * 0.3, 0.85);
@@ -4950,6 +5628,141 @@ export async function start({ reduced = false } = {}) {
       perch.legs.forEach((L, k) => { L.v += k ? 2.6 : -2.2; });
     });
     if (R.st === 'fire' && R.shots.length === blast.bolts.length && !flying) { R.st = 'shut'; R.t = 0; }
+  }
+
+  // Clicked four times running, it has had enough of being poked: up comes the hand on
+  // the near side, palm to the visitor, the port opens, and it lets fly at the screen.
+  // Three bolts, one after the other, straight at us: each leaves the palm small and
+  // far off and comes on at the glass, growing all the way (they are flown in depth,
+  // toward the camera, so it is the lens that makes them big), and bursts on it: a white
+  // flash, a ring of amber running out from it and a teal one after, sparks, and the
+  // stage itself shaken. Then the port shuts, the hand comes down, and a thumbs-up, no
+  // hard feelings. (Where it cannot be done, a journey under way, the dock, a scene
+  // open, it dances as it always did.)
+  //   open, charge, gap, shut  as for the case's (s);  fly: a bolt's way to the glass (s)
+  //   near   how far short of the camera it bursts (world: the closer, the bigger)
+  //   len    a bolt's length where it leaves the hand (px, at most);  r: the burst's
+  //          size (screen heights);  boom: how long it lasts (s)
+  const SALVO = { open: 0.5, charge: 0.18, gap: 0.17, fly: 0.55, near: 3, len: 40, r: 0.13, boom: 0.6, shut: 0.4 };
+  const salvo = { st: null, t: 0, arm: 0, shots: [], next: 0, last: -9, w: 1, c: 0.5, shake: 0 };
+  function startSalvo() {
+    // (nor through the time tunnels, where it flies behind the cards)
+    if (salvo.st || reduced || view.dock || !rigOK || trans || scrub.mid || delivBusy() || sceneOpen() || tun.active || maskHides || shared.uDissolve.value > 0.01) return false;
+    const i = pivot.rotation.y > 0.15 ? armR : armL; // (the hand on our side of it)
+    if (i < 0 || !blast.ports[i]) return false;
+    if (oneShot) { oneShot = false; fadeTo(baseName, 0.25); } // (whatever it was doing about the last click)
+    Object.assign(salvo, { st: 'open', t: 0, arm: i, shots: [], next: 0, last: -9, w: 1, c: 0.5 });
+    markInput();
+    return true;
+  }
+  // The core in its chest, every frame: a slow breath, brighter with the jets' thrust and
+  // with whatever the palm is firing.
+  function stepChest(dt) {
+    if (!chest.ring) return;
+    chest.flare = Math.max(0, chest.flare - dt * 2.5);
+    const beat = 0.85 + 0.15 * Math.sin(time * 2.6), k = beat + 1.6 * chest.flare + 0.5 * Math.min(1, jet.thrust);
+    chest.ring.emissiveIntensity = 1.1 * k;
+    chest.mid.emissiveIntensity = 1.4 * k;
+    chest.halo.opacity = 0.14 * beat + 0.3 * chest.flare;
+  }
+  const easeOut = (x) => 1 - (1 - x) * (1 - x);
+  function stepSalvo(dt) {
+    const Z = salvo;
+    // the bursts, each on its own clock, and the shake they give the stage
+    const R0 = SALVO.r * view.h * view.wpp * (SALVO.near / CAM_Z);
+    for (const B of blast.booms) {
+      if (B.t < 0) continue;
+      B.t += dt;
+      const a = B.t / SALVO.boom;
+      if (a >= 1) { B.t = -1; B.g.visible = false; continue; }
+      const f = clamp01(a / 0.4);
+      B.flash.scale.setScalar(R0 * (0.6 + 1.3 * easeOut(f)));
+      for (const m of B.glow) m.material.opacity = m.userData.a * (1 - f) * (1 - f);
+      const r = clamp01(a / 0.5);
+      B.rays.scale.setScalar(R0 * (0.5 + 2 * easeOut(r)));
+      B.rayM.opacity = 0.8 * (1 - r);
+      B.ring.scale.setScalar(R0 * (0.4 + 2.3 * easeOut(a)));
+      B.ring.material.opacity = 0.9 * Math.pow(1 - a, 1.5);
+      const b = clamp01((a - 0.12) / 0.88);
+      B.wake.scale.setScalar(R0 * (0.2 + 1.7 * easeOut(b)));
+      B.wake.material.opacity = a > 0.12 ? 0.6 * (1 - b) : 0;
+    }
+    if (Z.shake > 0 || canvas.style.translate) {
+      Z.shake = Math.max(0, Z.shake - dt);
+      const k = Z.shake / 0.24, amp = 7 * k * k;
+      canvas.style.translate = Z.shake > 0 ? `${(Math.sin(time * 91) * amp).toFixed(1)}px ${(Math.cos(time * 77) * amp).toFixed(1)}px` : '';
+    }
+    if (!Z.st) return;
+    Z.t += dt;
+    const H = at.h * view.wpp;
+    // Off on a journey (timed or scrolled), into a tunnel, to fetch the contact card, to
+    // the dock, or a scene up over it: no more of it. What is in the air goes out, and
+    // the port shuts from as far open as it had got.
+    const hidden = tun.hidden || maskHides || shared.uClipAll.value > 0.5 || shared.uDissolve.value > 0.01;
+    const off = !!trans || view.dock || sceneOpen() || scrub.mid || delivBusy() || tun.active || hidden;
+    if (off && Z.st !== 'shut') {
+      Z.shots.forEach((S, i) => { if (!S.hit) { S.hit = true; blast.bolts[i].visible = false; } });
+      Z.w = Z.st === 'open' ? smooth(clamp01(Z.t / SALVO.open)) : 1;
+      Z.c = Z.st === 'open' ? 0 : Z.st === 'charge' ? smooth(clamp01(Z.t / SALVO.charge)) : 0.5;
+      Z.st = 'shut';
+      Z.t = 0;
+    }
+    const fade = Z.st === 'shut' ? 1 - smooth(clamp01(Z.t / SALVO.shut)) : 1;
+    const open = Z.st === 'open' ? smooth(clamp01(Z.t / SALVO.open)) : Z.st === 'shut' ? Z.w * fade : 1;
+    const kick = Math.exp(-(Z.t - Z.last) / 0.07) * (Z.st === 'fire' ? 1 : 0);
+    const charge = Z.st === 'open' ? 0 : Z.st === 'charge' ? smooth(clamp01(Z.t / SALVO.charge)) : Z.st === 'fire' ? 0.6 + 0.4 * kick : Z.c * fade;
+    const P = palmOut(Z.arm, open, kick, bT.set(0, 0.05, 1).normalize(), charge); // (the palm to us)
+    const px = P.x, py = P.y, pz = P.z;
+    if (hidden) blast.ports[Z.arm].visible = false; // (its lights are not the body's to hide behind a card: gone with it)
+    if (Z.st === 'open' && Z.t >= SALVO.open) { Z.st = 'charge'; Z.t = 0; sfx('jet-ignite', { gain: 0.5 }); }
+    else if (Z.st === 'charge' && Z.t >= SALVO.charge) { Z.st = 'fire'; Z.t = 0; Z.next = 0; Z.w = 1; Z.c = 0.5; }
+    else if (Z.st === 'shut' && Z.t >= SALVO.shut) {
+      blastOff();
+      Z.st = null;
+      if (!off) react('thumbs');
+      return;
+    }
+    if (Z.st === 'fire' && Z.shots.length < blast.bolts.length && Z.t >= Z.next) {
+      // the next bolt: from the palm to a place on the glass, spread across it
+      const n = Z.shots.length;
+      const to = toWorld(view.w * (0.5 + (n - 1) * 0.23 + (Math.random() - 0.5) * 0.1), view.h * (0.36 + Math.random() * 0.26), CAM_Z - SALVO.near, new THREE.Vector3());
+      Z.shots.push({ t: 0, from: new THREE.Vector3(px, py, pz), to, hit: false });
+      Z.next = Z.t + SALVO.gap;
+      Z.last = Z.t;
+      if (!n) sfx('jet-burst', { gain: 0.5 });
+      for (let i = 0; i < 5; i++) spawn(px, py, pz, (Math.random() - 0.5) * H * 0.5, (Math.random() - 0.5) * H * 0.5, H * 0.3, 0.25 + Math.random() * 0.25, 0.8);
+    }
+    let flying = 0;
+    Z.shots.forEach((S, i) => {
+      const g = blast.bolts[i];
+      if (S.hit) return;
+      S.t += dt;
+      const u = clamp01(S.t / SALVO.fly), k = Math.pow(u, 1.35); // (gathering pace)
+      bN.subVectors(S.to, S.from);
+      g.position.copy(S.from).addScaledVector(bN, k);
+      g.quaternion.setFromUnitVectors(bY, bN.normalize());
+      g.scale.setScalar(Math.min(SALVO.len, at.h * 0.2) * view.wpp * (0.6 + 0.4 * smooth(clamp01(u / 0.2))));
+      g.visible = true;
+      spawn(g.position.x, g.position.y, g.position.z, (Math.random() - 0.5) * H * 0.1, (Math.random() - 0.5) * H * 0.1, 0, 0.2 + Math.random() * 0.25, 0.8);
+      if (u < 1) { flying++; return; }
+      // on the glass: the burst, its sparks (seen that close, a little way is a long way), the shake
+      S.hit = true;
+      g.visible = false;
+      const B = blast.booms[i];
+      B.g.position.copy(S.to);
+      B.g.visible = true;
+      B.t = 0;
+      B.rays.rotation.z = Math.random() * Math.PI;
+      const near = view.wpp * (SALVO.near / CAM_Z);
+      for (let m = 0; m < 26; m++) {
+        const a = (m / 26) * TAU + Math.random() * 0.4, sp = (160 + Math.random() * 520) * near;
+        spawn(S.to.x, S.to.y, S.to.z, Math.cos(a) * sp, Math.sin(a) * sp, 0, 0.35 + Math.random() * 0.45, 0.9);
+      }
+      Z.shake = 0.24;
+      sfx(i ? 'land' : 'stunt-impact', { gain: 0.7, rate: i ? 0.7 : 1 });
+      setFace('surprised', 0.6);
+    });
+    if (Z.st === 'fire' && Z.shots.length === blast.bolts.length && !flying) { Z.st = 'shut'; Z.t = 0; }
   }
 
   // Its right hand, after the poses, and the X with it. The hand goes out to the X's rim
@@ -5018,8 +5831,9 @@ export async function start({ reduced = false } = {}) {
       // from the far side round toward the near one, the first place its arm is long
       // enough for (o: out from the X's middle there, on the screen).
       const wpp = (view.wpp * (CAM_Z - kS.z)) / CAM_Z, z0 = kS.z; // (a pixel, at its shoulder's distance)
+      const armLen = (arm[0].getWorldPosition(hA).distanceTo(arm[1].getWorldPosition(hB)) + hB.distanceTo(arm[2].getWorldPosition(hA))) / wpp;
       const palm = fingers.length ? fingers[Math.min(1, fingers.length - 1)][0].getWorldPosition(hA).distanceTo(fingers[Math.min(1, fingers.length - 1)][1].getWorldPosition(hB)) / wpp : half * 0.4;
-      const L = hp * 0.38;
+      const L = armLen * 0.92; // (as far as it reaches, less a little)
       let ox = -1, oy = 0;
       for (let deg = 180; deg >= 30; deg -= 10) {
         ox = Math.cos((deg * Math.PI) / 180);
@@ -5172,14 +5986,16 @@ export async function start({ reduced = false } = {}) {
   const clicks = [];
   hit.addEventListener('click', () => {
     if (delivBusy()) return; // (busy bringing the contact card in)
+    if (salvo.st) return; // (its hand is up: see stepSalvo)
     const now = performance.now();
     clicks.push(now);
     while (clicks.length && now - clicks[0] > 2500) clicks.shift();
     setFace('surprised', 1);
     puff();
     if (clicks.length >= 4) {
+      // (poked four times running: it fires back at the screen, or dances where it can't)
       clicks.length = 0;
-      react('dance');
+      if (!startSalvo()) react('dance');
     } else {
       react(REACTIONS[reactIdx++ % REACTIONS.length]);
     }
@@ -5424,19 +6240,34 @@ export async function start({ reduced = false } = {}) {
     aimHead(dt, now, level);
     gripCard(dt);
     perchHold(dt);
+    applyCheer(dt); // (before the salvo: the hand that fires is posed over a cheer, not under it)
+    stepSalvo(dt);
+    stepChest(dt);
     maskTunnel();
-    applyCheer(dt);
     stepPhones(dt);
     updateSeatMark();
 
     // face
+    face.surprised = Math.max(0, face.surprised - dt * 1.2);
+    face.sad = Math.max(0, face.sad - dt * 0.5);
     if (faceMesh) {
       const d = faceMesh.morphTargetDictionary;
       const inf = faceMesh.morphTargetInfluences;
-      face.surprised = Math.max(0, face.surprised - dt * 1.2);
-      face.sad = Math.max(0, face.sad - dt * 0.5);
       if (d[MODEL.face.surprised] !== undefined) inf[d[MODEL.face.surprised]] = face.surprised;
       if (d[MODEL.face.sad] !== undefined) inf[d[MODEL.face.sad]] = face.sad;
+    }
+    // (the same face on the helmet: its eyes open tall when startled, narrow and dim
+    // when sad, and blink now and then)
+    if (visor.mat) {
+      // (no blink with reduced motion: the loop sleeps there, and would sleep on shut eyes)
+      if (!reduced) {
+        visor.blink -= dt;
+        if (visor.blink < -0.13) visor.blink = 2.5 + Math.random() * 4;
+      }
+      const shut = !reduced && visor.blink < 0 ? Math.sin((-visor.blink / 0.13) * Math.PI) : 0;
+      const k = clamp(1 + 1.4 * face.surprised - 0.5 * face.sad, 0.35, 2.6) * (1 - 0.92 * shut);
+      for (const eye of visor.eyes) { eye.scale.y = k; eye.position.y = visor.y0 * (1 - k); }
+      visor.mat.emissiveIntensity = (1.15 + 1.2 * face.surprised) * (1 - 0.5 * face.sad);
     }
 
     shed(dt);
@@ -5487,7 +6318,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get perch() { const Q = trans && trans.kind === 'case' ? trans.perch : null; return { st: Q ? Q.st : null, u: Q ? +Q.u.toFixed(2) : 0, hp: Q ? Math.round(Q.hp) : 0, seat: +perch.seat.toFixed(2), legs: perch.legs.map((L) => +L.a.toFixed(3)), over: stage.over, top: stage.top }; }, get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)), seen: heard.feet.map((F) => +F.y.toFixed(4)) }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get suit() { return visor.dbg; }, get perch() { const Q = trans && trans.kind === 'case' ? trans.perch : null; return { st: Q ? Q.st : null, u: Q ? +Q.u.toFixed(2) : 0, hp: Q ? Math.round(Q.hp) : 0, seat: +perch.seat.toFixed(2), legs: perch.legs.map((L) => +L.a.toFixed(3)), over: stage.over, top: stage.top }; }, get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)), seen: heard.feet.map((F) => +F.y.toFixed(4)) }; } };
   return window.__avatar;
 }
 
@@ -5508,18 +6339,24 @@ function abyssalize(source, shared) {
   m.userData.uClip = { value: 0 }; // 1 = this part can pass behind the contact card
   m.userData.uArm = { value: 0 }; // 1 = this part can pass behind an open case's X...
   m.userData.uFing = { value: [-1, -1, -1, -1, -1, -1] }; // ...all but what these bones of its skeleton move: the fingers
+  m.userData.uRimK = { value: look && look.rim != null ? look.rim : 1 }; // how much of the teal edge-glow this look takes
+  m.userData.uSkip = { value: new THREE.Vector2(-1, -1) }; // two bones of its skeleton whose part of the mesh is not drawn (none: -1)
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, shared);
     sh.uniforms.uClip = m.userData.uClip;
     sh.uniforms.uArm = m.userData.uArm;
     sh.uniforms.uFing = m.userData.uFing;
+    sh.uniforms.uRimK = m.userData.uRimK;
+    sh.uniforms.uSkip = m.userData.uSkip;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vDPos;\nvarying float vFing;\nuniform mat4 uInvRoot;\nuniform float uFing[6];')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vDPos;\nvarying float vFing;\nvarying float vSkip;\nuniform mat4 uInvRoot;\nuniform float uFing[6];\nuniform vec2 uSkip;')
       .replace('#include <skinning_vertex>', `#include <skinning_vertex>
         vDPos = (uInvRoot * modelMatrix * vec4(transformed, 1.0)).xyz;
         vFing = 0.0;
+        vSkip = 0.0;
         #ifdef USE_SKINNING
         for (int i = 0; i < 6; i++) vFing += dot(skinWeight, vec4(lessThan(abs(skinIndex - uFing[i]), vec4(0.5))));
+        vSkip = dot(skinWeight, vec4(lessThan(abs(skinIndex - uSkip.x), vec4(0.5)))) + dot(skinWeight, vec4(lessThan(abs(skinIndex - uSkip.y), vec4(0.5))));
         #endif`);
     sh.fragmentShader = sh.fragmentShader
       .replace(
@@ -5527,8 +6364,9 @@ function abyssalize(source, shared) {
         `#include <common>
         varying vec3 vDPos;
         varying float vFing;
+        varying float vSkip;
         uniform float uDissolve; uniform float uTime; uniform float uNoiseScale; uniform float uHeight;
-        uniform vec3 uRim; uniform vec3 uEdge;
+        uniform vec3 uRim; uniform vec3 uEdge; uniform float uRimK;
         uniform float uClip; uniform float uClipAll; uniform float uCardOn; uniform vec4 uCardRect; uniform vec4 uAllRect;
         uniform float uArm; uniform vec3 uDisc; uniform vec3 uGrip;
         float aHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -5542,6 +6380,7 @@ function abyssalize(source, shared) {
       .replace(
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
+        if (vSkip > 0.5) discard;
         if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
         if (uArm > 0.5 && uDisc.z > 0.0 && vFing < 0.5
@@ -5563,7 +6402,7 @@ function abyssalize(source, shared) {
         `#include <emissivemap_fragment>
         #define RIM_STRENGTH ${RIM_STRENGTH}
         float aRim = pow(1.0 - saturate(dot(normalize(normal), normalize(vViewPosition))), 2.6);
-        totalEmissiveRadiance += uRim * aRim * RIM_STRENGTH + uEdge * aEdge * 1.6;`
+        totalEmissiveRadiance += uRim * aRim * RIM_STRENGTH * uRimK + uEdge * aEdge * 1.6;`
       );
   };
   m.customProgramCacheKey = () => 'abyssal-avatar';
