@@ -1559,6 +1559,11 @@ html[data-sound="on"] .sound-bars i {
     will-change: transform, opacity;
   }
 
+  /* the neighbours on the ring are a way there */
+  .js .tl-item:not(.is-focus) {
+    cursor: pointer;
+  }
+
   /* the career span draws itself when a card locks on */
   .js .tl-item:not(.is-focus) .tl-span-bar {
     transform: scaleX(0);

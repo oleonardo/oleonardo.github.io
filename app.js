@@ -362,7 +362,8 @@
       node.style.opacity = opacity.toFixed(3);
       node.style.visibility = opacity < 0.01 ? 'hidden' : '';
       node.classList.toggle('is-gone', opacity < 0.01);
-      node.style.pointerEvents = gate > 0.5 && depth > 0.9 ? 'auto' : 'none';
+      // (the card in front and its visible neighbours take the pointer: a click on a neighbour travels to it)
+      node.style.pointerEvents = gate > 0.5 && (depth > 0.9 || opacity > 0.12) ? 'auto' : 'none';
       if (depth > frontDepth) {
         frontDepth = depth;
         front = i;
@@ -588,10 +589,34 @@
     window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
   }
   el.rail.forEach((btn, i) => btn.addEventListener('click', () => scrollToStory(i)));
+  // Desktop ring: a click on the card above or below brings that year to the front.
+  el.items.forEach((node, i) => {
+    node.addEventListener('click', () => {
+      if (!layout.desktop || node.classList.contains('is-focus')) return;
+      if (String(getSelection()).length) return;
+      scrollToStory(i);
+    });
+  });
 
-  // Projects: centre a side card first, open the active one.
+  // Projects: centre a side card first, open the active one. On desktop the deck is
+  // driven by the page scroll; on phones and tablets it is its own horizontal scroller.
+  // (phones and tablets: the scroll that centres card i, as far as the deck allows)
+  function deckLeftFor(i) {
+    const deck = el.deck.getBoundingClientRect();
+    const card = el.projects[i].getBoundingClientRect();
+    const left = el.deck.scrollLeft + card.left + card.width / 2 - (deck.left + deck.width / 2);
+    return Math.round(Math.max(0, Math.min(el.deck.scrollWidth - el.deck.clientWidth, left)));
+  }
+  function isCentred(i) {
+    if (layout.desktop) return i === activeProject;
+    return Math.abs(deckLeftFor(i) - el.deck.scrollLeft) < 8;
+  }
   function scrollToProject(i) {
     const L = layout;
+    if (!L.desktop) {
+      el.deck.scrollTo({ left: deckLeftFor(i), behavior: reduced ? 'auto' : 'smooth' });
+      return;
+    }
     const top = L.work.top + (M > 1 ? i / (M - 1) : 0) * (L.work.h - L.vh - deckHold());
     window.scrollTo({ top: Math.round(top), behavior: reduced ? 'auto' : 'smooth' });
   }
@@ -627,9 +652,11 @@
 
   el.projects.forEach((node, i) => {
     const btn = $('.project-open', node);
+    // A click on a side card brings it to the centre (forward or back); only the
+    // card in focus opens its case.
     btn.addEventListener('click', () => {
       stopCaseShow(node);
-      if (layout.desktop && !node.classList.contains('is-active')) {
+      if (!isCentred(i)) {
         scrollToProject(i);
         return;
       }
