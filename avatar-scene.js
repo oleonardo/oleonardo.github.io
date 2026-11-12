@@ -56,6 +56,7 @@ const MODEL = {
     Suit: { color: 0x0e6f80, metal: 0.92, rough: 0.3, rim: 0.2 },
     Gold: { color: 0xd9a55c, metal: 0.95, rough: 0.26, rim: 0.12 },
     Steel: { color: 0x8296ab, metal: 0.95, rough: 0.32, rim: 0.15 }, // soles
+    Glove: { color: 0xb4c6d6, metal: 0.8, rough: 0.3, rim: 0.4 }, // the right hand's fingers while they hold an open case's X: a light steel, or they are lost on the dark button
     Under: { color: 0x05080d, metal: 0.15, rough: 0.8, rim: 0 }, // the under-suit: the dark between the plates, the joints
     Eye: { color: 0x050810, emissive: 0x63e6d2, glow: 1.15 }, // the eyes in it (brightness set by the face)
   },
@@ -251,6 +252,7 @@ export async function start({ reduced = false } = {}) {
     uEdge: { value: new THREE.Color(0x9ff3e6) }, // soft sea-glow on the dissolving edge
     uCardRect: { value: new THREE.Vector4() }, // the contact card (or a story card), in drawing-buffer pixels
     uCardOn: { value: 0 },
+    uCardHook: { value: 0 }, // 1 = holding the contact card: the thumb of the hand behind it comes round onto its face (drawn over it)
     uClipAll: { value: 0 }, // 1 = the whole body passes behind a card (a time tunnel, the case it fell into, the last case)...
     uAllRect: { value: new THREE.Vector4() }, // ...this one (its own rect: the contact card's arm clip stays as it is)
     uDisc: { value: new THREE.Vector3() }, // the X of an open case, a disc (middle and radius, drawing-buffer pixels; no radius: none): the right arm passes behind it...
@@ -295,7 +297,13 @@ export async function start({ reduced = false } = {}) {
   model.traverse((o) => {
     if (!o.isMesh || Array.isArray(o.material) || !o.material.userData.uClip) return;
     for (let n = o; n; n = n.parent) {
-      if (behind.has(bare(n.name).replace(/_\d+$/, ''))) { o.material.userData.uClip.value = 1; break; }
+      if (behind.has(bare(n.name).replace(/_\d+$/, ''))) {
+        o.material.userData.uClip.value = 1;
+        // (which of its skeleton's bones are that hand's thumb: it comes round the card's edge, see gripCard)
+        const H = o.isSkinnedMesh ? hands.find((h) => h && o.skeleton.bones.includes(h.thumb[0])) : null;
+        if (H) H.thumb.slice(0, 2).forEach((b, i) => { o.material.userData.uFing.value[i] = o.skeleton.bones.indexOf(b); });
+        break;
+      }
       if (behindX.has(bare(n.name).replace(/_\d+$/, ''))) {
         o.material.userData.uArm.value = 1;
         // (which of its skeleton's bones are those fingers: told apart in the shader)
@@ -4590,6 +4598,7 @@ export async function start({ reduced = false } = {}) {
     tug.x += tug.v * dt;
     const card = nodes.terminal;
     const here = section === 'contato' && !view.dock && card;
+    shared.uCardHook.value = 0; // (on again below, while it holds the card)
     // the card wobbles with the jolt, and stands off its place while it is brought in
     // (individual transform properties compose with the card's own transform and
     // transitions; this is the one place that writes them)
@@ -4658,15 +4667,53 @@ export async function start({ reduced = false } = {}) {
     // keep reaching while the weight fades (leaving the section), so the arms ease off
     if (grip.w < 0.01 || !arms.length) return;
     const w = grip.w * grip.w * (3 - 2 * grip.w);
+    shared.uCardHook.value = w > 0.5 ? 1 : 0;
     arms.forEach((arm, i) => {
       arm[0].getWorldPosition(kS);
       const [, sy] = toCanvas(kS);
-      // left hand reaches round behind the edge, right hand holds it in front, lower
-      const y = clamp(sy + at.h * (i === 0 ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
-      const x = i === 0 ? ox + at.h * 0.1 : ox + 7;
-      toWorld(x, y, kS.z, gripTo);
+      const z0 = kS.z, Hd = hands[i], wpp = (view.wpp * (CAM_Z - z0)) / CAM_Z;
+      const palm = Hd ? Hd.fingers[1][0].getWorldPosition(hA).distanceTo(Hd.fingers[1][1].getWorldPosition(hB)) / wpp : at.h * 0.05;
+      // the far hand (left) high, behind the edge; the near one (right) lower, in front of it
+      const back = armSide[i] > 0;
+      const y = clamp(sy + at.h * (back ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
+      if (!back || !Hd) {
+        // in front: the wrist just off the edge, so the palm straddles it and the
+        // fingers lie over the card's face, curled in against it; the thumb up the edge
+        toWorld(ox - palm * 0.15, y, z0, gripTo);
+        reach(arm, gripTo, w);
+        if (!Hd) return;
+        Hd.fingers.forEach(([, f1, f2, tip], j) => {
+          const up = 0.2 - j * 0.12; // (fanned a little: the index highest)
+          layTo(f1, f2, hIn.set(1, up, -0.05), w);
+          layTo(f2, tip, hIn.set(0.8, up * 0.5, -0.55), w);
+        });
+        layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.15, 1, 0.25), w);
+        layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(0.35, 1, 0), w);
+        return;
+      }
+      // behind: the palm flat on the card's back, the fingers along it, out of sight;
+      // the hand set so the root of its thumb is at the edge, and the thumb comes round
+      // it toward us and lies back over the face: a pinch on the edge
+      toWorld(ox + palm * 0.9, y, z0, gripTo);
       reach(arm, gripTo, w);
+      const [tx, ty] = toCanvas(Hd.thumb[0].getWorldPosition(hA));
+      toWorld(ox + palm * 0.9 + (ox - 1 - tx) * w, y, z0, gripTo);
+      reach(arm, gripTo, w);
+      Hd.fingers.forEach(([, f1, f2, tip]) => {
+        layTo(f1, f2, hIn.set(1, 0, -0.2), w);
+        layTo(f2, tip, hIn.set(1, -0.1, -0.35), w);
+      });
+      // (round the edge toward us, then back over the face)
+      layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.7, 0.12, 0.7), w);
+      layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(1, 0.08, 0.15), w);
     });
+  }
+  // (a bone laid along a direction in the world, toward its child: weighted)
+  const layA = new THREE.Vector3(), layB = new THREE.Vector3();
+  function layTo(bone, next, dir, w) {
+    if (!bone || !next) return;
+    const l = bone.getWorldPosition(layA).distanceTo(next.getWorldPosition(layB));
+    swing(bone, next, layB.copy(layA).addScaledVector(dir.normalize(), l), w);
   }
 
   // ---------------------------------------------------------------------------
@@ -6187,8 +6234,28 @@ export async function start({ reduced = false } = {}) {
   const hTo = new THREE.Vector3(), hA = new THREE.Vector3(), hB = new THREE.Vector3(), hIn = new THREE.Vector3(), hPole = new THREE.Vector3();
   const armR = armSide.indexOf(Math.min(...armSide)); // (the model's own right)
   const XFALL = { g: 2600, pull: 50, drag: 11, bounce: 0.38, rock: 130, calm: 9 }; // px/s²; toward its spot (1/s², 1/s); kept of a bounce; its rocking (1/s², 1/s)
+  // While that hand has the X its fingers turn a light steel (they lie on the dark
+  // button, where the suit's teal is lost), and back to teal once it lets go.
+  const gloveX = { k: 0, mats: null, a: new THREE.Color(MODEL.palette.Suit.color), b: new THREE.Color(MODEL.palette.Glove.color) };
   function perchHold(dt) {
     const Q = trans && trans.kind === 'case' ? trans.perch : null;
+    perchGrip(Q, dt);
+    const want = Q && Q.got ? 1 : 0;
+    if (want === gloveX.k) return;
+    gloveX.k = reduced ? want : gloveX.k + (want - gloveX.k) * damp(5, dt);
+    if (Math.abs(want - gloveX.k) < 0.002) gloveX.k = want;
+    // (that hand's skins: the meshes that go behind the X, see behindX)
+    // (and what each had, to go back to)
+    if (!gloveX.mats) gloveX.mats = meshes.filter((o) => o.isSkinnedMesh && o.material.userData.uArm.value === 1).map((o) => ({ m: o.material, metal: o.material.metalness, rough: o.material.roughness, rim: o.material.userData.uRimK.value }));
+    const G = MODEL.palette.Glove, k = gloveX.k;
+    for (const { m, metal, rough, rim } of gloveX.mats) {
+      m.color.lerpColors(gloveX.a, gloveX.b, k);
+      m.metalness = metal + (G.metal - metal) * k;
+      m.roughness = rough + (G.rough - rough) * k;
+      m.userData.uRimK.value = rim + (G.rim - rim) * k;
+    }
+  }
+  function perchGrip(Q, dt) {
     if (Q) perchBlast(Q, dt);
     const G = Q && armR >= 0 && (Q.got || Q.reach >= 0.01) ? perchSpot() : null;
     if (!G) { shared.uDisc.value.z = 0; return; }
@@ -6777,7 +6844,7 @@ function abyssalize(source, shared) {
         varying float vSkip;
         uniform float uDissolve; uniform float uTime; uniform float uNoiseScale; uniform float uHeight;
         uniform vec3 uRim; uniform vec3 uEdge; uniform float uRimK;
-        uniform float uClip; uniform float uClipAll; uniform float uCardOn; uniform vec4 uCardRect; uniform vec4 uAllRect;
+        uniform float uClip; uniform float uClipAll; uniform float uCardOn; uniform float uCardHook; uniform vec4 uCardRect; uniform vec4 uAllRect;
         uniform float uArm; uniform vec3 uDisc; uniform vec3 uGrip;
         float aHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float aNoise(vec3 x) {
@@ -6791,7 +6858,7 @@ function abyssalize(source, shared) {
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
         if (vSkip > 0.5) discard;
-        if (uClip * uCardOn > 0.5 && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
+        if (uClip * uCardOn > 0.5 && !(uCardHook > 0.5 && vFing > 0.5) && gl_FragCoord.x > uCardRect.x && gl_FragCoord.x < uCardRect.z
             && gl_FragCoord.y > uCardRect.y && gl_FragCoord.y < uCardRect.w) discard;
         if (uArm > 0.5 && uDisc.z > 0.0 && vFing < 0.5
             && (distance(gl_FragCoord.xy, uDisc.xy) < uDisc.z || distance(gl_FragCoord.xy, uGrip.xy) < uGrip.z)) discard;
