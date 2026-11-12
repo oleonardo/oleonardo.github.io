@@ -28,8 +28,10 @@ const MODEL = {
   // legs that end in boots (the lower leg is the boot: no foot on the end of it).
   //   head   the helmet: how wide and how deep it is, and how high off the ground its
   //          chin is (its crown is the old head's)
-  //   body   how wide and how deep the body is (slimmer than the model's torso, whose
-  //          height it keeps); chest: how far its front stands out past that depth
+  //   body   how wide and how deep the body is (slimmer than the model's torso), and
+  //          how much of that torso's height it keeps, from the hips up (it ends at a
+  //          collar, a neck's length under the helmet: the helmet does not sit down
+  //          over it); chest: how far its front stands out past that depth
   //   core   the core in the chest: how high up the body, and its radius in the body's width
   //   thigh  the thigh under its plates, at the knee and at the hip
   //   boot   the boot's radius at the knee, down the shin, and at the bell of its foot
@@ -37,7 +39,7 @@ const MODEL = {
   //          and at the wrist; pad: a pauldron's reach
   //   reach  the model's forearms are as long as its legs: the suit's are this much of
   //          them; hand: and its hands, which shrink with them, this much bigger again
-  suit: { head: { w: 0.44, d: 0.49, chin: 0.5 }, body: [0.22, 0.2], chest: 0.06, core: [0.54, 0.15], thigh: [0.04, 0.046], boot: [0.047, 0.056, 0.08], arm: 0.037, fore: [0.031, 0.049], pad: 0.068, reach: 0.6, hand: 1.62 },
+  suit: { head: { w: 0.46, d: 0.47, chin: 0.548 }, body: [0.22, 0.2, 0.78], chest: 0.06, core: [0.56, 0.15], thigh: [0.04, 0.046], boot: [0.047, 0.056, 0.08], arm: 0.037, fore: [0.031, 0.049], pad: 0.068, reach: 0.6, hand: 1.62 },
   // Abissal palette: trench-blue shell, steel-blue joints, softly glowing teal eyes.
   palette: {
     // (what is left of the model's own shell, its hands, and what was built to match it,
@@ -62,14 +64,15 @@ const MODEL = {
   // half-widths.
   phones: {
     reach: 1.13, // a cup's middle, out from the head's middle
-    ear: 0.46, // the cups' height: where the head is widest (the band follows the head's outline up from there, and over)
+    ear: 0.46, // the cups' height: where the head is widest (a band would follow the head's outline up from there, and over)
     cup: [0.3, 0.15], // a cup's radius and thickness (slim: the right arm swings close by in Wave and Dance)
     pad: [0.33, 0.06], // its cushion
     ring: [0.19, 0.026], // the glowing ring on its outer face
-    band: [0.053, 2.2], // the band's radius, and how much wider than thick it is
-    // hovering over the ears, where they take shape and where they come apart: lifted
-    // (in heights) and opened out a little wider than the head
-    hover: { lift: 0.36, open: 1.09 },
+    band: null, // no band over the head: a cup on each side of it, and that is all (a band: [its radius, how much wider than thick it is], e.g. [0.053, 2.2])
+    // where they take shape and where they come apart: at the sides of the head, each
+    // cup level with its own place and a little way out from it (open: so much wider
+    // than the head), to close in on to it; lift: and so far above it (in heights), none
+    hover: { lift: 0, open: 1.24 },
     motes: 320, // the particles they are made of, coming and going
   },
   headBone: 'Head',
@@ -431,11 +434,12 @@ export async function start({ reduced = false } = {}) {
   // box, made so wide and so deep about its own middle)
   const slim = (b) => {
     if (!b) return b;
-    const [bw, bd] = MODEL.suit.body.map((k) => k * modelH), cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    const [bw, bd] = MODEL.suit.body.map((k) => k * modelH),  cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
     b.min.x = cx - bw / 2;
     b.max.x = cx + bw / 2;
     b.min.z = cz - bd / 2;
     b.max.z = cz + bd / 2;
+    b.max.y = b.min.y + (b.max.y - b.min.y) * MODEL.suit.body[2];
     return b;
   };
   {
@@ -557,7 +561,7 @@ export async function start({ reduced = false } = {}) {
   // hands are the model's own, out of the suit's cuffs. The suit is painted metal under a clear coat (teal,
   // with a pale gold faceplate and steel joints): no pattern on it, only the room's
   // lights running over its curves. Same dissolve and card masks as the body.
-  const visor = { eyes: [], mat: null, shell: null, y0: 0, blink: 2 + Math.random() * 3 };
+  const visor = { eyes: [], mat: null, glow: null, shell: null, y0: 0, blink: 2 + Math.random() * 3 };
   {
     // (the head as every clip holds it at rest, not as the file leaves it, turned, in
     // the middle of a glance: the helmet is built square to the body, and must be so
@@ -733,69 +737,104 @@ export async function start({ reduced = false } = {}) {
     const tube = (S0, mat) => new THREE.Mesh(patch(28, 10, (u, v, o) => S0(u * TAU, v, o)), mat);
     const ball = (r, mat, x = 0, y = 0, z = 0) => new THREE.Mesh(new THREE.SphereGeometry(r * T, 28, 18).translate(x, y, z), mat);
 
-    // The helmet. Not a ball: an egg, taller than it is wide, broadest at the cheeks, a
-    // little under its middle, drawn in above to the crown and below to a small chin
-    // (the headphones are cut to it, below). Its shell is the suit's teal, and on it,
-    // plate over plate: a mask of pale gold from the cheekbones down to the chin, a chin
-    // piece under that; over the mask a heavy brow, gold too, up to the top of the
-    // forehead, whose lower edge slants down to the middle, and under that edge the two
-    // eyes of light (what they do is the face's: see the visor, below); a raised plate
-    // from a notch in the brow back over the crown; a guard round each side of the jaw
-    // and one round the nape, with the dark of the under-suit in the hollow of each
-    // cheek, between mask and guard. No ears: the headphones sit on its sides.
+    // The helmet. Not a ball: a helmet's shape, a jaw that runs out to the cheek, sides
+    // that stand upright, a crown that turns over quickly, and squarer than round seen
+    // from above (the headphones are cut to it, below). Its shell is the suit's teal,
+    // closed underneath, a steel ring where the neck goes in. Its face is a friendly
+    // one: a wide visor of dark glass, round-cornered, set back in a frame of pale gold
+    // that stands proud of the shell; behind the glass two eyes of light, tall and
+    // round, soft at the edges (what they do is the face's: see the visor, below), and
+    // the glow they throw on the dark round them; the glass itself only as what it
+    // mirrors, so the eyes are seen to lie behind it. No brow, no mouth: nothing to
+    // frown with. On the shell, plate over plate: a ridge over the crown, a band round
+    // the jaw, one round the nape, a plate at each temple. No ears: the headphones sit
+    // on its sides.
     const hb = headBone ? boxOf('Head') : null;
     if (hb) {
-      // (the old head was a wide flat box: this is narrower than that and taller, its
-      // crown where the old one was, its chin lower, over the neck)
+      // (the old head was a wide flat box: this is narrower than that, its crown where
+      // the old one was, its chin clear of the collar, a neck's length over it)
       const y0 = S.head.chin * T, w = S.head.w * T, h = hb.max.y - y0, d = S.head.d * T;
-      const R = radius([[0.42, 0], [0.7, 0.04], [0.9, 0.12], [0.98, 0.24], [1, 0.42], [0.975, 0.58], [0.87, 0.72], [0.69, 0.84], [0.43, 0.94], [0.001, 1]]);
+      // (its outline, up it: shut underneath, a chin, a jaw that runs out to the cheek,
+      // sides that stand upright from there to the temple, a crown that turns over quickly)
+      const R = radius([[0.001, 0], [0.34, 0.006], [0.52, 0.03], [0.8, 0.13], [0.95, 0.26], [1, 0.38], [1, 0.56], [0.985, 0.7], [0.92, 0.82], [0.76, 0.915], [0.5, 0.972], [0.001, 1]]);
+      // (and its plan, seen from above: squarer than a circle, a flat face and flat
+      // sides with round corners between)
+      const SQ = 0.7, sq = (x) => Math.sign(x) * Math.pow(Math.abs(x), SQ);
       // (a place on it: so far round from the front, so high)
       const skin = (phi, y, out) => {
-        const r = R(y), jaw = 0.9 + 0.1 * smooth(clamp01(y / 0.3)), c = Math.cos(phi);
-        return out.set(r * Math.sin(phi) * (w / 2) * jaw, y * h, r * c * (d / 2) * (c > 0 ? 0.94 : 1));
+        const r = R(y), jaw = 0.88 + 0.12 * smooth(clamp01(y / 0.3)), c = Math.cos(phi);
+        return out.set(r * sq(Math.sin(phi)) * (w / 2) * jaw, y * h, r * sq(c) * (d / 2) * (c > 0 ? 0.94 : 1));
       };
-      const g = new THREE.Group(), mid = new THREE.Vector3(0, h * 0.5, 0);
+      const g = new THREE.Group(), mid = new THREE.Vector3(0, h * 0.5, 0), n = new THREE.Vector3();
       g.position.set((hb.min.x + hb.max.x) / 2, y0, (hb.min.z + hb.max.z) / 2);
-      visor.shell = new THREE.Mesh(patch(72, 44, (u, v, o) => skin((u * 2 - 1) * Math.PI, v, o)), suit); // (what the headphones are cut to)
+      visor.shell = new THREE.Mesh(patch(72, 48, (u, v, o) => skin((u * 2 - 1) * Math.PI, v, o)), suit); // (what the headphones are cut to)
       visor.shell.userData.own = true;
       g.add(visor.shell);
+      g.add(new THREE.Mesh(new THREE.TorusGeometry(0.062 * T, 0.011 * T, 10, 40).rotateX(Math.PI / 2).translate(0, 0.004 * T, 0), steel)); // (the ring round the neck)
       const P = (nu, nv, at, t, mat, opt) => plate(nu, nv, at, t * T, 0.011 * T, mat, { inside: mid, gap: 0.006 * T, ...opt });
-      const MASK = 0.011, BROW = 0.022;
-      for (const side of [-1, 1]) g.add(P(10, 10, (u, v, o) => skin(side * (0.3 + 0.95 * u), 0.04 + 0.36 * v, o), 0.002, under, { gap: 0 })); // (the hollow of a cheek)
-      g.add(P(12, 6, (u, v, o) => skin((u * 2 - 1) * (0.36 + 0.1 * v), 0.02 + 0.13 * v, o), 0.006, gold, { gap: 0 })); // (the chin piece)
-      // (the mask: narrow at the chin, out along the jaw, and wide at once at the cheekbone)
-      const fw = (y) => (y < 0.36 ? 0.36 + 0.36 * smooth(clamp01((y - 0.06) / 0.3)) : 0.72 + 0.48 * smooth(clamp01((y - 0.36) / 0.07)));
-      g.add(P(44, 30, (u, v, o) => { const y = 0.07 + 0.49 * v; return skin((u * 2 - 1) * fw(y), y, o); }, MASK, gold));
-      // (the brow: its lower edge just over the eyes, down to the middle, level past them.
-      // Not as wide as the mask is at the cheekbones: those stand out past it)
-      const yb = (phi) => clamp(0.395 + 0.215 * (Math.abs(phi) - 0.15), 0.395, 0.515);
-      g.add(P(44, 16, (u, v, o) => { const phi = (u * 2 - 1) * 1.04 * (1 - 0.08 * v), lo = yb(phi); return skin(phi, lo + (0.8 - lo) * v, o); }, BROW, gold));
-      // (the plate over the crown: from its notch in the brow, widening over the top and
-      // down the back. So wide, whatever the helmet is there: at the very top, all of it)
-      const xw = (v) => w * (0.085 + 0.085 * smooth(clamp01(v / 0.3))) * (1 - 0.25 * smooth(clamp01((v - 0.75) / 0.25)));
-      const cy = (v) => Math.min(v > 0.5 ? 1 - (v - 0.5) * 1.3 : 0.64 + v * 0.72, 0.9995);
-      const ca = (v) => Math.asin(Math.min(1, xw(v) / Math.max(1e-9, R(cy(v)) * (w / 2))));
-      g.add(P(10, 48, (u, v, o) => skin(v > 0.5 ? Math.PI - (u * 2 - 1) * ca(v) : (u * 2 - 1) * ca(v), cy(v), o), 0.013, suit,
-        { gap: 0, solid: (u, v) => ca(v) > 1.45, swell: (u, v) => 1 + 1.6 * (1 - smooth(clamp01((v - 0.2) / 0.1))) })); // (thick at the notch: it stands over the brow there)
+      // (a piece of it stood so far off the shell, with its own u and v where something is drawn on it)
+      const off = (nu, nv, at, lift, uvOf) => {
+        const geo = patch(nu, nv, (u, v, o) => { outOf(at, u, v, mid, n); return at(u, v, o).addScaledVector(n, lift * T); });
+        if (uvOf) {
+          const uv = new Float32Array((nu + 1) * (nv + 1) * 2);
+          for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) uv.set(uvOf(i / nu, j / nv), (j * (nu + 1) + i) * 2);
+          geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        }
+        return geo;
+      };
+      // The face. Outlines on the helmet about the middle of the face: so far across
+      // (round it, rad) and so far up (of its height), with corners so round (2: an
+      // oval; more: squarer). ring: how far out the outline is, that way round.
+      const FY = 0.46, ring = (A, B, sqr, a) => 1 / Math.pow(Math.pow(Math.abs(Math.cos(a)) / A, sqr) + Math.pow(Math.abs(Math.sin(a)) / B, sqr), 1 / sqr);
+      const disc = (A, B, sqr, cx = 0) => (u, v, o) => { const a = u * TAU, r = ring(A, B, sqr, a) * v; return skin(cx + r * Math.cos(a), FY + r * Math.sin(a), o); };
+      const round2 = (u, v) => [0.5 + 0.5 * v * Math.cos(u * TAU), 0.5 + 0.5 * v * Math.sin(u * TAU)];
+      const VIS = [0.88, 0.19, 4], RIM = [1.06, 0.262, 4];
+      // (the frame: a band of gold from the visor's outline out to its own, a rim inside and out)
+      g.add(P(96, 5, (u, v, o) => { const a = u * TAU, r = ring(...VIS, a) + (ring(...RIM, a) - ring(...VIS, a)) * v; return skin(r * Math.cos(a), FY + r * Math.sin(a), o); }, 0.015, gold, { wrap: true }));
+      g.add(new THREE.Mesh(off(64, 6, disc(VIS[0] * 1.05, VIS[1] * 1.08, 4), 0.002), under)); // (the dark behind the glass)
+      const glass = abyssalize(new THREE.MeshPhysicalMaterial({ name: 'Lens', color: 0x000000, roughness: 0.05, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 0.7, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), shared);
+      glass.userData.uRimK.value = 0.25;
+      const pane = new THREE.Mesh(off(64, 6, disc(VIS[0] * 1.03, VIS[1] * 1.05, 4), 0.0095), glass);
+      pane.userData.own = true;
+      pane.renderOrder = 2;
+      g.add(pane);
+      // (the eyes: tall, round, apart; brightest in the middle, ruled across with fine
+      // lines, like a lamp behind a grille; and each one's glow on the dark round it)
+      const eyeM = look('Eye');
+      eyeM.emissiveMap = (() => {
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = 64;
+        const x = cv.getContext('2d'), gr = x.createRadialGradient(32, 32, 4, 32, 32, 32);
+        [[0, 1], [0.55, 0.86], [0.85, 0.55], [1, 0.2]].forEach(([at, k]) => gr.addColorStop(at, `rgb(${255 * k},${255 * k},${255 * k})`));
+        x.fillStyle = gr;
+        x.fillRect(0, 0, 64, 64);
+        x.fillStyle = 'rgba(0,0,0,0.22)';
+        for (let i = 3; i < 64; i += 5) x.fillRect(0, i, 64, 1.5);
+        const t = new THREE.CanvasTexture(cv);
+        t.colorSpace = THREE.SRGBColorSpace;
+        return t;
+      })();
+      const glowM = abyssalize(new THREE.MeshBasicMaterial({ name: 'EyeGlow', color: 0x63e6d2, map: glowTex, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), shared);
+      const EYE = [0.1, 0.112, 2.4], APART = 0.215;
       for (const side of [-1, 1]) {
-        // (a jaw guard: its front edge along the mask's, a slot of the dark between them, wider at the top)
-        g.add(P(18, 10, (u, v, o) => { const y = 0.02 + 0.33 * v, a = fw(y) + 0.09 + 0.14 * v; return skin(side * (a + (1.94 - a) * u), y, o); }, 0.011, suit));
-        g.add(P(10, 8, (u, v, o) => skin(side * (1.3 + 0.72 * u), 0.39 + (0.25 - 0.06 * u) * v, o), 0.008, suit)); // (a temple's plate, where an ear would be)
-      }
-      g.add(P(24, 6, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.16, 0.02 + 0.2 * v, o), 0.009, suit)); // (the nape's)
-      const eyeM = look('Eye'), n = new THREE.Vector3();
-      for (const side of [-1, 1]) {
-        // (an eye: from near the middle out and up, thicker toward its outer end; on the
-        // mask, under the brow's edge)
-        const at = (u, v, o) => skin(side * (0.15 + 0.52 * u), 0.365 + 0.085 * u + (v - 0.5) * (0.04 + 0.05 * u), o);
-        const eye = new THREE.Mesh(patch(12, 2, (u, v, o) => { outOf(at, u, v, mid, n); return at(u, v, o).addScaledVector(n, (MASK + 0.003) * T); }), eyeM);
-        // (its socket: a thin frame of dark round it)
-        g.add(new THREE.Mesh(patch(12, 2, (u, v, o) => { const a = -0.035 + 1.07 * u, b = -0.13 + 1.26 * v; outOf(at, a, b, mid, n); return at(a, b, o).addScaledVector(n, (MASK + 0.0015) * T); }), under));
-        eye.userData.own = true;
-        g.add(eye);
+        const glow = new THREE.Mesh(off(24, 4, disc(EYE[0] * 2.3, EYE[1] * 1.7, 2, side * APART), 0.0032, round2), glowM);
+        const eye = new THREE.Mesh(off(32, 5, disc(...EYE, side * APART), 0.0042, round2), eyeM);
+        glow.userData.own = eye.userData.own = true;
+        glow.renderOrder = 1;
+        g.add(glow, eye);
         visor.eyes.push(eye);
       }
-      Object.assign(visor, { mat: eyeM, y0: h * 0.41 });
+      visor.glow = glowM;
+      // (the ridge over the crown: from over the frame, widening over the top and down
+      // the back. So wide, whatever the helmet is there: at the very top, all of it)
+      const xw = (v) => w * (0.1 + 0.07 * smooth(clamp01(v / 0.3))) * (1 - 0.25 * smooth(clamp01((v - 0.75) / 0.25)));
+      const cy = (v) => Math.min(v > 0.5 ? 1 - (v - 0.5) * 1.3 : 0.75 + v * 0.5, 0.9995);
+      const ca = (v) => Math.asin(Math.pow(Math.min(1, xw(v) / Math.max(1e-9, R(cy(v)) * (w / 2))), 1 / SQ));
+      g.add(P(10, 48, (u, v, o) => skin(v > 0.5 ? Math.PI - (u * 2 - 1) * ca(v) : (u * 2 - 1) * ca(v), cy(v), o), 0.012, suit, { gap: 0, solid: (u, v) => ca(v) > 1.45 }));
+      g.add(P(56, 6, (u, v, o) => skin((u * 2 - 1) * 1.94, 0.04 + 0.15 * v, o), 0.011, suit)); // (the band round the jaw)
+      g.add(P(24, 6, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.14, 0.04 + 0.17 * v, o), 0.009, suit)); // (the nape's)
+      for (const side of [-1, 1]) g.add(P(10, 8, (u, v, o) => skin(side * (1.3 + 0.72 * u), 0.35 + (0.25 - 0.05 * u) * v, o), 0.008, suit)); // (a temple's plate, where an ear would be)
+      Object.assign(visor, { mat: eyeM, y0: h * FY });
       hang(headBone, fuse(g));
     }
 
@@ -845,6 +884,7 @@ export async function start({ reduced = false } = {}) {
       g.add(sternP);
       g.add(P(40, 14, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.8, 0.42 + 0.545 * v, o), 0.01, suit)); // (the back plate)
       g.add(P(48, 3, (u, v, o) => skin(u * TAU, 0.9 + 0.1 * v, o), 0.014, suit, { wrap: true, gap: 0 })); // (the collar)
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.048 * T, 0.054 * T, 0.075 * T, 28).translate(0, h + 0.022 * T, 0), under)); // (the neck: from in the collar up into the helmet, the under-suit, bare)
       // The core's housing. The core is IN the sternum plate: a well countersunk in it,
       // nothing standing above the plate and no other metal round it. From the plate's
       // face a chamfer down and in to the well's mouth, a flat seat round the mouth, and
@@ -1038,20 +1078,24 @@ export async function start({ reduced = false } = {}) {
       const rig = new THREE.Group(); // its origin on the line through the ears
       rig.position.set(cx, earY, zc);
       g.add(rig);
-      // the band: from ear to ear over the top of the head, the head's own outline
-      // stood off it by what the cups stand off its sides
-      const reach = C.reach * hw, clear = Math.max(0, reach - (wide[0] || hw)), half = [];
-      for (let k = 0; k <= BINS; k++) if (k === 0 || k === BINS || wide[k] > 0) half.push(new THREE.Vector2(k === BINS ? 0 : wide[k], ((hb.max.y - earY) * k) / BINS));
-      const arch = half.map((q, i) => {
-        const a = half[Math.max(0, i - 1)], b = half[Math.min(half.length - 1, i + 1)], tx = b.x - a.x, ty = b.y - a.y, tl = Math.hypot(tx, ty) || 1;
-        return i === half.length - 1 ? new THREE.Vector3(0, q.y + clear, 0) : new THREE.Vector3(q.x + (ty / tl) * clear, q.y - (tx / tl) * clear, 0);
-      });
-      arch[0].set(reach, 0, 0);
-      for (let i = arch.length - 2; i >= 0; i--) arch.push(new THREE.Vector3(-arch[i].x, arch[i].y, 0));
-      const over = new THREE.CatmullRomCurve3(arch);
-      const band = new THREE.Mesh(new THREE.TubeGeometry(over, 64, C.band[0] * hw, 8, false), shell);
-      band.scale.z = C.band[1];
-      rig.add(band);
+      // the band, where they have one: from ear to ear over the top of the head, the
+      // head's own outline stood off it by what the cups stand off its sides
+      const reach = C.reach * hw;
+      let band = null, over = null;
+      if (C.band) {
+        const clear = Math.max(0, reach - (wide[0] || hw)), half = [];
+        for (let k = 0; k <= BINS; k++) if (k === 0 || k === BINS || wide[k] > 0) half.push(new THREE.Vector2(k === BINS ? 0 : wide[k], ((hb.max.y - earY) * k) / BINS));
+        const arch = half.map((q, i) => {
+          const a = half[Math.max(0, i - 1)], b = half[Math.min(half.length - 1, i + 1)], tx = b.x - a.x, ty = b.y - a.y, tl = Math.hypot(tx, ty) || 1;
+          return i === half.length - 1 ? new THREE.Vector3(0, q.y + clear, 0) : new THREE.Vector3(q.x + (ty / tl) * clear, q.y - (tx / tl) * clear, 0);
+        });
+        arch[0].set(reach, 0, 0);
+        for (let i = arch.length - 2; i >= 0; i--) arch.push(new THREE.Vector3(-arch[i].x, arch[i].y, 0));
+        over = new THREE.CatmullRomCurve3(arch);
+        band = new THREE.Mesh(new THREE.TubeGeometry(over, 64, C.band[0] * hw, 8, false), shell);
+        band.scale.z = C.band[1];
+        rig.add(band);
+      }
       const [rc, tc] = C.cup, [rp, tp] = C.pad, [rr, rt] = C.ring;
       for (const side of [-1, 1]) {
         const cup = new THREE.Group();
@@ -1067,15 +1111,15 @@ export async function start({ reduced = false } = {}) {
         rig.add(cup);
         phones.cups.push({ group: cup, side });
       }
-      // Where their motes belong: places all over the band and the cups, in the rig's
-      // frame (part: 0 on the band, else the side of the cup it is on).
+      // Where their motes belong: places all over the band, if there is one, and the
+      // cups, in the rig's frame (part: 0 on the band, else the side of the cup it is on).
       const spots = [];
       for (let i = 0; i < C.motes; i++) {
-        if (i % 2 === 0) {
+        if (over && i % 2 === 0) {
           const q = over.getPoint(Math.random()), j = C.band[0] * hw * 1.6;
           spots.push({ part: 0, x: q.x + (Math.random() - 0.5) * j, y: q.y + (Math.random() - 0.5) * j, z: (Math.random() - 0.5) * j * C.band[1] });
         } else {
-          const side = i % 4 === 1 ? -1 : 1, a = Math.random() * TAU, r = rc * hw * (0.5 + 0.55 * Math.random());
+          const side = (over ? i % 4 === 1 : i % 2 === 1) ? -1 : 1, a = Math.random() * TAU, r = rc * hw * (0.5 + 0.55 * Math.random());
           spots.push({ part: side, x: side * (Math.random() - 0.3) * tc * hw, y: Math.sin(a) * r, z: Math.cos(a) * r });
         }
       }
@@ -1116,27 +1160,38 @@ export async function start({ reduced = false } = {}) {
   function spotWorld(s, across, out) {
     return out.set(s.part ? s.part * phones.reach * across + s.x : s.x * across, s.y, s.z).applyMatrix4(phones.rig.matrixWorld);
   }
-  // Motes in: scattered round and above the head, they swirl in to their places. Motes
-  // out: from their places they are thrown clear and left to the current.
+  // Motes in: a cup's, from out at its own side of the head, level with it, in to
+  // their places with a little turn (a band's, from round and above the head, swirling
+  // in). Motes out: from their places they are thrown clear, a cup's out to its side,
+  // and left to the current.
+  const pLat = new THREE.Vector3();
   function phonesFx(mode, across) {
     const P = phones;
     if (!hPts || reduced) return;
     const H = Math.max(at.h * view.wpp, 1e-3) * (view.dock ? 0.4 : 1); // (docked: a small cloud, inside its small frame)
     P.rig.updateWorldMatrix(true, false);
+    pLat.setFromMatrixColumn(P.rig.matrixWorld, 0).normalize(); // (out to the head's side, the way it is turned)
     for (let i = 0; i < hN; i++) {
-      const th = Math.random() * TAU, ph = Math.acos(2 * Math.random() - 1);
-      const dx = Math.sin(ph) * Math.cos(th), dy = Math.abs(Math.cos(ph)), dz = Math.sin(ph) * Math.sin(th);
+      const th = Math.random() * TAU, ph = Math.acos(2 * Math.random() - 1), side = P.spots[i].part;
+      const dx = Math.sin(ph) * Math.cos(th), dy = side ? Math.cos(ph) : Math.abs(Math.cos(ph)), dz = Math.sin(ph) * Math.sin(th);
       if (mode === 'in') {
-        const r = H * (0.2 + 0.5 * Math.random());
-        hVel[i * 3] = dx * r; hVel[i * 3 + 1] = dy * r * 0.8 + H * 0.05; hVel[i * 3 + 2] = dz * r; // (here: how far off it starts)
+        // (here: how far off it starts)
+        if (side) {
+          const r = H * (0.14 + 0.32 * Math.random()) * side, j = H * 0.09 * Math.random();
+          hVel[i * 3] = pLat.x * r + dx * j; hVel[i * 3 + 1] = pLat.y * r + dy * j; hVel[i * 3 + 2] = pLat.z * r + dz * j;
+          hSwirl[i] = 0.2 + Math.random() * 0.5;
+        } else {
+          const r = H * (0.2 + 0.5 * Math.random());
+          hVel[i * 3] = dx * r; hVel[i * 3 + 1] = dy * r * 0.8 + H * 0.05; hVel[i * 3 + 2] = dz * r;
+          hSwirl[i] = 1.3 + Math.random() * 1.7;
+        }
         hDelay[i] = Math.random() * 0.28;
         hLife[i] = 0.42 + Math.random() * 0.24;
-        hSwirl[i] = 1.3 + Math.random() * 1.7;
       } else {
         spotWorld(P.spots[i], across, pv);
         hPos[i * 3] = pv.x; hPos[i * 3 + 1] = pv.y; hPos[i * 3 + 2] = pv.z;
-        const sp = H * (0.18 + Math.random() * 0.7);
-        hVel[i * 3] = dx * sp; hVel[i * 3 + 1] = dy * sp * 0.7 + H * 0.12; hVel[i * 3 + 2] = dz * sp * 0.6;
+        const sp = H * (0.18 + Math.random() * 0.7), out = side * sp * 0.7;
+        hVel[i * 3] = dx * sp * (side ? 0.5 : 1) + pLat.x * out; hVel[i * 3 + 1] = dy * sp * (side ? 0.5 : 0.7) + (side ? H * 0.03 : H * 0.12) + pLat.y * out; hVel[i * 3 + 2] = dz * sp * (side ? 0.5 : 0.6) + pLat.z * out;
         hDelay[i] = Math.random() * 0.14;
         hLife[i] = 0.9 + Math.random() * 1.0;
       }
@@ -1196,7 +1251,7 @@ export async function start({ reduced = false } = {}) {
     const want = dbg.phones || P.want; // (QA: pin them 'on', 'up' (hovering) or 'gone')
     const V = MODEL.phones.hover;
     const there = want !== 'gone';
-    // (hovering, they are open a little wider than the head; coming down they close on it)
+    // (taking shape, they are a little wider than the head; then they close in on it)
     let across = 1 + (V.open - 1) * (view.dock ? 0 : 1 - P.k);
     if (reduced) {
       P.vis = P.visT = there ? 1 : 0;
@@ -1204,8 +1259,8 @@ export async function start({ reduced = false } = {}) {
       P.kv = P.hold = 0;
     } else {
       // The order of things. Coming: the motes first, the headphones taking shape in
-      // them a moment later, and only once they are there do they come down on the ears.
-      // Going: up off the ears first, then to motes.
+      // them a moment later, and only once they are there do they close on the head.
+      // Going: off the head first, then to motes.
       const visT = there || P.k > 0.3 ? 1 : 0;
       if (visT !== P.visT) {
         P.visT = visT;
@@ -1237,17 +1292,18 @@ export async function start({ reduced = false } = {}) {
     const hov = view.dock ? 0 : 1 - k; // (no room to hover in the dock's small frame: there they take shape on the ears)
     across = 1 + (V.open - 1) * hov;
     P.rig.position.y = P.y0 + P.lift * hov;
-    P.band.scale.set(across, 1, MODEL.phones.band[1]);
+    if (P.band) P.band.scale.set(across, 1, MODEL.phones.band[1]);
     for (const c of P.cups) c.group.position.x = c.side * P.reach * across;
     stepPhonesFx(dt, across);
-    // the moment they are on: its head dips under them, and the rings flare
+    // the moment they are on: its head gives a little as they close on it (they come
+    // from the sides now, not down on to it: a start, not a dip), and the rings flare
     if (!P.landed && (want === 'on' ? k > 0.9 : k < 0.1)) {
       P.landed = true;
       if (want === 'on' && !reduced) {
         P.flash = 1;
         if (P.dis.value < 0.5 && !maskHides && !tun.hidden) sfx('phones-clamp');
       }
-      if (!reduced) nod.v += want === 'on' ? 3 : -1.6;
+      if (!reduced) nod.v += (want === 'on' ? 3 : -1.6) * (MODEL.phones.hover.lift ? 1 : 0.4);
     }
     P.flash = Math.max(0, P.flash - dt * 2.2);
     // the rings glow with the music
@@ -6613,9 +6669,10 @@ export async function start({ reduced = false } = {}) {
         if (visor.blink < -0.13) visor.blink = 2.5 + Math.random() * 4;
       }
       const shut = !reduced && visor.blink < 0 ? Math.sin((-visor.blink / 0.13) * Math.PI) : 0;
-      const k = clamp(1 + 1.4 * face.surprised - 0.5 * face.sad, 0.35, 2.6) * (1 - 0.92 * shut);
+      const k = clamp(1 + 0.45 * face.surprised - 0.5 * face.sad, 0.35, 1.5) * (1 - 0.92 * shut); // (wide with surprise, low when sad, shut in a blink: never taller than the visor)
       for (const eye of visor.eyes) { eye.scale.y = k; eye.position.y = visor.y0 * (1 - k); }
-      visor.mat.emissiveIntensity = (1.15 + 1.2 * face.surprised) * (1 - 0.5 * face.sad);
+      visor.mat.emissiveIntensity = (1.7 + 1.2 * face.surprised) * (1 - 0.5 * face.sad);
+      if (visor.glow) visor.glow.opacity = 0.26 * (0.8 + 0.5 * face.surprised) * (1 - 0.5 * face.sad) * (1 - 0.9 * shut); // (its glow on the mask, out with the light)
     }
 
     shed(dt);
