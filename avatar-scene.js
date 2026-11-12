@@ -4592,7 +4592,8 @@ export async function start({ reduced = false } = {}) {
 
   // Contact: it holds the terminal card by its left edge. When the focus moves to
   // another field it gives the card a jolt, as if it had moved the cursor itself.
-  const gripTo = new THREE.Vector3();
+  const gripTo = new THREE.Vector3(), gripPole = new THREE.Vector3();
+  const GRIP_FWD = 0.2; // (how far forward of its shoulder the near hand holds the edge, in body heights)
   function gripCard(dt) {
     tug.v += (-tug.x * 60 - tug.v * 4.2) * dt;
     tug.x += tug.v * dt;
@@ -4679,8 +4680,10 @@ export async function start({ reduced = false } = {}) {
       if (!back || !Hd) {
         // in front: the wrist just off the edge, so the palm straddles it and the
         // fingers lie over the card's face, curled in against it; the thumb up the edge
-        toWorld(ox - palm * 0.15, y, z0, gripTo);
-        reach(arm, gripTo, w);
+        // (it reaches across the body: the hand comes forward, where the screen still
+        // has it on the edge, and the elbow out in front, so the arm passes before the chest)
+        toWorld(ox - palm * 0.15, y, z0 + at.h * wpp * GRIP_FWD, gripTo);
+        reach(arm, gripTo, w, gripPole.set(0.15, -1, 0.9).normalize());
         if (!Hd) return;
         Hd.fingers.forEach(([, f1, f2, tip], j) => {
           const up = 0.2 - j * 0.12; // (fanned a little: the index highest)
