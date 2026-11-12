@@ -59,6 +59,7 @@
       'card-tug': { gain: 0.3, cool: 0.2, vary: 0.05 },
       takeoff: { gain: 0.36, cool: 0.8 },
       land: { gain: 0.34, cool: 0.4 },
+      'salvo-burst': { file: 'land', gain: 0.34, cool: 0.1 }, // the second and third rocket on the glass: the landing's thud, let through that close together
       'portal-out': { gain: 0.38, cool: 0.3 },
       'jet-off': { gain: 0.4, cool: 0.6 },
       'phones-gather': { gain: 0.3, cool: 0.5, edge: true },

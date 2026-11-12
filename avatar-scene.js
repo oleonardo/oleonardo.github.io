@@ -37,7 +37,7 @@ const MODEL = {
   //          and at the wrist; pad: a pauldron's reach
   //   reach  the model's forearms are as long as its legs: the suit's are this much of
   //          them; hand: and its hands, which shrink with them, this much bigger again
-  suit: { head: { w: 0.44, d: 0.49, chin: 0.5 }, body: [0.22, 0.2], chest: 0.06, core: [0.54, 0.132], thigh: [0.04, 0.046], boot: [0.047, 0.056, 0.08], arm: 0.037, fore: [0.031, 0.049], pad: 0.068, reach: 0.6, hand: 1.62 },
+  suit: { head: { w: 0.44, d: 0.49, chin: 0.5 }, body: [0.22, 0.2], chest: 0.06, core: [0.54, 0.15], thigh: [0.04, 0.046], boot: [0.047, 0.056, 0.08], arm: 0.037, fore: [0.031, 0.049], pad: 0.068, reach: 0.6, hand: 1.62 },
   // Abissal palette: trench-blue shell, steel-blue joints, softly glowing teal eyes.
   palette: {
     // (what is left of the model's own shell, its hands, and what was built to match it,
@@ -412,7 +412,20 @@ export async function start({ reduced = false } = {}) {
   const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0, lit: false };
   // (the core in its chest, built with the jetpack below: its ring, its middle, the
   // light it throws; flare: how hard it is driven just now, by what the palm fires)
-  const chest = { group: null, ring: null, mid: null, halo: null, flare: 0 };
+  const chest = { group: null, ring: null, mid: null, halo: null, light: null, flare: 0 };
+  // (soft light, for what glows past its own edge: white in the middle, thinning out to
+  // nothing. Drawn once, for the core's glow and for what the rockets do)
+  const glowTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const x = cv.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+    [[0, 1], [0.12, 0.8], [0.3, 0.36], [0.6, 0.09], [1, 0]].forEach(([at, a]) => g.addColorStop(at, `rgba(255,255,255,${a})`));
+    x.fillStyle = g;
+    x.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
   // (the suit's body is slimmer than the model's: what is built on the torso, the
   // jetpack, the core and the suit's own plates, is built to this: the model's torso
   // box, made so wide and so deep about its own middle)
@@ -485,31 +498,52 @@ export async function start({ reduced = false } = {}) {
       jet.group = g;
       jet.glow = glow;
       // The core in its chest: what all of it runs on, and what the port in its palm
-      // draws from. On a dark face, a ring and a middle that glow the way its eyes do
-      // (teal, the middle near white), with a soft light thrown out past its housing.
-      // It breathes slowly, burns up with the jets and flares when the palm fires (see
-      // stepChest). Built in model space from the torso's own size (front is +z) and
-      // handed to the torso bone, like the jetpack; same looks, dissolve and card masks
-      // as the body.
+      // draws from. Not a drawing of one: a thing with depth, down in a well of the
+      // breastplate (the suit sinks the well and sets this on its floor, see "The
+      // armor"). On the dark floor, a ring of light, and over the light a ring of gold
+      // coils, blocks with a gap between each that the light comes up through; in the
+      // middle a steel collar and in it the emitter, a low dome of light, near white;
+      // over all of it a lens of glass, domed, which shows only as what it reflects;
+      // a soft glow past the housing, and a light of its own, teal, that falls on the
+      // chin over it and the plates round it. It breathes slowly, burns up with the
+      // jets and flares when the palm fires (see stepChest). Built in model space from
+      // the body's own size (front is +z) and handed to the torso bone, like the
+      // jetpack; same looks, dissolve and card masks as the body.
       const R = tw * MODEL.suit.core[1];
       const c = new THREE.Group();
       const ringM = look('Black'), midM = look('Black');
       midM.emissive.setHex(0xeafffb);
-      const put = (mesh, z) => { mesh.position.z = z; c.add(mesh); return mesh; };
-      // (down in a well of the breastplate: the suit builds the well round it and sets
-      // it at its floor, see "The armor". Here: its dark face, its ring, its middle,
-      // and its light)
-      put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.84, 32), look('Pad')), 0);
-      put(new THREE.Mesh(new THREE.RingGeometry(R * 0.42, R * 0.62, 40), ringM), R * 0.02);
-      put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.28, 28), midM), R * 0.035);
-      const halo = put(new THREE.Mesh(new THREE.CircleGeometry(R * 1.5, 28), flame(0x63e6d2, 0)), R * 0.3);
-      halo.renderOrder = 1;
-      c.userData.halo = halo;
+      const put = (mesh, z = 0) => { mesh.position.z = z; c.add(mesh); return mesh; };
+      put(new THREE.Mesh(new THREE.CircleGeometry(R * 0.89, 40), look('Pad')));
+      put(new THREE.Mesh(new THREE.RingGeometry(R * 0.44, R * 0.87, 48), ringM), R * 0.012);
+      const COILS = 10, half = (TAU / COILS) * 0.36, coil = new THREE.Shape();
+      coil.absarc(0, 0, R * 0.84, -half, half, false);
+      coil.absarc(0, 0, R * 0.5, half, -half, true);
+      const coilG = new THREE.ExtrudeGeometry(coil, { depth: R * 0.07, bevelEnabled: true, bevelThickness: R * 0.03, bevelSize: R * 0.025, bevelSegments: 1, curveSegments: 5 });
+      put(new THREE.Mesh(mergeGeometries(Array.from({ length: COILS }, (_, i) => coilG.clone().rotateZ((i / COILS) * TAU))), look('Gold')), R * 0.04);
+      put(new THREE.Mesh(new THREE.LatheGeometry([[0.3, 0], [0.43, 0], [0.43, 0.1], [0.39, 0.15], [0.31, 0.15], [0.3, 0.1]].map(([r, y]) => new THREE.Vector2(r * R, y * R)), 36).rotateX(Math.PI / 2), look('Steel')), R * 0.012);
+      put(new THREE.Mesh(new THREE.SphereGeometry(R * 0.3, 28, 10, 0, TAU, 0, Math.PI / 2).rotateX(Math.PI / 2).scale(1, 1, 0.55), midM), R * 0.06);
+      // (the lens: black glass, added to what is behind it, so that all there is of it
+      // is the room and the lights it mirrors. Its rim at this group's z: the suit sets
+      // it on the seat of the well)
+      const lensM = abyssalize(new THREE.MeshPhysicalMaterial({ name: 'Lens', color: 0x000000, roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.7, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), shared);
+      lensM.userData.uRimK.value = 0.3;
+      const sag = R * 0.12, wide = R * 0.92, rho = (wide * wide + sag * sag) / (2 * sag);
+      const lens = put(new THREE.Mesh(new THREE.SphereGeometry(rho, 36, 6, 0, TAU, 0, Math.asin(wide / rho)).rotateX(Math.PI / 2).translate(0, 0, sag - rho), lensM), R * 0.2);
+      lens.renderOrder = 1;
+      const haloM = flame(0x63e6d2, 0);
+      haloM.map = glowTex;
+      const halo = put(new THREE.Mesh(new THREE.PlaneGeometry(R * 5.2, R * 5.2), haloM), R * 0.3);
+      halo.renderOrder = 2;
+      const light = new THREE.PointLight(0x63e6d2, 0, 1, 2);
+      light.position.z = R * 1.3;
+      c.add(light);
+      Object.assign(c.userData, { halo, lens });
       c.position.set((tb.min.x + tb.max.x) / 2, tb.min.y + th * MODEL.suit.core[0], tb.max.z + (tb.max.z - tb.min.z) * MODEL.suit.chest);
       model.add(c);
       torsoBone.attach(c);
       c.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
-      Object.assign(chest, { group: c, ring: ringM, mid: midM, halo: halo.material });
+      Object.assign(chest, { group: c, ring: ringM, mid: midM, halo: haloM, light });
     }
   }
 
@@ -525,6 +559,11 @@ export async function start({ reduced = false } = {}) {
   // lights running over its curves. Same dissolve and card masks as the body.
   const visor = { eyes: [], mat: null, shell: null, y0: 0, blink: 2 + Math.random() * 3 };
   {
+    // (the head as every clip holds it at rest, not as the file leaves it, turned, in
+    // the middle of a glance: the helmet is built square to the body, and must be so
+    // with the head at rest, or it rides turned for good)
+    const still = headBone && ((THREE.AnimationClip.findByName(gltf.animations, CLIPS.idle) || {}).tracks || []).find((t) => t.name === `${headBone.name}.quaternion`);
+    if (still) headBone.quaternion.fromArray(still.values);
     model.updateMatrixWorld(true);
     const S = MODEL.suit;
     const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
@@ -574,8 +613,9 @@ export async function start({ reduced = false } = {}) {
     };
     const suit = look('Suit'), gold = look('Gold'), steel = look('Steel'), under = look('Under');
     const T = modelH, UP = new THREE.Vector3(0, 1, 0), O = new THREE.Vector3(); // (T: lengths below are in body heights)
-    // (what is built here keeps its edges: two faces that meet at more than this are a
-    // plate's rim, not a curve. Done at a thousand times the size, as for the model)
+    // (what is turned, or built corner by corner, keeps its edges: two faces that meet
+    // at more than this are an edge, not a curve. Done at a thousand times the size, as
+    // for the model. Plates need none of it: see plate)
     const crisp = (g) => toCreasedNormals(g.scale(1e3, 1e3, 1e3), 0.5).scale(1e-3, 1e-3, 1e-3);
     // (which way is out of a surface, at a place on it. inside: a point within it, or
     // what gives one for a place: out is away from that)
@@ -612,29 +652,41 @@ export async function start({ reduced = false } = {}) {
         for (let i = 1; i <= 8; i++) { L += q0.distanceTo(f(i / 8, q1)); q0.copy(q1); }
         return Math.max(L, 1e-9);
       };
-      const lenU = run((k, o) => at(k, 0.5, o)), lenV = run((k, o) => at(0.5, k, o));
+      // (how far it is across, and up: through its middle, or, where that is too short
+      // to carry a rim, a plate that closes to a point there, through its quarters)
+      const len = (f) => { const L = run((k, o) => f(k, 0.5, o)); return L * 0.3 > edge ? L : Math.max(L, run((k, o) => f(k, 0.25, o)), run((k, o) => f(k, 0.75, o))); };
+      const lenU = len((k, c, o) => at(k, c, o)), lenV = len((k, c, o) => at(c, k, o));
       const rims = { l: !wrap && !keep.includes('l'), r: !wrap && !keep.includes('r'), b: !keep.includes('b'), t: !keep.includes('t') };
+      // (the cuts across it. At a rim: the wall's foot and its top, the chamfer's foot and
+      // its top, then the face: wall, chamfer and face each have corners of their own, one
+      // over the other where they meet, so each is shaded as itself and the line between
+      // two of them is an edge)
       const cuts = (n, b, lo, hi) => {
         const a = lo ? b : 0, z = hi ? 1 - b : 1, c = [];
-        if (lo) c.push(0, 0); // (twice: the wall's foot and the chamfer's, one over the other)
+        if (lo) c.push(0, 0, 0, a);
         for (let i = 0; i <= n; i++) c.push(a + (z - a) * (i / n));
-        if (hi) c.push(1, 1);
+        if (hi) c.push(z, 1, 1, 1);
         return c;
       };
       const us = cuts(nu, Math.min(0.3, edge / lenU), rims.l, rims.r), vs = cuts(nv, Math.min(0.3, edge / lenV), rims.b, rims.t);
       const W = us.length, H = vs.length, pos = new Float32Array(W * H * 3), idx = [], n = new THREE.Vector3(), p = new THREE.Vector3();
+      const lvl = (d) => (d > 2 ? 2 : d > 0 ? 1 : 0); // (so far in from a rim: 0 the wall's foot, 1 the chamfer's, 2 the face)
+      const twin = (c, i) => i > 0 && i < c.length - 2 && c[i] === c[i + 1]; // (two cuts in one place: nothing is drawn between them)
       for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
         const u = us[i], v = vs[j], k = j * W + i;
-        // (how far in from a rim it is: 0 the wall's foot, 1 the chamfer's, more: the plate's face)
-        const m = solid && solid(u, v) ? 2 : Math.min(rims.l ? i : 2, rims.r ? W - 1 - i : 2, rims.b ? j : 2, rims.t ? H - 1 - j : 2), sw = swell ? swell(u, v) : 1;
+        const m = solid && solid(u, v) ? 2 : Math.min(rims.l ? lvl(i) : 2, rims.r ? lvl(W - 1 - i) : 2, rims.b ? lvl(j) : 2, rims.t ? lvl(H - 1 - j) : 2), sw = swell ? swell(u, v) : 1;
         outOf(at, u, v, inside, n);
         at(u, v, p).addScaledVector(n, base + (m === 0 ? -0.3 * t : t * sw * (m === 1 && sw > 0 ? 0.4 : 1))).toArray(pos, k * 3);
-        if (i < W - 1 && j < H - 1) idx.push(k, k + 1, k + W, k + 1, k + W + 1, k + W);
+        if (i < W - 1 && j < H - 1 && !twin(us, i) && !twin(vs, j)) {
+          const k1 = wrap && i === W - 2 ? j * W : k + 1; // (a band's last strip closes on its first)
+          idx.push(k, k1, k + W, k1, k1 + W, k + W);
+        }
       }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setIndex(idx);
-      const mesh = new THREE.Mesh(crisp(geo), mat);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, mat);
       if (!gap) return mesh;
       const mu = wrap ? 0 : (2 * gap) / lenU, mv = (2 * gap) / lenV, g = new THREE.Group();
       g.add(mesh, plate(nu, nv, (u, v, o) => at(0.5 + (u - 0.5) * (1 + mu), 0.5 + (v - 0.5) * (1 + mv), o), t * 0.3, edge * 0.5, opt.dark || under, { base, keep, wrap, inside, solid, swell }));
@@ -759,7 +811,7 @@ export async function start({ reduced = false } = {}) {
     if (tb && body) {
       const w = tb.max.x - tb.min.x, h = tb.max.y - tb.min.y, d0 = tb.max.z - tb.min.z, d = d0 * (1 + S.chest);
       const TR = radius([[0.001, 0], [0.6, 0.015], [0.8, 0.08], [0.72, 0.24], [0.78, 0.36], [0.96, 0.52], [1, 0.66], [0.99, 0.82], [0.8, 0.95], [0.45, 1]]);
-      const K = 0.92, STERN = 0.017; // (the under-suit, to the body's size; the sternum plate's thickness: the core is sunk in that)
+      const K = 0.92, STERN = 0.019; // (the under-suit, to the body's size; the sternum plate's thickness: the core is sunk in that)
       const skin = (phi, v, o) => { const r = TR(v) * K; return o.set(r * Math.sin(phi) * (w / 2), v * h, r * Math.cos(phi) * (d / 2)); };
       const g = new THREE.Group();
       g.position.set((tb.min.x + tb.max.x) / 2, tb.min.y, (tb.min.z + tb.max.z) / 2 + (d0 * S.chest) / 2);
@@ -772,11 +824,25 @@ export async function start({ reduced = false } = {}) {
       for (const side of [-1, 1]) g.add(P(12, 6, (u, v, o) => skin(side * (1.05 + 0.7 * u), 0.33 + 0.14 * v, o), 0.004, gold, { base: 0.0095 * T, gap: 0 })); // (a flank's)
       const low = (phi) => 0.42 + 0.08 * smooth(clamp01(Math.abs(phi) / 1.25));
       for (const side of [-1, 1]) g.add(P(24, 16, (u, v, o) => { const phi = side * (0.34 + 0.94 * u), lo = low(phi); return skin(phi, lo + (0.965 - lo) * v, o); }, 0.01, suit)); // (a side of the chest)
-      // (the sternum plate: a keystone, widest at the top. Sunk to nothing where the
-      // core's well is cut in it, see below)
-      const yc = S.core[0] * h, Rc = S.core[1] * w, bp = new THREE.Vector3();
-      const stern = (u, v, o) => skin((u * 2 - 1) * (0.42 + 0.22 * v), 0.34 + 0.625 * v, o);
-      g.add(P(28, 30, stern, STERN, suit, { swell: (u, v) => { stern(u, v, bp); return -0.2 + 1.2 * smooth(clamp01((Math.hypot(bp.x, bp.y - yc) / Rc - 1) / 0.5)); } }));
+      // (the core's place on the chest: the sternum plate's face there, its middle, and
+      // which way it faces: it is not flat, and it leans back toward the waist)
+      const yc = S.core[0] * h, Rc = S.core[1] * w, OUT = 1.4, bp = new THREE.Vector3(), bn = new THREE.Vector3(), top = new THREE.Vector3();
+      const face = (x, y, o) => { const v = y / h, r = TR(v) * K * (w / 2); return skin(Math.asin(clamp(x / r, -1, 1)), v, o).setZ(o.z + STERN * T); };
+      const mid = face(0, yc, new THREE.Vector3()), nrm = new THREE.Vector3(), rim = [];
+      for (let i = 0; i < 48; i++) rim.push(face(Rc * Math.cos((i / 48) * TAU), yc + Rc * Math.sin((i / 48) * TAU), new THREE.Vector3()).sub(mid));
+      for (let i = 0; i < 48; i++) nrm.add(top.crossVectors(rim[i], rim[(i + 1) % 48]));
+      nrm.normalize();
+      if (nrm.z < 0) nrm.negate();
+      // (the sternum plate: a keystone, widest at the top, wide enough at the core to
+      // carry its well. Sunk to nothing where the well is cut in it: by how far its own
+      // face is from the well's axis, so that it is whole again where the well's rim lands)
+      const stern = (u, v, o) => skin((u * 2 - 1) * (0.52 + 0.2 * v), 0.34 + 0.625 * v, o);
+      const sternP = P(28, 30, stern, STERN, suit, { swell: (u, v) => {
+        outOf(stern, u, v, axis, bn);
+        stern(u, v, bp).addScaledVector(bn, STERN * T).sub(mid);
+        return -0.2 + 1.2 * smooth(clamp01((bp.addScaledVector(nrm, -bp.dot(nrm)).length() / Rc - 1) / (OUT - 1)));
+      } });
+      g.add(sternP);
       g.add(P(40, 14, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.8, 0.42 + 0.545 * v, o), 0.01, suit)); // (the back plate)
       g.add(P(48, 3, (u, v, o) => skin(u * TAU, 0.9 + 0.1 * v, o), 0.014, suit, { wrap: true, gap: 0 })); // (the collar)
       // The core's housing. The core is IN the sternum plate: a well countersunk in it,
@@ -787,26 +853,22 @@ export async function start({ reduced = false } = {}) {
       // square to the plate where the core is (its mouth one flat ring, under the
       // plate's face all round), and the core lies square to that.
       if (chest.group) {
-        const c = chest.group, top = new THREE.Vector3(), M = 48;
-        const face = (x, y, o) => { const v = y / h, r = TR(v) * K * (w / 2); return skin(Math.asin(clamp(x / r, -1, 1)), v, o).setZ(o.z + STERN * T); }; // (the plate's face, at a place across and up it)
-        // (the plate round the core: its middle there, and which way it faces)
-        const mid = face(0, yc, new THREE.Vector3()), nrm = new THREE.Vector3(), rim = [];
-        for (let i = 0; i < M; i++) rim.push(face(Rc * Math.cos((i / M) * TAU), yc + Rc * Math.sin((i / M) * TAU), new THREE.Vector3()).sub(mid));
-        for (let i = 0; i < M; i++) nrm.add(top.crossVectors(rim[i], rim[(i + 1) % M]));
-        nrm.normalize();
-        if (nrm.z < 0) nrm.negate();
+        const c = chest.group, ray = new THREE.Raycaster();
         // (how far out of the plate's face, along that: the floor, and the seat over it)
         const floor = (0.003 - STERN) * T, seat = Math.max(floor + 0.002 * T, Math.min(...rim.map((q) => q.dot(nrm))) - 0.004 * T);
         const e1 = new THREE.Vector3(1, 0, 0).addScaledVector(nrm, -nrm.x).normalize(), e2 = new THREE.Vector3().crossVectors(nrm, e1);
         // (its rings, from the foot of the wall out: how far out, in the core's radius,
-        // and how far out of the face; the last, on the face itself)
-        const rings = [[0.9, floor], [0.94, seat], [1, seat], [1.5, null]], N = 56, pos = [], idx = [];
+        // and how far out of the face; the last, on the plate itself)
+        const rings = [[0.9, floor], [0.94, seat], [1, seat], [OUT, null]], N = 56, pos = [], idx = [];
         rings.forEach(([rho, hgt], j) => {
           for (let i = 0; i <= N; i++) {
             const a = (i / N) * TAU;
             top.copy(mid).addScaledVector(e1, Rc * rho * Math.cos(a)).addScaledVector(e2, Rc * rho * Math.sin(a));
-            if (hgt === null) face(top.x, top.y, top).addScaledVector(nrm, 0.0008 * T);
-            else top.addScaledVector(nrm, hgt);
+            if (hgt === null) { // (dropped on to the plate itself, as it was built)
+              ray.set(top.addScaledVector(nrm, 0.05 * T), bn.copy(nrm).negate());
+              const hit = ray.intersectObject(sternP.children[0], false)[0];
+              (hit ? top.copy(hit.point) : face(top.x, top.y, top)).addScaledVector(nrm, 0.0008 * T);
+            } else top.addScaledVector(nrm, hgt);
             pos.push(top.x, top.y, top.z);
             if (i < N && j < rings.length - 1) { const q = j * (N + 1) + i; idx.push(q, q + 1, q + N + 1, q + 1, q + N + 2, q + N + 1); }
           }
@@ -819,6 +881,7 @@ export async function start({ reduced = false } = {}) {
         model.attach(c);
         c.position.copy(g.position).add(mid).addScaledVector(nrm, floor);
         c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), nrm);
+        c.userData.lens.position.z = seat - floor;
         c.userData.halo.position.z = 0.003 * T - floor;
         body.attach(c);
       }
@@ -853,7 +916,7 @@ export async function start({ reduced = false } = {}) {
       hang(leg.upper, fuse(g));
       const B = stand(leg.end, leg.lower), b = B.g, L = B.L, [rk, rs, rf] = S.boot.map((r) => r * T), SK = 0.0075;
       const SH = round(L, (y) => rs - SK * T - (rs - rk) * smooth(clamp01((y - 0.55) / 0.45))); // (the shin, under its plates)
-      b.add(tube(SH, under), ball(S.thigh[0] * 0.98, under, 0, L, 0)); // (and the knee)
+      b.add(new THREE.Mesh(patch(28, 10, (u, v, o) => SH(u * TAU, 0.25 + 0.75 * v, o)), under), ball(S.thigh[0] * 0.98, under, 0, L, 0)); // (and the knee)
       b.add(band(SH, 0.3, 0.93, SK, suit));
       b.add(band(SH, 0.36, 0.5, 0.0075, suit, { base: SK * T })); // (the ankle's collar: the tier between the shin and the bell)
       b.add(shield(SH, 0, (v) => 0.95 - 0.3 * v, 0.5, 0.94, 0.01, suit, { base: SK * T, gap: 0.004 * T }));
@@ -861,9 +924,16 @@ export async function start({ reduced = false } = {}) {
       // (the cop over the knee: a piece of a ball round it, in front)
       const kc = new THREE.Vector3(0, L, 0), rc = S.thigh[0] * 1.12 * T;
       b.add(plate(14, 10, (u, v, o) => { const e = -0.6 + 1.35 * v, a = (u * 2 - 1) * (1 - 0.3 * v); return o.set(rc * Math.cos(e) * Math.sin(a), L + rc * 1.15 * Math.sin(e), rc * Math.cos(e) * Math.cos(a)); }, 0.012 * T, EDGE, suit, { inside: kc }));
-      // (the bell: turned. Up its wall to a lip, the lip cut back, and a shelf in to the shin)
-      b.add(turned([[rs * 0.8, L * 0.02], [rf * 0.97, L * 0.02], [rf, L * 0.07], [rf * 0.93, L * 0.325], [rf * 0.93 - 0.007 * T, L * 0.325 + 0.007 * T], [rs - 0.002 * T, L * 0.375]], suit));
-      b.add(turned([[0.001, 0], [rf * 0.9, 0], [rf * 0.95, L * 0.012], [rf * 0.95, L * 0.035], [0.001, L * 0.035]], steel));
+      // (the bell: turned. Up its wall to a lip, the lip cut back, and a shelf in to the
+      // shin. It and the sole stand level, whichever way the shin leans over them, and
+      // it leans: they are turned back upright about where the shin meets the shelf, and
+      // set down on the floor the old sole stood on)
+      const up = UP.clone().applyQuaternion(b.quaternion.clone().invert()), hS = L * 0.375, ground = soles.length ? soleY() : V(leg.end).y, foot = new THREE.Group();
+      foot.quaternion.copy(b.quaternion).invert();
+      foot.position.set(0, (hS - (V(leg.end).y - ground)) / up.y, 0).addScaledVector(up, -hS);
+      foot.add(turned([[rs * 0.8, L * 0.02], [rf * 0.97, L * 0.02], [rf, L * 0.07], [rf * 0.93, L * 0.325], [rf * 0.93 - 0.007 * T, L * 0.325 + 0.007 * T], [rs - 0.002 * T, L * 0.375]], suit));
+      foot.add(turned([[0.001, 0], [rf * 0.9, 0], [rf * 0.95, L * 0.012], [rf * 0.95, L * 0.035], [0.001, L * 0.035]], steel));
+      b.add(foot);
       hang(leg.lower, fuse(b));
     });
     // The arms. A pauldron over each shoulder, in two layers: a cap, and under its edge
@@ -911,12 +981,16 @@ export async function start({ reduced = false } = {}) {
     for (const o of meshes) if (o.isSkinnedMesh) o.material.color.setHex(MODEL.palette.Suit.color); // (gloves: the fingers in the suit's teal, like the gauntlet they come out of)
     for (const arm of arms) {
       arm[1].scale.multiplyScalar(S.reach);
-      for (const b of arm[1].children) if (b.isBone) b.scale.multiplyScalar(S.hand);
+      const wrist = arm[2].position.clone();
+      for (const b of arm[1].children) if (b.isBone) {
+        b.scale.multiplyScalar(S.hand);
+        b.position.sub(wrist).multiplyScalar(S.hand).add(wrist); // (and what is not at the wrist, the thumb's root, as far from it as the bigger hand puts it)
+      }
     }
     model.updateMatrixWorld(true);
     // (QA: the old parts' boxes and the joints, in body heights)
     const nb = (b) => (b ? [b.min, b.max].map((v) => v.toArray().map((x) => +(x / modelH).toFixed(3))) : null);
-    visor.dbg = { T: modelH, skins: meshes.filter((o) => o.isSkinnedMesh).map((o) => [o.name, o.material.name, '#' + o.material.color.getHexString()]), head: nb(hb), torso: nb(tb), foot: nb(boxOf('Foot.L')), hand: nb(boxOf('Hand.L')), joints: Object.fromEntries([['hip', legs[0].upper], ['knee', legs[0].lower], ['ankle', legs[0].end], ['shoulder', arms[0][0]], ['elbow', arms[0][1]], ['wrist', arms[0][2]]].map(([k, o]) => [k, V(o).toArray().map((x) => +(x / modelH).toFixed(3))])) };
+    visor.dbg = { T: modelH, skins: meshes.filter((o) => o.isSkinnedMesh).map((o) => [o.name, o.material.name, '#' + o.material.color.getHexString()]), head: nb(hb), torso: nb(tb), foot: nb(boxOf('Foot.L')), hand: nb(boxOf('Hand.L')), joints: Object.fromEntries([['hip', legs[0]?.upper], ['knee', legs[0]?.lower], ['ankle', legs[0]?.end], ['shoulder', arms[0]?.[0]], ['elbow', arms[0]?.[1]], ['wrist', arms[0]?.[2]]].filter(([, o]) => o).map(([k, o]) => [k, V(o).toArray().map((x) => +(x / modelH).toFixed(3))])) };
   }
 
   // The headphones: there while the sound is on, and only then. Switched on, they take
@@ -930,7 +1004,8 @@ export async function start({ reduced = false } = {}) {
   if (headBone && MODEL.phones) {
     const C = MODEL.phones;
     model.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4().copy(headBone.matrixWorld).invert();
+    const frame = visor.shell ? visor.shell.parent : headBone; // (the helmet's own frame, where it wears one: square to it, whichever way the bone under it is turned)
+    const inv = new THREE.Matrix4().copy(frame.matrixWorld).invert();
     const hb = new THREE.Box3(), hv = new THREE.Vector3(), hm = new THREE.Matrix4(), pts = [];
     headBone.traverse((o) => {
       if (!o.isMesh || (visor.shell && o !== visor.shell)) return; // (the helmet, where it wears one: not the old head under it)
@@ -1005,7 +1080,7 @@ export async function start({ reduced = false } = {}) {
         }
       }
       g.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
-      headBone.add(g);
+      frame.add(g);
       Object.assign(phones, { group: g, rig, band, spots, glow, dis: mine.uDissolve, reach, y0: rig.position.y, lift: C.hover.lift * hh });
     }
   }
@@ -1247,6 +1322,7 @@ export async function start({ reduced = false } = {}) {
   // Facial morphs (decay back to neutral)
   const face = { surprised: 0, sad: 0 };
   function setFace(k, v) {
+    if (reduced) return; // (the loop sleeps between inputs there: no look is begun that it would be left with)
     face[k] = Math.max(face[k], v);
   }
 
@@ -5353,34 +5429,6 @@ export async function start({ reduced = false } = {}) {
       wrist.attach(port);
       return port;
     });
-    // What a bolt leaves where it bursts on the screen (see stepSalvo), all facing us: a
-    // flash, white-hot in the middle and thinning outward (three discs, one in the
-    // other), rays shot out of it, a thin ring of amber running out from it and a teal
-    // one after.
-    const booms = BLAST.arc.map(() => {
-      const g = new THREE.Group();
-      const flash = new THREE.Group();
-      const glow = [[1, TEAL, 0.2], [0.6, AMBER, 0.45], [0.3, WHITE, 1]].map(([r, color, a]) => {
-        const m = new THREE.Mesh(new THREE.CircleGeometry(r, 36), lit(color, 0));
-        m.userData.a = a;
-        flash.add(m);
-        return m;
-      });
-      const rays = new THREE.Group();
-      const rayM = lit(WHITE, 0);
-      for (let i = 0; i < 7; i++) {
-        const ray = new THREE.Mesh(new THREE.PlaneGeometry(0.035 + 0.02 * (i % 3), 1.5 + 0.5 * (i % 2)), rayM);
-        ray.rotation.z = (i / 7) * Math.PI + 0.2 * (i % 2);
-        rays.add(ray);
-      }
-      const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 56), lit(AMBER, 0));
-      const wake = new THREE.Mesh(new THREE.RingGeometry(0.965, 1, 56), lit(TEAL, 0));
-      g.add(flash, rays, ring, wake);
-      g.traverse((o) => { o.frustumCulled = false; o.renderOrder = 10; });
-      g.visible = false;
-      scene.add(g);
-      return { g, flash, glow, rays, rayM, ring, wake, t: -1 };
-    });
     // a bolt: one unit long, along +y: a white core in a teal sheath
     const bolts = BLAST.arc.map(() => {
       const g = new THREE.Group();
@@ -5407,11 +5455,12 @@ export async function start({ reduced = false } = {}) {
       a.needsUpdate = true;
     };
     drawIris(0);
-    return { ports, glow: glowM, ring: ringM, core: coreM, rim: rimM, halo: haloM, bolts, booms, drawIris };
+    return { ports, glow: glowM, ring: ringM, core: coreM, rim: rimM, halo: haloM, bolts, drawIris };
   })();
   function blastOff() {
     for (const P of blast.ports) if (P) P.visible = false;
     for (const g of blast.bolts) g.visible = false;
+    if (fx) for (const K of fx.rockets) K.g.visible = false;
   }
   // A hand opened flat (weighted): each finger laid straight out along its own bone of
   // the palm, bent back a touch (off the way the palm faces), and the thumb out to its
@@ -5488,7 +5537,9 @@ export async function start({ reduced = false } = {}) {
   function palmOut(i, open, kick, to, charge) {
     const arm = arms[i], s = armSide[i], P = blast.ports[i];
     model.worldToLocal(arm[0].getWorldPosition(hTo));
-    hTo.set(hTo.x + s * (0.25 + 0.03 * kick) * modelH, hTo.y + (0.2 - 0.06 * kick) * modelH, hTo.z + (0.16 - 0.05 * kick) * modelH);
+    // (out to the side, up and forward, by the arm's own length: within its reach, so that the elbow bends under the hand)
+    const len = hTo.distanceTo(model.worldToLocal(arm[1].getWorldPosition(bP))) + bP.distanceTo(model.worldToLocal(arm[2].getWorldPosition(bQ)));
+    hTo.set(hTo.x + s * (0.68 + 0.1 * kick) * len, hTo.y + (0.42 - 0.19 * kick) * len, hTo.z + (0.32 - 0.16 * kick) * len);
     reach(arm, model.localToWorld(hTo), open, hPole.set(s * 0.6, -1, -0.15).normalize().transformDirection(model.matrixWorld));
     P.updateWorldMatrix(true, false);
     bN.set(0, 0, 1).transformDirection(P.matrixWorld);
@@ -5630,27 +5681,316 @@ export async function start({ reduced = false } = {}) {
     if (R.st === 'fire' && R.shots.length === blast.bolts.length && !flying) { R.st = 'shut'; R.t = 0; }
   }
 
+  // What the salvo is made of (see stepSalvo), all of it in the scene, in depth, between
+  // the guide and the camera. Rockets: small, of metal the room shows in, a gold nose,
+  // fins, a band of light, a flame out of the nozzle. The smoke they leave, puff after
+  // puff. And what each does to the glass: a flash; a ball of fire, which is a ball of
+  // cloud that boils, white-hot in its hollows and going dark from the outside in, till
+  // it is smoke, and rises; a ring of pressure running out; sparks thrown off, that
+  // fall; more smoke after; and for that moment the light of it on the guide itself.
+  let fx = null; // (made by the first salvo: where there can be none, the dock, reduced motion, it never is)
+  const makeFx = () => {
+    // (smoke: a soft uneven puff, drawn once)
+    const smokeTex = (() => {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 128;
+      const x = cv.getContext('2d');
+      for (let i = 0; i < 28; i++) {
+        const a = Math.random() * TAU, d = Math.random() * 22, r = 14 + Math.random() * 26, px = 64 + Math.cos(a) * d, py = 64 + Math.sin(a) * d;
+        const g = x.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.2)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        x.fillStyle = g;
+        x.fillRect(0, 0, 128, 128);
+      }
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    // (the ring of pressure: a soft band of light, sharpest at its outer edge)
+    const ringTex = (() => {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 256;
+      const x = cv.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+      [[0, 0], [0.62, 0], [0.86, 0.16], [0.955, 0.75], [0.985, 0.3], [1, 0]].forEach(([at, a]) => g.addColorStop(at, `rgba(255,255,255,${a})`));
+      x.fillStyle = g;
+      x.fillRect(0, 0, 256, 256);
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const metal = (color, rough = 0.32) => new THREE.MeshStandardMaterial({ color, metalness: 0.9, roughness: rough });
+    const add = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const glowing = (color, opacity) => new THREE.SpriteMaterial({ map: glowTex, color, opacity, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const V2 = (pts) => pts.map(([x, y]) => new THREE.Vector2(x, y));
+    // a rocket: one unit long, along +y, its nose at the top
+    const finG = new THREE.ExtrudeGeometry(new THREE.Shape(V2([[0, 0.04], [0.11, -0.05], [0.11, -0.17], [0, -0.13]])), { depth: 0.012, bevelEnabled: false }).translate(0.07, -0.26, -0.006);
+    const parts = [
+      [new THREE.CylinderGeometry(0.075, 0.075, 0.56, 24).translate(0, -0.03, 0), metal(0x22323c)],
+      [new THREE.LatheGeometry(V2([[0.075, 0], [0.071, 0.07], [0.054, 0.15], [0.028, 0.21], [0.001, 0.25]]), 24).translate(0, 0.25, 0), metal(0xd9a55c, 0.26)],
+      [mergeGeometries([0, 1, 2, 3].map((i) => finG.clone().rotateY((i / 4) * TAU + 0.4))), metal(0x0e6f80)],
+      [new THREE.CylinderGeometry(0.079, 0.079, 0.03, 24).translate(0, 0.15, 0), new THREE.MeshStandardMaterial({ color: 0x050810, emissive: 0x63e6d2, emissiveIntensity: 2.2 })],
+      [new THREE.CylinderGeometry(0.079, 0.079, 0.02, 24).translate(0, -0.12, 0), metal(0xd9a55c, 0.26)],
+      [new THREE.CylinderGeometry(0.05, 0.07, 0.07, 20, 1, true).translate(0, -0.345, 0), Object.assign(metal(0x8296ab), { side: THREE.DoubleSide })],
+      [new THREE.CircleGeometry(0.05, 20).rotateX(Math.PI / 2).translate(0, -0.36, 0), new THREE.MeshBasicMaterial({ color: 0xfff0d8 })],
+    ];
+    const flameG = (r, len) => new THREE.ConeGeometry(r, len, 14, 1, true).rotateX(Math.PI).translate(0, -0.38 - len / 2, 0); // (out of the nozzle, down its axis)
+    const flames = [[flameG(0.058, 0.55), add(0xffb35c, 0.55)], [flameG(0.03, 0.34), add(0xfff0d8, 0.9)]];
+    const rockets = [0, 1, 2].map(() => {
+      const g = new THREE.Group(), flame = new THREE.Group();
+      for (const [geo, mat] of parts) g.add(new THREE.Mesh(geo, mat));
+      for (const [geo, mat] of flames) flame.add(new THREE.Mesh(geo, mat));
+      const glow = new THREE.Sprite(glowing(0xffc98a, 1));
+      glow.position.y = -0.44;
+      glow.scale.setScalar(0.6);
+      g.add(flame, glow);
+      g.traverse((o) => { o.frustumCulled = false; });
+      g.visible = false;
+      scene.add(g);
+      return { g, flame };
+    });
+    // the smoke: a ring of puffs, each its own while it lasts
+    const puffs = Array.from({ length: 288 }, () => {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, opacity: 0, depthWrite: false }));
+      sp.visible = false;
+      sp.frustumCulled = false;
+      scene.add(sp);
+      return { sp, t: 1, life: 1, v: new THREE.Vector3(), r0: 0, r1: 0, a: 0, turn: 0 };
+    });
+    let np = 0;
+    // (a puff: there, drifting so, from so big to so big (across), for so long, so dense, of this shade)
+    const puff = (at, vx, vy, vz, r0, r1, life, a, color) => {
+      const q = puffs[np];
+      np = (np + 1) % puffs.length;
+      q.sp.position.copy(at);
+      q.v.set(vx, vy, vz);
+      Object.assign(q, { t: 0, life, r0, r1, a, turn: (Math.random() - 0.5) * 1.6 });
+      q.sp.material.color.setHex(color);
+      q.sp.material.rotation = Math.random() * TAU;
+      q.sp.material.opacity = 0;
+      q.sp.scale.setScalar(r0);
+      q.sp.visible = true;
+    };
+    // the sparks: lines, each from where a spark is back along the way it came
+    const NS = 132, sPos = new Float32Array(NS * 6), sCol = new Float32Array(NS * 6), sP = new Float32Array(NS * 3), sV = new Float32Array(NS * 3), sAge = new Float32Array(NS).fill(1), sLife = new Float32Array(NS).fill(1);
+    const sparkG = new THREE.BufferGeometry();
+    sparkG.setAttribute('position', new THREE.BufferAttribute(sPos, 3).setUsage(THREE.DynamicDrawUsage));
+    sparkG.setAttribute('color', new THREE.BufferAttribute(sCol, 3).setUsage(THREE.DynamicDrawUsage));
+    // (added to what is there, colour only: the canvas's own alpha is left alone, so a spark that has gone out is nothing, not a black hair over the page)
+    const sparks = new THREE.LineSegments(sparkG, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, depthWrite: false, depthTest: false }));
+    sparks.frustumCulled = false;
+    sparks.visible = false;
+    sparks.renderOrder = 11;
+    scene.add(sparks);
+    let ns = 0, sparkG9 = 1;
+    const spark = (at, vx, vy, vz, life) => {
+      const i = ns;
+      ns = (ns + 1) % NS;
+      sP[i * 3] = at.x; sP[i * 3 + 1] = at.y; sP[i * 3 + 2] = at.z;
+      sV[i * 3] = vx; sV[i * 3 + 1] = vy; sV[i * 3 + 2] = vz;
+      sAge[i] = 0;
+      sLife[i] = life;
+      sparks.visible = true;
+    };
+    // the fire: a ball whose skin is pushed out by a cloud that drifts through it, and
+    // coloured by how far out each bit of it stands and how old it all is
+    const NOISE = `
+      float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float noise(vec3 x) {
+        vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+      }
+      float fbm(vec3 p) { float a = 0.5; float s = 0.0; for (int i = 0; i < 4; i++) { s += a * noise(p); p = p * 2.03 + vec3(17.1, 3.7, 9.2); a *= 0.5; } return s / 0.9375; }`;
+    const FIRE_V = `
+      uniform float uT; uniform float uSeed;
+      varying float vOut; varying float vFace;
+      ${NOISE}
+      void main() {
+        vec3 p = normalize(position);
+        float big = fbm(p * 1.9 + vec3(uSeed, -uT * 0.55, uSeed * 1.7));
+        float fine = fbm(p * 5.2 + vec3(uT * 1.3, uSeed, -uT * 0.8));
+        vOut = big * 0.72 + fine * 0.28;
+        vec4 mv = modelViewMatrix * vec4(p * (0.5 + 0.95 * vOut), 1.0);
+        vFace = abs(dot(normalize(normalMatrix * p), normalize(-mv.xyz)));
+        gl_Position = projectionMatrix * mv;
+      }`;
+    const FIRE_F = `
+      uniform float uAge;
+      varying float vOut; varying float vFace;
+      vec3 ramp(float t) {
+        vec3 c = mix(vec3(0.025, 0.027, 0.032), vec3(0.5, 0.05, 0.008), smoothstep(0.0, 0.22, t));
+        c = mix(c, vec3(1.5, 0.4, 0.03), smoothstep(0.18, 0.46, t));
+        c = mix(c, vec3(2.3, 1.25, 0.28), smoothstep(0.42, 0.74, t));
+        return mix(c, vec3(3.4, 3.0, 2.3), smoothstep(0.74, 1.0, t));
+      }
+      void main() {
+        float heat = 1.18 - vOut * 1.3 - uAge * 1.4 + 0.25 * (1.0 - vFace) * (1.0 - uAge);
+        vec3 col = ramp(clamp(heat, 0.0, 1.0));
+        col = mix(col, vec3(1.4, 3.6, 3.3), 0.55 * (1.0 - smoothstep(0.0, 0.09, uAge)));
+        float alpha = (1.0 - smoothstep(0.55, 1.0, uAge)) * smoothstep(0.0, 0.3, vFace) * (0.62 + 0.38 * smoothstep(0.0, 0.5, heat + 0.2));
+        gl_FragColor = vec4(col, alpha);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`;
+    const fireG = new THREE.IcosahedronGeometry(1, 18);
+    fireG.deleteAttribute('normal');
+    fireG.deleteAttribute('uv');
+    { // (its faces, far side first: it is see-through, never turned, and looked at down -z, so the nearer must be drawn after)
+      const A = fireG.attributes.position.array, src = A.slice(), n = A.length / 9, far = (t) => src[t * 9 + 2] + src[t * 9 + 5] + src[t * 9 + 8];
+      Array.from({ length: n }, (_, i) => i).sort((a, b) => far(a) - far(b)).forEach((t, i) => A.set(src.subarray(t * 9, t * 9 + 9), i * 9));
+    }
+    const blasts = [0, 1, 2].map(() => {
+      const g = new THREE.Group();
+      const fire = new THREE.Mesh(fireG, new THREE.ShaderMaterial({ uniforms: { uT: { value: 0 }, uAge: { value: 0 }, uSeed: { value: 0 } }, vertexShader: FIRE_V, fragmentShader: FIRE_F, transparent: true, depthWrite: false }));
+      const ring = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), add(0xffd9a0, 0));
+      ring.material.map = ringTex;
+      ring.material.depthTest = false;
+      const flash = new THREE.Sprite(glowing(0xdffcf6, 0));
+      flash.material.depthTest = false;
+      fire.renderOrder = 9;
+      ring.renderOrder = 10;
+      flash.renderOrder = 12;
+      g.add(fire, ring, flash);
+      g.traverse((o) => { o.frustumCulled = false; });
+      g.visible = false;
+      scene.add(g);
+      return { g, fire, ring, flash, t: -1, R: 1, smoke: 0 };
+    });
+    // (the flash at the palm as one leaves it)
+    const muzzle = new THREE.Sprite(glowing(0xffe2b8, 0));
+    muzzle.material.depthTest = false;
+    muzzle.renderOrder = 12;
+    muzzle.visible = false;
+    muzzle.userData.t = 1;
+    scene.add(muzzle);
+    // (and the light of a burst, on everything: no nearer, no further, as bright)
+    const light = new THREE.PointLight(0xffc98a, 0, 0, 0);
+    scene.add(light);
+    const pv = new THREE.Vector3();
+    // (a rocket's burst: this one, there, so big)
+    const boom = (i, at, R) => {
+      const B = blasts[i];
+      Object.assign(B, { t: 0, R, smoke: 0 });
+      B.g.position.copy(at);
+      B.g.visible = true;
+      // (as it is at its first instant: the frame it is first drawn in comes before step sees it)
+      B.fire.scale.setScalar(R * 0.4);
+      B.fire.position.y = 0;
+      B.fire.material.uniforms.uT.value = 0;
+      B.fire.material.uniforms.uAge.value = 0;
+      B.flash.visible = B.ring.visible = true;
+      B.flash.scale.setScalar(R * 3);
+      B.flash.material.opacity = 1;
+      B.ring.scale.setScalar(R * 0.5);
+      B.ring.material.opacity = 0.42;
+      B.fire.material.uniforms.uSeed.value = Math.random() * 40;
+      sparkG9 = R * 11;
+      for (let m = 0; m < 44; m++) {
+        const a = Math.random() * TAU, e = (Math.random() - 0.35) * 1.4, sp = R * (2.5 + Math.random() * 7.5);
+        spark(at, Math.cos(a) * Math.cos(e) * sp, Math.sin(a) * Math.cos(e) * sp + R * 1.5, Math.sin(e) * sp * 0.5, 0.35 + Math.random() * 0.6);
+      }
+    };
+    const fire = (at, size) => {
+      muzzle.position.copy(at);
+      muzzle.scale.setScalar(size);
+      muzzle.userData.t = 0;
+      muzzle.visible = true;
+    };
+    // every frame: whatever of it is live
+    const step = (dt, life) => {
+      let lit = 0;
+      for (const B of blasts) {
+        if (B.t < 0) continue;
+        B.t += dt;
+        const a = B.t / life, R = B.R;
+        if (a >= 1) { B.t = -1; B.g.visible = false; continue; }
+        B.fire.scale.setScalar(R * (0.4 + 1.25 * (1 - Math.pow(1 - a, 3))));
+        B.fire.position.y = R * 0.6 * a * a; // (it rises as it cools)
+        B.fire.material.uniforms.uT.value = B.t;
+        B.fire.material.uniforms.uAge.value = a;
+        const f = clamp01(B.t / 0.14), r = clamp01(B.t / 0.42);
+        B.flash.scale.setScalar(R * (3 + 6 * f));
+        B.flash.material.opacity = (1 - f) * (1 - f);
+        B.flash.visible = f < 1; // (done, they are not drawn: each is a screen of nothing otherwise)
+        B.ring.scale.setScalar(R * (0.5 + 3.4 * (1 - (1 - r) * (1 - r))));
+        B.ring.material.opacity = 0.42 * Math.pow(1 - r, 1.6);
+        B.ring.visible = r < 1;
+        while (B.smoke < 7 && B.t > 0.12 + B.smoke * 0.07) { // (the smoke it leaves: dark, slow, going up)
+          B.smoke++;
+          const a2 = Math.random() * TAU, d = R * (0.2 + Math.random() * 0.7);
+          pv.set(Math.cos(a2) * d, Math.sin(a2) * d * 0.7 + R * 0.2, -R * 0.3 * Math.random()).add(B.g.position);
+          puff(pv, Math.cos(a2) * R * 0.5, R * (0.35 + Math.random() * 0.5), 0, R * 1.0, R * (2.0 + Math.random() * 0.7), 0.7 + Math.random() * 0.45, 0.34, 0x232a31);
+        }
+        lit += 8 * Math.exp(-B.t / 0.08) + 1.6 * (1 - a) * (1 - a);
+        light.position.copy(B.g.position);
+      }
+      light.intensity = lit;
+      if (muzzle.visible) {
+        const k = (muzzle.userData.t += dt) / 0.09;
+        muzzle.visible = k < 1;
+        muzzle.material.opacity = (1 - k) * (1 - k);
+      }
+      for (const q of puffs) {
+        if (!q.sp.visible) continue;
+        q.t += dt;
+        const k = q.t / q.life;
+        if (k >= 1) { q.sp.visible = false; continue; }
+        q.v.multiplyScalar(Math.exp(-1.8 * dt));
+        q.sp.position.addScaledVector(q.v, dt);
+        q.sp.scale.setScalar(q.r0 + (q.r1 - q.r0) * (1 - (1 - k) * (1 - k)));
+        q.sp.material.opacity = q.a * Math.min(1, k / 0.08) * Math.pow(1 - k, 1.5);
+        q.sp.material.rotation += q.turn * dt;
+      }
+      if (sparks.visible) {
+        let any = false;
+        const drag = Math.exp(-1.6 * dt);
+        for (let i = 0; i < NS; i++) {
+          const j = i * 3, o = i * 6;
+          if (sAge[i] >= sLife[i]) { sCol.fill(0, o, o + 6); continue; }
+          any = true;
+          sAge[i] += dt;
+          sV[j] *= drag; sV[j + 1] = sV[j + 1] * drag - sparkG9 * dt; sV[j + 2] *= drag;
+          sP[j] += sV[j] * dt; sP[j + 1] += sV[j + 1] * dt; sP[j + 2] += sV[j + 2] * dt;
+          const k = Math.max(0, 1 - sAge[i] / sLife[i]);
+          sPos[o] = sP[j]; sPos[o + 1] = sP[j + 1]; sPos[o + 2] = sP[j + 2];
+          sPos[o + 3] = sP[j] - sV[j] * 0.03; sPos[o + 4] = sP[j + 1] - sV[j + 1] * 0.03; sPos[o + 5] = sP[j + 2] - sV[j + 2] * 0.03;
+          sCol[o] = 3.2 * k; sCol[o + 1] = 2.3 * k; sCol[o + 2] = 1.2 * k;
+          sCol[o + 3] = 1.3 * k; sCol[o + 4] = 0.45 * k; sCol[o + 5] = 0.06 * k;
+        }
+        sparkG.attributes.position.needsUpdate = true;
+        sparkG.attributes.color.needsUpdate = true;
+        sparks.visible = any;
+      }
+    };
+    return { rockets, puff, spark, boom, fire, step };
+  };
+
   // Clicked four times running, it has had enough of being poked: up comes the hand on
   // the near side, palm to the visitor, the port opens, and it lets fly at the screen.
-  // Three bolts, one after the other, straight at us: each leaves the palm small and
-  // far off and comes on at the glass, growing all the way (they are flown in depth,
-  // toward the camera, so it is the lens that makes them big), and bursts on it: a white
-  // flash, a ring of amber running out from it and a teal one after, sparks, and the
-  // stage itself shaken. Then the port shuts, the hand comes down, and a thumbs-up, no
-  // hard feelings. (Where it cannot be done, a journey under way, the dock, a scene
-  // open, it dances as it always did.)
-  //   open, charge, gap, shut  as for the case's (s);  fly: a bolt's way to the glass (s)
+  // Three rockets, one after the other, straight at us: each leaves the palm small and
+  // far off, with a flash and a puff, and comes on at the glass, turning, a flame behind
+  // it and a line of smoke, growing all the way (they are flown in depth, toward the
+  // camera, so it is the lens that makes them big), and bursts on it (see fx): fire,
+  // smoke, sparks, its light on the guide, and the stage itself shaken. Then the port
+  // shuts, the hand comes down, and a thumbs-up, no hard feelings. (Where it cannot be
+  // done, a journey under way, the dock, a scene open, it dances as it always did.)
+  //   open, charge, gap, shut  as for the case's (s);  fly: a rocket's way to the glass (s)
   //   near   how far short of the camera it bursts (world: the closer, the bigger)
-  //   len    a bolt's length where it leaves the hand (px, at most);  r: the burst's
-  //          size (screen heights);  boom: how long it lasts (s)
-  const SALVO = { open: 0.5, charge: 0.18, gap: 0.17, fly: 0.55, near: 3, len: 40, r: 0.13, boom: 0.6, shut: 0.4 };
+  //   len    a rocket's length where it leaves the hand (px, at most);  r: the burst's
+  //          size (screen heights);  boom: how long its fire lasts (s)
+  const SALVO = { open: 0.5, charge: 0.18, gap: 0.22, fly: 0.62, near: 3, len: 52, r: 0.15, boom: 1.25, shut: 0.4 };
   const salvo = { st: null, t: 0, arm: 0, shots: [], next: 0, last: -9, w: 1, c: 0.5, shake: 0 };
   function startSalvo() {
     // (nor through the time tunnels, where it flies behind the cards)
-    if (salvo.st || reduced || view.dock || !rigOK || trans || scrub.mid || delivBusy() || sceneOpen() || tun.active || maskHides || shared.uDissolve.value > 0.01) return false;
+    if (salvo.st || reduced || view.dock || !rigOK || trans || scrub.mid || delivBusy() || sceneOpen() || tun.active || maskHides || shared.uClipAll.value > 0.5 || shared.uDissolve.value > 0.01) return false; // (all that stepSalvo would stop it for at once)
     const i = pivot.rotation.y > 0.15 ? armR : armL; // (the hand on our side of it)
     if (i < 0 || !blast.ports[i]) return false;
     if (oneShot) { oneShot = false; fadeTo(baseName, 0.25); } // (whatever it was doing about the last click)
+    if (!fx) { // (the port takes its time to open: what the rockets are drawn with is made ready meanwhile)
+      fx = makeFx();
+      renderer.compileAsync(scene, camera);
+    }
     Object.assign(salvo, { st: 'open', t: 0, arm: i, shots: [], next: 0, last: -9, w: 1, c: 0.5 });
     markInput();
     return true;
@@ -5661,35 +6001,24 @@ export async function start({ reduced = false } = {}) {
     if (!chest.ring) return;
     chest.flare = Math.max(0, chest.flare - dt * 2.5);
     const beat = 0.85 + 0.15 * Math.sin(time * 2.6), k = beat + 1.6 * chest.flare + 0.5 * Math.min(1, jet.thrust);
-    chest.ring.emissiveIntensity = 1.1 * k;
-    chest.mid.emissiveIntensity = 1.4 * k;
-    chest.halo.opacity = 0.14 * beat + 0.3 * chest.flare;
+    const s = root.scale.x;
+    chest.ring.emissiveIntensity = 1.5 * k;
+    chest.mid.emissiveIntensity = 2.2 * k;
+    chest.halo.opacity = 0.3 * beat + 0.5 * chest.flare;
+    // (its light on the plates round it: as far as the body is big, gone with the body)
+    chest.light.distance = 2.2 * modelH * s;
+    chest.light.intensity = 0.6 * k * s * s * (1 - shared.uDissolve.value);
   }
   const easeOut = (x) => 1 - (1 - x) * (1 - x);
   function stepSalvo(dt) {
     const Z = salvo;
-    // the bursts, each on its own clock, and the shake they give the stage
+    // what is in the air and what has burst, each on its own clock, and the shake a
+    // burst gives the stage
     const R0 = SALVO.r * view.h * view.wpp * (SALVO.near / CAM_Z);
-    for (const B of blast.booms) {
-      if (B.t < 0) continue;
-      B.t += dt;
-      const a = B.t / SALVO.boom;
-      if (a >= 1) { B.t = -1; B.g.visible = false; continue; }
-      const f = clamp01(a / 0.4);
-      B.flash.scale.setScalar(R0 * (0.6 + 1.3 * easeOut(f)));
-      for (const m of B.glow) m.material.opacity = m.userData.a * (1 - f) * (1 - f);
-      const r = clamp01(a / 0.5);
-      B.rays.scale.setScalar(R0 * (0.5 + 2 * easeOut(r)));
-      B.rayM.opacity = 0.8 * (1 - r);
-      B.ring.scale.setScalar(R0 * (0.4 + 2.3 * easeOut(a)));
-      B.ring.material.opacity = 0.9 * Math.pow(1 - a, 1.5);
-      const b = clamp01((a - 0.12) / 0.88);
-      B.wake.scale.setScalar(R0 * (0.2 + 1.7 * easeOut(b)));
-      B.wake.material.opacity = a > 0.12 ? 0.6 * (1 - b) : 0;
-    }
+    if (fx) fx.step(dt, SALVO.boom);
     if (Z.shake > 0 || canvas.style.translate) {
       Z.shake = Math.max(0, Z.shake - dt);
-      const k = Z.shake / 0.24, amp = 7 * k * k;
+      const k = Z.shake / 0.3, amp = 10 * k * k;
       canvas.style.translate = Z.shake > 0 ? `${(Math.sin(time * 91) * amp).toFixed(1)}px ${(Math.cos(time * 77) * amp).toFixed(1)}px` : '';
     }
     if (!Z.st) return;
@@ -5701,7 +6030,7 @@ export async function start({ reduced = false } = {}) {
     const hidden = tun.hidden || maskHides || shared.uClipAll.value > 0.5 || shared.uDissolve.value > 0.01;
     const off = !!trans || view.dock || sceneOpen() || scrub.mid || delivBusy() || tun.active || hidden;
     if (off && Z.st !== 'shut') {
-      Z.shots.forEach((S, i) => { if (!S.hit) { S.hit = true; blast.bolts[i].visible = false; } });
+      Z.shots.forEach((S, i) => { if (!S.hit) { S.hit = true; fx.rockets[i].g.visible = false; } });
       Z.w = Z.st === 'open' ? smooth(clamp01(Z.t / SALVO.open)) : 1;
       Z.c = Z.st === 'open' ? 0 : Z.st === 'charge' ? smooth(clamp01(Z.t / SALVO.charge)) : 0.5;
       Z.st = 'shut';
@@ -5722,48 +6051,67 @@ export async function start({ reduced = false } = {}) {
       if (!off) react('thumbs');
       return;
     }
-    if (Z.st === 'fire' && Z.shots.length < blast.bolts.length && Z.t >= Z.next) {
-      // the next bolt: from the palm to a place on the glass, spread across it
+    if (Z.st === 'fire' && Z.shots.length < fx.rockets.length && Z.t >= Z.next) {
+      // the next rocket: from the palm to a place on the glass, spread across it
       const n = Z.shots.length;
       const to = toWorld(view.w * (0.5 + (n - 1) * 0.23 + (Math.random() - 0.5) * 0.1), view.h * (0.36 + Math.random() * 0.26), CAM_Z - SALVO.near, new THREE.Vector3());
-      Z.shots.push({ t: 0, from: new THREE.Vector3(px, py, pz), to, hit: false });
+      Z.shots.push({ t: 0, from: new THREE.Vector3(px, py, pz), at: new THREE.Vector3(px, py, pz), to, hit: false, ph: Math.random() * TAU });
       Z.next = Z.t + SALVO.gap;
       Z.last = Z.t;
       if (!n) sfx('jet-burst', { gain: 0.5 });
-      for (let i = 0; i < 5; i++) spawn(px, py, pz, (Math.random() - 0.5) * H * 0.5, (Math.random() - 0.5) * H * 0.5, H * 0.3, 0.25 + Math.random() * 0.25, 0.8);
+      // (as it leaves: a flash at the palm, a puff of smoke, a few sparks)
+      fx.fire(P, H * 0.5);
+      fx.puff(P, (Math.random() - 0.5) * H * 0.2, H * 0.12, H * 0.2, H * 0.1, H * 0.34, 0.5, 0.3, 0xa9bccb);
+      for (let i = 0; i < 6; i++) fx.spark(P, (Math.random() - 0.5) * H * 1.6, (Math.random() - 0.5) * H * 1.6, H * (0.4 + Math.random()), 0.15 + Math.random() * 0.2);
     }
     let flying = 0;
     Z.shots.forEach((S, i) => {
-      const g = blast.bolts[i];
+      const K = fx.rockets[i], g = K.g;
       if (S.hit) return;
       S.t += dt;
-      const u = clamp01(S.t / SALVO.fly), k = Math.pow(u, 1.35); // (gathering pace)
-      bN.subVectors(S.to, S.from);
-      g.position.copy(S.from).addScaledVector(bN, k);
-      g.quaternion.setFromUnitVectors(bY, bN.normalize());
-      g.scale.setScalar(Math.min(SALVO.len, at.h * 0.2) * view.wpp * (0.6 + 0.4 * smooth(clamp01(u / 0.2))));
+      // (how far along: so that its distance from the camera falls by the same share
+      // every instant. Flown evenly it would hang small and far for most of its way and
+      // be on the glass in a frame: this way it grows the whole way in)
+      const u = clamp01(S.t / SALVO.fly), d0 = CAM_Z - S.from.z, d1 = CAM_Z - S.to.z, k = d0 - d1 > 1e-6 ? (d0 - d0 * Math.pow(d1 / d0, Math.pow(u, 1.15))) / (d0 - d1) : u;
+      // (its way: straight for its place on the glass, with a turn of a screw to it that
+      // dies out as it gets there; it points the way it is going)
+      zN.subVectors(S.to, S.from).normalize();
+      zA.crossVectors(zN, bY).normalize();
+      zB.crossVectors(zN, zA);
+      const L = Math.min(SALVO.len, at.h * 0.22) * view.wpp, wob = L * 0.55 * Math.sin(Math.PI * Math.min(1, u * 1.15)) * (1 - u), ph = S.ph + S.t * 9;
+      zP.copy(S.from).lerp(S.to, k).addScaledVector(zA, Math.cos(ph) * wob).addScaledVector(zB, Math.sin(ph) * wob);
+      zD.subVectors(zP, S.at);
+      const went = zD.length();
+      if (went < 1e-6) zD.copy(zN);
+      zD.normalize();
+      const sc = L * (0.35 + 0.65 * smooth(clamp01(u / 0.18)));
+      g.position.copy(zP);
+      g.quaternion.setFromUnitVectors(bY, zD).multiply(zQ.setFromAxisAngle(bY, S.t * 11));
+      g.scale.setScalar(sc);
       g.visible = true;
-      spawn(g.position.x, g.position.y, g.position.z, (Math.random() - 0.5) * H * 0.1, (Math.random() - 0.5) * H * 0.1, 0, 0.2 + Math.random() * 0.25, 0.8);
+      const lick = 0.75 + 0.5 * Math.random(); // (the flame, never the same length twice)
+      K.flame.scale.set(1, lick, 1);
+      K.flame.position.y = -0.38 * (1 - lick);
+      // (and its smoke, left where its tail has been since the last frame: a puff every
+      // so far along its way, each over the last, so that it is a line and not a string of beads)
+      const every = sc * 0.5, n = Math.min(4, Math.ceil(went / every));
+      for (let j = 1; j <= n; j++) {
+        zS.copy(S.at).lerp(zP, j / n).addScaledVector(zD, -0.55 * sc);
+        fx.puff(zS, (Math.random() - 0.5) * sc * 0.4, (Math.random() - 0.3) * sc * 0.4, (Math.random() - 0.5) * sc * 0.4, sc * 0.5, sc * (0.9 + Math.random() * 0.45), 0.4 + Math.random() * 0.3, 0.17, 0xa9bccb);
+      }
+      S.at.copy(zP);
       if (u < 1) { flying++; return; }
-      // on the glass: the burst, its sparks (seen that close, a little way is a long way), the shake
+      // on the glass: the burst, and the shake
       S.hit = true;
       g.visible = false;
-      const B = blast.booms[i];
-      B.g.position.copy(S.to);
-      B.g.visible = true;
-      B.t = 0;
-      B.rays.rotation.z = Math.random() * Math.PI;
-      const near = view.wpp * (SALVO.near / CAM_Z);
-      for (let m = 0; m < 26; m++) {
-        const a = (m / 26) * TAU + Math.random() * 0.4, sp = (160 + Math.random() * 520) * near;
-        spawn(S.to.x, S.to.y, S.to.z, Math.cos(a) * sp, Math.sin(a) * sp, 0, 0.35 + Math.random() * 0.45, 0.9);
-      }
-      Z.shake = 0.24;
-      sfx(i ? 'land' : 'stunt-impact', { gain: 0.7, rate: i ? 0.7 : 1 });
+      fx.boom(i, S.to, R0);
+      Z.shake = 0.3;
+      sfx(i ? 'salvo-burst' : 'stunt-impact', { gain: 0.7, rate: i ? 0.7 : 1 });
       setFace('surprised', 0.6);
     });
-    if (Z.st === 'fire' && Z.shots.length === blast.bolts.length && !flying) { Z.st = 'shut'; Z.t = 0; }
+    if (Z.st === 'fire' && Z.shots.length === fx.rockets.length && !flying) { Z.st = 'shut'; Z.t = 0; }
   }
+  const zN = new THREE.Vector3(), zA = new THREE.Vector3(), zB = new THREE.Vector3(), zP = new THREE.Vector3(), zD = new THREE.Vector3(), zS = new THREE.Vector3(), zQ = new THREE.Quaternion();
 
   // Its right hand, after the poses, and the X with it. The hand goes out to the X's rim
   // where it belongs on the card, as it comes up beside it; then the X goes where that
