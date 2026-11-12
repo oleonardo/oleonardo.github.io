@@ -2853,12 +2853,23 @@ html.gate :is(.topbar, .eyebrow, .hero-actions, .legend, .scroll-cue) {
   opacity: 1;
 }
 
+/* Docked (phones, tablets): the guide stands in a 104x132 spot 12px off the corner,
+   but the canvas is that spot plus open air round it (--dock-*: avatar-scene.js reads
+   them to stand it in the spot), so a wave, a thumbs-up or a jump is never cut at the
+   canvas's edge. Out to the screen's edge on the right and below, room above and to
+   the left. No radius: on a canvas it would clip the drawing. */
 .avatar-stage.is-dock {
-  inset: auto max(12px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) auto;
-  width: 104px;
-  height: 132px;
-  border-radius: 50% 50% 18px 18px;
-  background: radial-gradient(closest-side at 50% 78%, rgba(255, 179, 92, 0.16), transparent 75%);
+  --dock-w: 104px;
+  --dock-h: 132px;
+  --dock-l: 64px;
+  --dock-t: 96px;
+  --dock-r: 12px;
+  --dock-b: 12px;
+  inset: auto calc(max(12px, env(safe-area-inset-right, 0px)) - var(--dock-r)) calc(max(12px, env(safe-area-inset-bottom, 0px)) - var(--dock-b)) auto;
+  width: calc(var(--dock-l) + var(--dock-w) + var(--dock-r));
+  height: calc(var(--dock-t) + var(--dock-h) + var(--dock-b));
+  /* the warm light under its feet, where it stands in the spot */
+  background: radial-gradient(52px 29px at calc(var(--dock-l) + 52px) calc(var(--dock-t) + 103px), rgba(255, 179, 92, 0.16), transparent 75%);
 }
 
 .avatar-hit {

@@ -1633,7 +1633,7 @@ export async function start({ reduced = false } = {}) {
   // ---------------------------------------------------------------------------
   // Layout: where the guide stands in each section (CSS px, feet point)
   // ---------------------------------------------------------------------------
-  const view = { w: 1, h: 1, dpr: 1, wpp: 1, dock: mqDock.matches };
+  const view = { w: 1, h: 1, dpr: 1, wpp: 1, dock: mqDock.matches, spot: { l: 0, t: 0, w: 1, h: 1 } };
   const nodes = {
     rail: $('#story-rail'),
     terminal: $('#terminal'),
@@ -1864,7 +1864,7 @@ export async function start({ reduced = false } = {}) {
 
   function anchorFor(id, live) {
     const W = view.w, H = view.h;
-    if (view.dock) return { x: W / 2, y: H * 0.98, h: H * 0.9, yaw: -0.25 };
+    if (view.dock) { const D = view.spot; return { x: D.l + D.w / 2, y: D.t + D.h * 0.98, h: D.h * 0.9, yaw: -0.25 }; } // (in its spot, the air round it left free)
     switch (id) {
       case 'historia': {
         const v = tunnelMode() && tunnelFront();
@@ -1921,6 +1921,11 @@ export async function start({ reduced = false } = {}) {
     const r = canvas.getBoundingClientRect();
     view.w = Math.max(1, r.width);
     view.h = Math.max(1, r.height);
+    if (view.dock) {
+      // the spot it stands in, inside the docked canvas (style.css: --dock-*)
+      const cs = getComputedStyle(canvas), px = (k, d) => parseFloat(cs.getPropertyValue(k)) || d;
+      view.spot = { l: px('--dock-l', 0), t: px('--dock-t', 0), w: px('--dock-w', view.w), h: px('--dock-h', view.h) };
+    }
     view.dpr = Math.min(window.devicePixelRatio || 1, view.dock ? 2 : 1.5);
     renderer.setPixelRatio(view.dpr);
     renderer.setSize(view.w, view.h, false);
