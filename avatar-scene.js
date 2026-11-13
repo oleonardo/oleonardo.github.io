@@ -59,15 +59,17 @@ const MODEL = {
     Under: { color: 0x05080d, metal: 0.15, rough: 0.8, rim: 0 }, // the under-suit: the dark between the plates, the joints
     Eye: { color: 0x050810, emissive: 0x63e6d2, glow: 1.15 }, // the eyes in it (brightness set by the face)
   },
-  // Headphones, measured in the head's own box so another head needs no new numbers:
-  // across in half-widths from its middle, up in heights from its underside; sizes in
-  // half-widths.
+  // Headphones: a cup on each side of the helmet, cut to it and built of the suit's own
+  // plates (see the helmet's cup). Measured in the head's own box so another head needs
+  // no new numbers: up in heights from its underside; sizes in half-widths.
   phones: {
-    reach: 1.13, // a cup's middle, out from the head's middle
     ear: 0.46, // the cups' height: where the head is widest (a band would follow the head's outline up from there, and over)
-    cup: [0.3, 0.15], // a cup's radius and thickness (slim: the right arm swings close by in Wave and Dance)
-    pad: [0.33, 0.06], // its cushion
-    ring: [0.19, 0.026], // the glowing ring on its outer face
+    cup: [0.3, 0.33, 2.6], // a cup's outline: half of it fore and aft, half its height, and how square its corners are (2: an oval)
+    pad: [1.1, 0.07], // its cushion: so much wider than the cup, and so thick, off the helmet
+    shell: 0.11, // the cup's shell, on that: its thickness (slim: the right arm swings close by in Wave and Dance)
+    ring: [0.5, 0.68], // the glowing ring on its outer face: from so far out of the cup's outline to so far
+    hub: 0.38, // the boss in the middle of the ring: so far out of the outline
+    seat: 1.24, // the temple's plate a cup sits on, there on the helmet with them or without: a cup's own outline, so much wider
     band: null, // no band over the head: a cup on each side of it, and that is all (a band: [its radius, how much wider than thick it is], e.g. [0.053, 2.2])
     // where they take shape and where they come apart: at the sides of the head, each
     // cup level with its own place and a little way out from it (open: so much wider
@@ -120,12 +122,13 @@ const CLIPS = {
   dance: 'Dance',
 };
 
-// What the guide does in each section of the page.
+// What the guide does in each section of the page. (hover: at rest there it hovers on
+// its jets, out in space, this high over its spot in body heights: see stepHover)
 const SECTIONS = {
-  inicio: { base: 'idle', greet: 'wave', float: false }, // (it lands on the hero's floor and stands there)
+  inicio: { base: 'idle', greet: 'wave', float: false, hover: 0.08 }, // (it lands on the hero's floor, then the jets lift it just off it)
   historia: { base: 'idle', greet: 'yes', float: true }, // (on desktop it flies through the cards instead)
   projetos: { base: 'idle', greet: 'thumbs', float: false },
-  contato: { base: 'idle', greet: 'wave', float: true },
+  contato: { base: 'idle', greet: 'wave', float: true, hover: 0 }, // (holding the contact card, on its jets)
 };
 
 const TEAL = new THREE.Color(0x63e6d2);
@@ -419,7 +422,7 @@ export async function start({ reduced = false } = {}) {
   // pose, with a nozzle under each tank. Built in model space from the torso's own size
   // (back is -z), then handed to the torso bone. Its parts take the same Abissal look,
   // dissolve and card masks as the body; the nozzles' amber glow follows the thrust.
-  const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0, lit: false };
+  const jet = { group: null, nozzles: [], flames: [], glow: null, thrust: 0, boost: 0, idle: 0, lit: false };
   // (the core in its chest, built with the jetpack below: its ring, its middle, the
   // light it throws; flare: how hard it is driven just now, by what the palm fires)
   const chest = { group: null, ring: null, mid: null, halo: null, light: null, flare: 0 };
@@ -840,7 +843,42 @@ export async function start({ reduced = false } = {}) {
       g.add(P(10, 48, (u, v, o) => skin(v > 0.5 ? Math.PI - (u * 2 - 1) * ca(v) : (u * 2 - 1) * ca(v), cy(v), o), 0.012, suit, { gap: 0, solid: (u, v) => ca(v) > 1.45 }));
       g.add(P(56, 6, (u, v, o) => skin((u * 2 - 1) * 1.94, 0.04 + 0.15 * v, o), 0.011, suit)); // (the band round the jaw)
       g.add(P(24, 6, (u, v, o) => skin(Math.PI + (u * 2 - 1) * 1.14, 0.04 + 0.17 * v, o), 0.009, suit)); // (the nape's)
-      for (const side of [-1, 1]) g.add(P(10, 8, (u, v, o) => skin(side * (1.3 + 0.72 * u), 0.35 + (0.25 - 0.05 * u) * v, o), 0.008, suit)); // (a temple's plate, where an ear would be)
+      // (the helmet's side as a plate lies on it, about where an ear would be: by how
+      // far fore or aft of its widest, and how high. And the outline of a cup of the
+      // headphones there, MODEL.phones': how far out it is, that way round)
+      const EAR = MODEL.phones, hw = w / 2;
+      const flank = (side, z, y, o) => {
+        const v = clamp01(y / h), s = clamp(z / (R(v) * (d / 2) * (z > 0 ? 0.94 : 1)), -1, 1);
+        return skin(side * Math.acos(Math.sign(s) * Math.pow(Math.abs(s), 1 / SQ)), v, o);
+      };
+      const cupR = (a) => ring(EAR.cup[0] * hw, EAR.cup[1] * hw, EAR.cup[2], a);
+      // (a temple's plate: the seat of a cup, cut to the cup's own outline and a little
+      // wider, so that a cup on it has a rim of it all round, and without one the helmet
+      // has there the shape of what it wears)
+      for (const side of [-1, 1]) g.add(P(56, 8, (u, v, o) => { const a = u * TAU, r = cupR(a) * EAR.seat * v; return flank(side, r * Math.cos(a), EAR.ear * h + r * Math.sin(a), o); }, 0.008, suit, { wrap: true, keep: 'b' }));
+      // A cup of the headphones (what they do, and their looks, are theirs: see "The
+      // headphones"). Made here because it is made of the helmet: cut to its side, where
+      // an ear would be, on the temple's plate, which has its outline, and built the way the suit is, plate
+      // on plate: a cushion, dark and matte, lying on the helmet; on that the cup's
+      // shell, a plate of the suit's own metal, its rim chamfered; on its face the ring
+      // that glows with the music, and in the middle of that a boss of the faceplate's gold.
+      // C: MODEL.phones; M: their looks; at0: the cup's own frame, in the helmet's (its
+      // middle: how high, how far fore or aft).
+      visor.cup = (side, C, M, at0) => {
+        const in0 = mid.clone().sub(at0), c = new THREE.Group();
+        // (a layer of it: from so far out of the cup's outline to so far, 0 its middle;
+        // so thick, its rim so wide, standing so far off the helmet)
+        const lay = (r0, r1, t, edge, base, mat) => plate(56, r0 ? 3 : 8, (u, v, o) => {
+          const a = u * TAU, r = cupR(a) * (r0 + (r1 - r0) * v);
+          return flank(side, at0.z + r * Math.cos(a), at0.y + r * Math.sin(a), o).sub(at0);
+        }, t * hw, edge * hw, mat, { wrap: true, inside: in0, base: base * hw, keep: r0 ? '' : 'b' });
+        const top = C.pad[1] + C.shell;
+        c.add(lay(0, C.pad[0], C.pad[1], 0.03, 0, M.pad));
+        c.add(lay(0, 1, C.shell, 0.06, C.pad[1], M.shell));
+        c.add(lay(C.ring[0], C.ring[1], 0.012, 0.01, top, M.glow));
+        c.add(lay(0, C.hub, 0.022, 0.02, top, M.trim));
+        return fuse(c);
+      };
       Object.assign(visor, { mat: eyeM, y0: h * FY });
       hang(headBone, fuse(g));
     }
@@ -1043,19 +1081,20 @@ export async function start({ reduced = false } = {}) {
   // The headphones: there while the sound is on, and only then. Switched on, they take
   // shape out of a swirl of motes, hovering open over its ears, and clamp down on to
   // them; switched off, they lift off and come apart into motes that the current takes
-  // away. Built in the head bone's own frame from the head's box, the way the jetpack is
-  // from the torso's, so they follow every turn of the head. Same Abissal look and card
-  // masks as the body, but a dissolve of their own, and a ring on each cup that glows
-  // with the music.
+  // away. Built in the helmet's own frame from its box, the way the jetpack is from the
+  // torso's, so they follow every turn of the head; each cup made on the helmet's side
+  // and of the suit's plates (see the helmet's cup), so they are of a piece with it. The
+  // suit's looks and card masks, but a dissolve of their own, and a ring on each cup
+  // that glows with the music.
   const phones = { group: null, rig: null, band: null, cups: [], spots: [], glow: null, dis: null, reach: 0, y0: 0, lift: 0, want: 'gone', k: 0, kv: 0, vis: 0, visT: 0, hold: 0, lvl: 0, flash: 0, landed: true, fx: null };
-  if (headBone && MODEL.phones) {
+  if (headBone && MODEL.phones && visor.cup) {
     const C = MODEL.phones;
     model.updateMatrixWorld(true);
-    const frame = visor.shell ? visor.shell.parent : headBone; // (the helmet's own frame, where it wears one: square to it, whichever way the bone under it is turned)
+    const frame = visor.shell.parent; // (the helmet's own frame: square to it, whichever way the bone under it is turned)
     const inv = new THREE.Matrix4().copy(frame.matrixWorld).invert();
     const hb = new THREE.Box3(), hv = new THREE.Vector3(), hm = new THREE.Matrix4(), pts = [];
     headBone.traverse((o) => {
-      if (!o.isMesh || (visor.shell && o !== visor.shell)) return; // (the helmet, where it wears one: not the old head under it)
+      if (o !== visor.shell) return; // (the helmet: not the old head under it)
       hm.multiplyMatrices(inv, o.matrixWorld);
       const a = o.geometry.attributes.position;
       for (let i = 0; i < a.count; i++) {
@@ -1067,8 +1106,10 @@ export async function start({ reduced = false } = {}) {
     else {
       const hw = (hb.max.x - hb.min.x) / 2, hh = hb.max.y - hb.min.y;
       const mine = { ...shared, uDissolve: { value: 1 } };
-      const look = (name) => abyssalize(new THREE.MeshStandardMaterial({ name }), mine);
-      const shell = look('Grey'), pad = look('Pad'), glow = look('Beat');
+      // (the suit's own metals, under the same clear coat; the cushion matte; all of them
+      // seen from either side, as the suit's plates are)
+      const look = (name, coat) => Object.assign(abyssalize(coat ? new THREE.MeshPhysicalMaterial({ name, clearcoat: 1, clearcoatRoughness: 0.14 }) : new THREE.MeshStandardMaterial({ name }), mine), { side: THREE.DoubleSide });
+      const shell = look('Suit', true), trim = look('Gold', true), pad = look('Pad'), glow = look('Beat');
       const g = new THREE.Group();
       // (the head's own axis: across where it is widest, not the middle of its box, which
       // a face flatter than the back of the head puts behind it. And its outline there,
@@ -1087,7 +1128,8 @@ export async function start({ reduced = false } = {}) {
       g.add(rig);
       // the band, where they have one: from ear to ear over the top of the head, the
       // head's own outline stood off it by what the cups stand off its sides
-      const reach = C.reach * hw;
+      // (a cup's middle: out from the head's, half its own depth off the helmet's side)
+      const deep = (C.pad[1] + C.shell) * hw, reach = (wide[0] || hw) + deep / 2;
       let band = null, over = null;
       if (C.band) {
         const clear = Math.max(0, reach - (wide[0] || hw)), half = [];
@@ -1103,18 +1145,9 @@ export async function start({ reduced = false } = {}) {
         band.scale.z = C.band[1];
         rig.add(band);
       }
-      const [rc, tc] = C.cup, [rp, tp] = C.pad, [rr, rt] = C.ring;
       for (const side of [-1, 1]) {
-        const cup = new THREE.Group();
+        const cup = visor.cup(side, C, { shell, trim, pad, glow }, new THREE.Vector3(cx + side * reach, earY, zc));
         cup.position.x = side * reach;
-        const body = new THREE.Mesh(new THREE.CylinderGeometry(rc * hw * 0.9, rc * hw, tc * hw, 28).rotateZ(-side * Math.PI / 2), shell); // (narrower on the outside)
-        cup.add(body);
-        const cushion = new THREE.Mesh(new THREE.CylinderGeometry(rp * hw, rp * hw, tp * hw, 28).rotateZ(Math.PI / 2), pad);
-        cushion.position.x = -side * (tc + tp) * hw * 0.5;
-        cup.add(cushion);
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr * hw, rt * hw, 10, 36).rotateY(Math.PI / 2), glow);
-        ring.position.x = side * tc * hw * 0.5;
-        cup.add(ring);
         rig.add(cup);
         phones.cups.push({ group: cup, side });
       }
@@ -1126,8 +1159,8 @@ export async function start({ reduced = false } = {}) {
           const q = over.getPoint(Math.random()), j = C.band[0] * hw * 1.6;
           spots.push({ part: 0, x: q.x + (Math.random() - 0.5) * j, y: q.y + (Math.random() - 0.5) * j, z: (Math.random() - 0.5) * j * C.band[1] });
         } else {
-          const side = (over ? i % 4 === 1 : i % 2 === 1) ? -1 : 1, a = Math.random() * TAU, r = rc * hw * (0.5 + 0.55 * Math.random());
-          spots.push({ part: side, x: side * (Math.random() - 0.3) * tc * hw, y: Math.sin(a) * r, z: Math.cos(a) * r });
+          const side = (over ? i % 4 === 1 : i % 2 === 1) ? -1 : 1, a = Math.random() * TAU, r = hw * (0.5 + 0.55 * Math.random());
+          spots.push({ part: side, x: side * (Math.random() - 0.4) * deep, y: Math.sin(a) * r * C.cup[1], z: Math.cos(a) * r * C.cup[0] });
         }
       }
       g.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
@@ -2164,8 +2197,10 @@ export async function start({ reduced = false } = {}) {
   // rights itself over the spot because the physics needs it to; nothing else turns it.
   // Over the spot it sinks on the jets at a walking pace, the blast hitting the ground and
   // raising a ring of dust (see stepDust), and touches down on its feet, the knees taking
-  // the weight; then the jets cut and it turns to the visitor and waves. Scrolling or a
-  // menu link meanwhile turns it into a journey from wherever it is.
+  // the weight; then the jets ease back (out here it never cuts them), it turns to the
+  // visitor and waves, and the thrust takes its weight again and lifts it just off the
+  // floor, to hover there (see stepHover). Scrolling or a menu link meanwhile turns it
+  // into a journey from wherever it is.
   // Units: body heights and seconds, from its spot (y up from the floor, z toward the
   // camera), drawn through the camera's own perspective.
   const FLIGHT = {
@@ -2434,7 +2469,7 @@ export async function start({ reduced = false } = {}) {
     // down at that speed and stops, no faster), and spring back
     jr.squash = down ? (E.vTouch / 0.95) * E.downT * Math.exp(-E.downT / 0.1) : 0;
     // the jets: the flame follows the thrust (hovering on 1 g, a full flame), and on its
-    // feet the pilot flame goes out with the thrust
+    // feet it dies back with the thrust, down to the idle flame (see stepJet)
     jr.jet = clamp((E.T / F.G) * 0.8 + 0.2 * (down ? 1 - smooth(g) : 1), 0, 1.5);
     // it looks the way it is going, then at the visitor
     if (!down || g < 0.3) {
@@ -2446,6 +2481,160 @@ export async function start({ reduced = false } = {}) {
       trans = null;
       greet(E.toId, (SECTIONS[E.toId] || SECTIONS.inicio).greet);
     }
+  }
+
+  // Hovering where it rests out in space (SECTIONS' hover): just off the hero's floor
+  // after the landing, and holding the contact card. The same rigid body as the
+  // entrance's flight (gravity, drag, a thrust along its own long axis that spools up
+  // and down, that axis turned with inertia), its flight computer now holding it over
+  // its spot. The thrust never burns quite even (it breathes, and kicks a little off its
+  // axis) and the computer can't know it ahead: it is always catching the body, so it
+  // bobs, leans into a correction and rights itself, the flame flaring as it pushes. Its
+  // hands on the card, the card's jolts pull it about too. Its legs hang easy, a little
+  // straighter as the thrust pushes, swinging behind the body as it leans. On the hero it
+  // sets off from its feet on the floor: the thrust takes its weight and it rises to its
+  // height, the blast still raising the dust under it.
+  // Units as the flight's: body heights and seconds, from its spot (y up from where its
+  // feet rest, z toward the camera), p its middle. Drawn as an offset of the body from
+  // its spot (the resting spring keeps the spot) and its axis as the tilt.
+  const HOVER = {
+    kp: 5, kd: 3.2, // holding its spot: softer than the flight's, so it hunts a little
+    wn: 7, zeta: 0.7, wMax: 3, // turning its axis: natural frequency, damping, top rate (rad/s)
+    cone: 0.3, // the most it leans to correct (rad)
+    breathe: 0.08, // how unevenly the thrust burns (share of it)
+    kick: 0.3, // the flame's kick off its axis (body heights/s²)
+    rise: 1.1, // off its feet: the time its height takes to come up (s)
+    arm: 1.2, // its hands on the card: how much of the card's give they pass on to the body
+    idle: 0.3, // the jets' flame wherever it rests in space, under all the rest (see stepJet)
+  };
+  const hov = { on: false, lift: 0, s: 0, p: [0, BODY_C, 0], v: [0, 0, 0], u: [0, 1, 0], om: [0, 0, 0], T: 0, Tn: 1, t: 0, acc: 0, tilt: 0, bank: 0, lag: 0, card: { n: 0, x: 0, y: 0, vx: 0, vy: 0 } };
+  const hUc = [0, 1, 0];
+  function hoverStart(lift) {
+    const floor = lift > 0; // (on the hero: from its feet)
+    hov.on = true;
+    hov.lift = lift;
+    hov.s = floor ? 0 : 1;
+    hov.p[0] = hov.p[2] = 0; hov.p[1] = BODY_C;
+    hov.v.fill(0); // (every way in hands it over still: on its feet, or held at the card)
+    hov.u[0] = hov.u[2] = 0; hov.u[1] = 1;
+    hov.om.fill(0);
+    hov.T = FLIGHT.G * (floor ? 0.9 : 1);
+    hov.Tn = hov.T / FLIGHT.G;
+    hov.acc = 0;
+    hov.card.n = 0;
+    hov.tilt = hov.bank = hov.lag = 0;
+    hov.t = Math.random() * 100; // (its own unevenness each time)
+  }
+  function hoverStep(dt) {
+    const F = FLIGHT, H = HOVER, p = hov.p, v = hov.v, u = hov.u, om = hov.om, uc = hUc, t = (hov.t += dt);
+    // where it holds: over its spot, its height eased up off its feet
+    hov.s = Math.min(1, hov.s + dt / H.rise);
+    const ty = BODY_C + hov.lift * smooth(hov.s);
+    // the computer: back to the spot and still there, against gravity and drag
+    const sp = Math.hypot(v[0], v[1], v[2]);
+    const c0 = -H.kp * p[0] - H.kd * v[0] + F.drag * sp * v[0];
+    const c1 = H.kp * (ty - p[1]) - H.kd * v[1] + F.G + F.drag * sp * v[1];
+    const c2 = -H.kp * p[2] - H.kd * v[2] + F.drag * sp * v[2];
+    let m = Math.hypot(c0, c1, c2);
+    if (m < 1e-6) { uc[0] = 0; uc[1] = 1; uc[2] = 0; m = 0; } else { uc[0] = c0 / m; uc[1] = c1 / m; uc[2] = c2 / m; }
+    const cc = Math.cos(H.cone);
+    if (uc[1] < cc) {
+      const hz = Math.hypot(uc[0], uc[2]) || 1, sn = Math.sin(H.cone);
+      uc[0] = (uc[0] / hz) * sn; uc[2] = (uc[2] / hz) * sn; uc[1] = cc;
+      m = Math.max(0, c0 * uc[0] + c1 * uc[1] + c2 * uc[2]);
+    }
+    const Tc = clamp(m, F.tMin * F.G, F.tMax * F.G);
+    // turning its axis toward the command: a damped spring with a top rate (as flightStep)
+    const dot = clamp(u[0] * uc[0] + u[1] * uc[1] + u[2] * uc[2], -1, 1);
+    let ax = u[1] * uc[2] - u[2] * uc[1], ay = u[2] * uc[0] - u[0] * uc[2], az = u[0] * uc[1] - u[1] * uc[0];
+    const sn = Math.hypot(ax, ay, az), ang = Math.acos(dot);
+    if (sn > 1e-9) { ax /= sn; ay /= sn; az /= sn; } else ax = ay = az = 0;
+    const k2 = H.wn * H.wn, c2d = 2 * H.zeta * H.wn;
+    om[0] += (k2 * ang * ax - c2d * om[0]) * dt;
+    om[1] += (k2 * ang * ay - c2d * om[1]) * dt;
+    om[2] += (k2 * ang * az - c2d * om[2]) * dt;
+    const ou = om[0] * u[0] + om[1] * u[1] + om[2] * u[2];
+    om[0] -= ou * u[0]; om[1] -= ou * u[1]; om[2] -= ou * u[2];
+    const wm = Math.hypot(om[0], om[1], om[2]);
+    if (wm > H.wMax) { om[0] *= H.wMax / wm; om[1] *= H.wMax / wm; om[2] *= H.wMax / wm; }
+    const nx = u[0] + (om[1] * u[2] - om[2] * u[1]) * dt, ny = u[1] + (om[2] * u[0] - om[0] * u[2]) * dt, nz = u[2] + (om[0] * u[1] - om[1] * u[0]) * dt;
+    const nl = Math.hypot(nx, ny, nz);
+    u[0] = nx / nl; u[1] = ny / nl; u[2] = nz / nl;
+    // the thrust, lagging the throttle; and burning unevenly: it breathes, it kicks
+    const align = clamp01((u[0] * uc[0] + u[1] * uc[1] + u[2] * uc[2] - 0.3) / 0.65);
+    hov.T += (Math.max(F.tMin * F.G, Tc * smooth(align)) - hov.T) * (1 - Math.exp(-dt / F.spool));
+    const T = hov.T * (1 + H.breathe * (0.55 * Math.sin(t * 1.9) + 0.3 * Math.sin(t * 4.7 + 1.3) + 0.15 * Math.sin(t * 11.3 + 0.4)));
+    hov.Tn = T / F.G;
+    const kx = H.kick * (0.7 * Math.sin(t * 0.83 + 0.5) + 0.3 * Math.sin(t * 2.9 + 2.1)), kz = H.kick * 0.5 * Math.sin(t * 0.61 + 1.7);
+    // and Newton
+    v[0] += (T * u[0] - F.drag * sp * v[0] + kx) * dt;
+    v[1] += (T * u[1] - F.G - F.drag * sp * v[1]) * dt;
+    v[2] += (T * u[2] - F.drag * sp * v[2] + kz) * dt;
+    p[0] += v[0] * dt; p[1] += v[1] * dt; p[2] += v[2] * dt;
+    // (on the hero the floor is under it: its feet don't go through, and don't slide on it)
+    if (hov.lift > 0 && p[1] < BODY_C * u[1]) {
+      p[1] = BODY_C * u[1];
+      if (v[1] < 0) v[1] = 0;
+      const fr = Math.exp(-20 * dt);
+      v[0] *= fr; v[2] *= fr;
+    }
+  }
+  // At rest in a section it hovers in, the body is the physics' (a journey, the case
+  // launch or the entrance has it otherwise; a journey taking over or handing back
+  // blends the body from its last frame: see snapRig).
+  function stepHover(dt) {
+    const cfg = SECTIONS[section];
+    const want = !!cfg && cfg.hover != null && rigOK && !reduced && !view.dock && !jr.on && !(trans && (trans.kind === 'enter' || trans.kind === 'hop' || trans.kind === 'case'));
+    // (out of it, or into a new one, with no journey taking the frame, as when a send's
+    // mist is sent on elsewhere: the body eases over from its last frame, not in one)
+    if (!want) {
+      if (hov.on && !jr.on) snapRig();
+      hov.on = false;
+      return;
+    }
+    if (!hov.on || hov.lift !== cfg.hover) {
+      if (hov.on && !jr.on) snapRig();
+      hoverStart(cfg.hover);
+    }
+    // Its hands on the card: the card's give carries the body along, each change in the
+    // card's speed passed on to it as it comes. So a jolt moves it with the card, about
+    // as far, and leaves nothing behind once the card is still again. (gripCard writes
+    // the card's give: -16 tug.x px across, 4 tug.x px down; here in body heights, y up.)
+    const C = hov.card, ch = Math.max(at.h, 1), cx = (-tug.x * 16) / ch, cy = (-tug.x * 4) / ch;
+    if (dt > 0 && C.n > 0) {
+      const vx = (cx - C.x) / dt, vy = (cy - C.y) / dt;
+      if (C.n > 1) {
+        const k = section === 'contato' ? HOVER.arm * grip.w : 0;
+        hov.v[0] += (vx - C.vx) * k;
+        hov.v[1] += (vy - C.vy) * k;
+      }
+      C.vx = vx; C.vy = vy;
+    }
+    C.x = cx; C.y = cy;
+    C.n = Math.min(C.n + 1, 2);
+    hov.acc += dt;
+    while (hov.acc >= FLIGHT.step) {
+      hov.acc -= FLIGHT.step;
+      hoverStep(FLIGHT.step);
+    }
+    // drawn: its axis as a lean and a bank against the way it faces (as flightDraw), and
+    // the legs swinging behind the lean
+    const u = hov.u, yaw = at.yaw + look.yaw * 0.35;
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const tl = Math.atan2(u[0] * fx + u[2] * fz, u[1]);
+    if (dt > 0) hov.lag += (clamp((hov.tilt - tl) / dt * 0.25, -1, 1) - hov.lag) * damp(5, dt);
+    hov.tilt = tl;
+    hov.bank = -Math.asin(clamp(u[0] * fz - u[2] * fx, -1, 1));
+  }
+  // its legs, hanging easy under it: a little straighter as the thrust pushes (heavier),
+  // swinging back as it leans forward and on as it leans back
+  const hovP = newPose();
+  function hoverPose() {
+    mixPose(hovP, POSE.drift, POSE.drift, 0);
+    const heavy = clamp((hov.Tn - 1) * 3, -1, 1);
+    hovP.thigh[2] += -0.12 * heavy + 0.35 * hov.lag;
+    hovP.shin[2] += 0.1 * heavy + 0.25 * hov.lag;
+    return hovP;
   }
 
   // Where the current journey is heading: the section's spot, or a stop on the way.
@@ -3488,7 +3677,8 @@ export async function start({ reduced = false } = {}) {
     // (the card under it: the one it takes off from, then the one it lands on)
     jr.floor = !airEnd && p >= L - 0.02 && B.floor ? B.floor : sk === 'stand' && p < T0 && A.floor ? A.floor : null;
     // the jets: lit in the crouch, a hard burn lifting off, easing to a cruise and burning
-    // hard again to brake for the landing; off once it is down (at a portal it hovers on)
+    // hard again to brake for the landing; off once it is down (at a portal it hovers on;
+    // where it rests on its jets, they idle on: see stepJet)
     jr.jet = p < T0 ? 0.35 * smooth(p / Math.max(1e-4, T0))
       : p < L || airEnd ? Math.max(1 - 0.45 * smooth(clamp01(q / 0.35)), airEnd ? 0.35 + 0.4 * (1 - smooth(clamp01((q - 0.75) / 0.25))) : smooth(clamp01((q - 0.55) / 0.4)))
       : 0;
@@ -3820,11 +4010,22 @@ export async function start({ reduced = false } = {}) {
 
   // The jetpack fires through the time tunnels: a low flame hovering at a portal, full
   // flight level through the cards, and a hard burn across the screen to the next portal.
+  // And out in space it never cuts them where it rests on its own (on the hero after the
+  // landing, holding the contact card: SECTIONS' hover): there the flame follows the
+  // thrust that holds it up (see stepHover), never below an idle flame that eases in as
+  // it gets there and out as it leaves, so a landing settles onto it instead of going
+  // out and lighting again.
   const jv = new THREE.Vector3(), jd = new THREE.Vector3();
   function stepJet(dt) {
     if (!jet.group) return;
     const vis = clamp01(1 - shared.uDissolve.value * 2.5);
-    let want = reduced || view.dock || !jr.on ? 0 : (jr.tun ? Math.max(0.35 + 0.65 * jr.fly, jet.boost) : jr.jet) * vis;
+    const cfg = SECTIONS[section];
+    const idle = reduced || view.dock || !cfg || cfg.hover == null ? 0 : HOVER.idle;
+    jet.idle += (idle - jet.idle) * damp(idle > jet.idle ? 3 : 1.5, dt);
+    const fly = jr.on ? (jr.tun ? Math.max(0.35 + 0.65 * jr.fly, jet.boost) : jr.jet) : 0;
+    // (hovering: about as much flame as the idle on 1 g, flaring as it pushes harder)
+    const hover = hov.on ? clamp(0.42 * hov.Tn + 0.5 * (hov.Tn - 1), 0.2, 0.9) : 0;
+    let want = reduced || view.dock ? 0 : Math.max(fly, jet.idle, hover) * vis;
     if (dbg.jet != null) want = dbg.jet; // (QA: pin the thrust)
     jet.thrust += (want - jet.thrust) * damp(want > jet.thrust ? 8 : 4, dt);
     const T = jet.thrust;
@@ -3832,8 +4033,10 @@ export async function start({ reduced = false } = {}) {
     const snd = window.abissalAudio;
     if (snd && snd.on && snd.jet) {
       snd.jet(T);
-      if (!jet.lit && T > 0.12) { jet.lit = true; sfx('jet-ignite'); }
-      else if (jet.lit && T < 0.05) { jet.lit = false; sfx('jet-off'); }
+      // (the body turning to mist or out of it, the loop just fades: the dissolve and the
+      // re-form have cues of their own)
+      if (!jet.lit && T > 0.12) { jet.lit = true; if (vis > 0.99) sfx('jet-ignite'); }
+      else if (jet.lit && T < 0.05) { jet.lit = false; if (vis > 0.99) sfx('jet-off'); }
     } else jet.lit = T > 0.12; // (switched on in mid-flight, the jets are simply lit already)
     const flick = 1 + 0.18 * Math.sin(time * 41) * Math.sin(time * 27 + 1);
     jet.glow.emissiveIntensity = T * 2.4 * flick;
@@ -4295,6 +4498,9 @@ export async function start({ reduced = false } = {}) {
     // (and run out of climb, at the top: its knees up as for a tuck, that arm still back,
     // not thrown up over its head with the other)
     hoist: { pitch: 0.12, thigh: [0.2, -0.3, 0.95], shin: [0.08, -0.95, -0.3], kick: 0, flat: 1, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
+    // Hovering at rest on the jets (see stepHover): the legs hanging easy, knees a little
+    // bent, the feet riding on the shins; the arms left to the clips (and the card).
+    drift: { pitch: 0.03, thigh: [0.14, -0.9, 0.3], shin: [0.07, -0.95, -0.22], kick: 0.08, flat: 0, up: 0, back: 0, scull: 0, seat: 0, push: 0 },
   };
   const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'lead', 'scull', 'seat', 'push', 'dangle'];
   function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 0, dangle: 0 }; }
@@ -4411,13 +4617,13 @@ export async function start({ reduced = false } = {}) {
   }
   function applyRig() {
     if (!rigOK || reduced || view.dock) return;
-    if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); if (dbg.pose !== 'fly' && dbg.pose !== 'hover') pinToFloor(1); return; } // QA
+    if (dbg.pose && POSE[dbg.pose]) { applyPose(POSE[dbg.pose], 1); if (dbg.pose !== 'fly' && dbg.pose !== 'hover' && dbg.pose !== 'drift') pinToFloor(1); return; } // QA
     if (jr.on && jr.pose) {
       applyPose(jr.pose, jr.w);
       pinToFloor(jr.pin);
       pinSeat(perch.seat);
       if (jr.hop) { pivot.position.y += jr.hop; pivot.updateMatrixWorld(true); }
-    }
+    } else if (hov.on) applyPose(hoverPose(), 1); // (hovering at rest: its legs hang)
     blendSnap();
   }
 
@@ -6752,13 +6958,14 @@ export async function start({ reduced = false } = {}) {
     if (wasOn && !jr.on && !reduced && !view.dock) snapRig();
     placeRoot();
     stepHeading(dt);
+    stepHover(dt); // (at rest where it hovers: after the journeys have had the frame)
 
     // float, lean, turn toward what it looks at
     const cfg = SECTIONS[section] || SECTIONS.inicio;
     const floating = !reduced && (cfg.float || (section === 'inicio' && (view.dock || !rigOK))); // (the hero's stand is for the landing)
     // (the float eases out for a journey and back in after it; at a portal it bobs,
-    // flying level it doesn't)
-    const floatT = floating && (!jr.on || jr.tun) && !(trans && (trans.kind === 'hop' || trans.kind === 'enter')) ? (jr.tun ? 1 - jr.fly : 1) : 0;
+    // flying level it doesn't; hovering on its jets, the physics moves it instead)
+    const floatT = floating && !hov.on && (!jr.on || jr.tun) && !(trans && (trans.kind === 'hop' || trans.kind === 'enter')) ? (jr.tun ? 1 - jr.fly : 1) : 0;
     floatW += (floatT - floatW) * (reduced ? 1 : damp(2.2, dt));
     // the scroll drives a journey, so no lean or drift into it
     const calm = jr.on ? 0 : 1;
@@ -6776,6 +6983,12 @@ export async function start({ reduced = false } = {}) {
       fw * modelH * (0.035 * Math.sin(time * 0.37) + 0.018 * Math.sin(time * 0.83 + 1.3)) + air * modelH * 0.03 * Math.sin(time * 1.9),
       fw * (modelH * (0.04 + 0.028 * Math.sin(time * 1.05) + 0.016 * Math.sin(time * 0.47 + 2.1)) - lean * modelH * 0.06) + air * modelH * 0.025 * Math.sin(time * 2.7 + 1),
       fw * modelH * 0.03 * Math.sin(time * 0.29 + 0.7));
+    // hovering: the body where the physics has it (see stepHover)
+    if (hov.on) {
+      pivot.position.x += hov.p[0] * modelH;
+      pivot.position.y += (hov.p[1] - BODY_C) * modelH;
+      pivot.position.z += hov.p[2] * modelH;
+    }
     // a little hop of excitement as it points up (standing; running it is in the air anyway)
     if (!floating && cheer.t >= 0 && cheer.t < 0.34) pivot.position.y += modelH * 0.07 * Math.sin((Math.PI * cheer.t) / 0.34) * (1 - runner.run) * Math.min(1, cheer.w * 2);
     const onFloor = goal && goal.floor;
@@ -6791,7 +7004,8 @@ export async function start({ reduced = false } = {}) {
     const sq = jr.on ? jr.squash : 0;
     pivot.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
     // (turning round in flight, it rises out of the level flight and lies down again)
-    setTilt(jr.on ? jr.tilt - Math.max(0, jr.tilt - TILT.hover) * 0.85 * Math.sin(Math.PI * head.m) : 0, jr.on ? jr.spin : 0, jr.on ? jr.bank : 0);
+    // (hovering, its axis where the physics has it)
+    setTilt(jr.on ? jr.tilt - Math.max(0, jr.tilt - TILT.hover) * 0.85 * Math.sin(Math.PI * head.m) : hov.on ? hov.tilt : 0, jr.on ? jr.spin : 0, jr.on ? jr.bank : hov.on ? hov.bank : 0);
 
     // Bones the current clip doesn't animate keep last frame's offsets: undo them first.
     for (const r of restPose) { r.bone.quaternion.copy(r.q); r.bone.position.copy(r.p); }
@@ -6890,7 +7104,7 @@ export async function start({ reduced = false } = {}) {
   wake();
 
   // Debug/QA handle (harmless in production)
-  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get suit() { return visor.dbg; }, get perch() { const Q = trans && trans.kind === 'case' ? trans.perch : null; return { st: Q ? Q.st : null, u: Q ? +Q.u.toFixed(2) : 0, hp: Q ? Math.round(Q.hp) : 0, seat: +perch.seat.toFixed(2), legs: perch.legs.map((L) => +L.a.toFixed(3)), over: stage.over, top: stage.top }; }, get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)), seen: heard.feet.map((F) => +F.y.toFixed(4)) }; } };
+  window.__avatar = { dbg, renderer, react, travelTo, get phones() { return { want: phones.want, k: phones.k, vis: phones.vis, shown: !!(phones.group && phones.group.visible), glow: phones.glow ? phones.glow.emissiveIntensity : 0, fx: phones.fx ? phones.fx.mode : null }; }, get section() { return section; }, get trans() { return trans; }, get grip() { return { w: grip.w, tug: tug.x }; }, get deliv() { return { st: deliv.st, x: Math.round(deliv.x), t: +deliv.t.toFixed(3) }; }, get scrub() { return { on: scrub.on, u: +scrub.u.toFixed(3), mid: scrub.mid, jumping, d: +shared.uDissolve.value.toFixed(2) }; }, get jr() { return { on: jr.on, p: +jr.lastP.toFixed(3), w: +jr.w.toFixed(2), pin: +jr.pin.toFixed(2), air: +jr.air.toFixed(2), hop: trans && trans.kind === 'hop' ? +(trans.t / trans.dur).toFixed(3) : null, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h), +at.yaw.toFixed(2)] }; }, get head() { return { m: +head.m.toFixed(3), to: head.to, vx: Math.round(head.vx), yaw: +pivot.rotation.y.toFixed(2), tilt: +tilt.rotation.x.toFixed(2) }; }, get tun() { return { on: tun.active, g: +tun.g.toFixed(3), f: +storyF().toFixed(3), mask: !!tun.mask, carry: !!tun.carry, clip: shared.uClipAll.value, hidden: tun.hidden, tilt: +jr.tilt.toFixed(2), fly: +jr.fly.toFixed(2) }; }, get runner() { return { on: runner.on, v: +runner.v.toFixed(2), dir: runner.dir, idx: runner.idx, yaw: +runner.yaw.toFixed(2), cheer: +cheer.t.toFixed(2), base: baseName, at: [Math.round(at.x), Math.round(at.y), Math.round(at.h)] }; }, cheer: () => startCheer(), get suit() { return visor.dbg; }, get hover() { return { on: hov.on, p: hov.p.map((x) => +x.toFixed(4)), v: hov.v.map((x) => +x.toFixed(3)), Tn: +hov.Tn.toFixed(3), tilt: +hov.tilt.toFixed(3), bank: +hov.bank.toFixed(3), lag: +hov.lag.toFixed(3), thrust: +jet.thrust.toFixed(3) }; }, get perch() { const Q = trans && trans.kind === 'case' ? trans.perch : null; return { st: Q ? Q.st : null, u: Q ? +Q.u.toFixed(2) : 0, hp: Q ? Math.round(Q.hp) : 0, seat: +perch.seat.toFixed(2), legs: perch.legs.map((L) => +L.a.toFixed(3)), over: stage.over, top: stage.top }; }, get heard() { return { v: +heard.v.toFixed(2), fast: heard.fast, lit: jet.lit, feet: footLow.map((y) => +((y - footRest) / modelH).toFixed(4)), seen: heard.feet.map((F) => +F.y.toFixed(4)) }; } };
   return window.__avatar;
 }
 
