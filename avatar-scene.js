@@ -56,7 +56,6 @@ const MODEL = {
     Suit: { color: 0x0e6f80, metal: 0.92, rough: 0.3, rim: 0.2 },
     Gold: { color: 0xd9a55c, metal: 0.95, rough: 0.26, rim: 0.12 },
     Steel: { color: 0x8296ab, metal: 0.95, rough: 0.32, rim: 0.15 }, // soles
-    Glove: { color: 0xb4c6d6, metal: 0.8, rough: 0.3, rim: 0.4 }, // the right hand's fingers while they hold an open case's X: a light steel, or they are lost on the dark button
     Under: { color: 0x05080d, metal: 0.15, rough: 0.8, rim: 0 }, // the under-suit: the dark between the plates, the joints
     Eye: { color: 0x050810, emissive: 0x63e6d2, glow: 1.15 }, // the eyes in it (brightness set by the face)
   },
@@ -4290,6 +4289,12 @@ export async function start({ reduced = false } = {}) {
     // over the edge and the shins hanging from the knees, free to swing (dangle: how much
     // of the shins is the swing's: see stepLegs). Its right hand has the X (perchHold).
     perch: { pitch: -0.08, thigh: [0.15, -0.1, 1], shin: [0.08, -1, 0.1], kick: 0, flat: 0, up: 0, back: 0, scull: 0, seat: 0, push: 0, dangle: 1 },
+    // The X in its hand and the jets at full (see stepPerch): stretched out on the burn, the
+    // legs together and trailing, its free arm swept back along the body.
+    haul: { pitch: -0.1, thigh: [0.1, -1, -0.12], shin: [0.07, -1, -0.22], kick: 0, flat: 0, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
+    // (and run out of climb, at the top: its knees up as for a tuck, that arm still back,
+    // not thrown up over its head with the other)
+    hoist: { pitch: 0.12, thigh: [0.2, -0.3, 0.95], shin: [0.08, -0.95, -0.3], kick: 0, flat: 1, up: 0, back: 1, scull: 0, seat: 0, push: 0 },
   };
   const POSE_KEYS = ['pitch', 'kick', 'flat', 'up', 'back', 'lead', 'scull', 'seat', 'push', 'dangle'];
   function newPose() { return { pitch: 0, thigh: [0, -1, 0], shin: [0, -1, 0], kick: 0, flat: 0, up: 0, back: 0, lead: 0, scull: 0, seat: 0, push: 0, dangle: 0 }; }
@@ -4662,54 +4667,60 @@ export async function start({ reduced = false } = {}) {
         const xP = ox + (i === 0 ? -at.h * 0.03 : 3), xH = i === 0 ? ox + at.h * 0.1 : ox + 7;
         toWorld(xP + (xH - xP) * k, clamp(yP + (yH - yP) * k, oy + 18, oy + r.height - 18), kS.z, gripTo);
         reach(arm, gripTo, 1);
+        // (and from there into the very grip it keeps, weighing in as it turns, so the
+        // hold takes over where the tuck leaves off, with nothing left to jump)
+        if (k > 0) holdArm(arm, i, k, ox, oy, r);
       });
+      shared.uCardHook.value = atCard && k > 0.5 ? 1 : 0;
       return;
     }
     // keep reaching while the weight fades (leaving the section), so the arms ease off
     if (grip.w < 0.01 || !arms.length) return;
     const w = grip.w * grip.w * (3 - 2 * grip.w);
     shared.uCardHook.value = w > 0.5 ? 1 : 0;
-    arms.forEach((arm, i) => {
-      arm[0].getWorldPosition(kS);
-      const [, sy] = toCanvas(kS);
-      const z0 = kS.z, Hd = hands[i], wpp = (view.wpp * (CAM_Z - z0)) / CAM_Z;
-      const palm = Hd ? Hd.fingers[1][0].getWorldPosition(hA).distanceTo(Hd.fingers[1][1].getWorldPosition(hB)) / wpp : at.h * 0.05;
-      // the far hand (left) high, behind the edge; the near one (right) lower, in front of it
-      const back = armSide[i] > 0;
-      const y = clamp(sy + at.h * (back ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
-      if (!back || !Hd) {
-        // in front: the wrist just off the edge, so the palm straddles it and the
-        // fingers lie over the card's face, curled in against it; the thumb up the edge
-        // (it reaches across the body: the hand comes forward, where the screen still
-        // has it on the edge, and the elbow out in front, so the arm passes before the chest)
-        toWorld(ox - palm * 0.15, y, z0 + at.h * wpp * GRIP_FWD, gripTo);
-        reach(arm, gripTo, w, gripPole.set(0.15, -1, 0.9).normalize());
-        if (!Hd) return;
-        Hd.fingers.forEach(([, f1, f2, tip], j) => {
-          const up = 0.2 - j * 0.12; // (fanned a little: the index highest)
-          layTo(f1, f2, hIn.set(1, up, -0.05), w);
-          layTo(f2, tip, hIn.set(0.8, up * 0.5, -0.55), w);
-        });
-        layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.15, 1, 0.25), w);
-        layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(0.35, 1, 0), w);
-        return;
-      }
-      // behind: the palm flat on the card's back, the fingers along it, out of sight;
-      // the hand set so the root of its thumb is at the edge, and the thumb comes round
-      // it toward us and lies back over the face: a pinch on the edge
-      toWorld(ox + palm * 0.9, y, z0, gripTo);
-      reach(arm, gripTo, w);
-      const [tx, ty] = toCanvas(Hd.thumb[0].getWorldPosition(hA));
-      toWorld(ox + palm * 0.9 + (ox - 1 - tx) * w, y, z0, gripTo);
-      reach(arm, gripTo, w);
-      Hd.fingers.forEach(([, f1, f2, tip]) => {
-        layTo(f1, f2, hIn.set(1, 0, -0.2), w);
-        layTo(f2, tip, hIn.set(1, -0.1, -0.35), w);
+    arms.forEach((arm, i) => holdArm(arm, i, w, ox, oy, r));
+  }
+  // (one arm in the hold, at weight w: r, the card's rect; ox, oy, its corner on the canvas)
+  function holdArm(arm, i, w, ox, oy, r) {
+    arm[0].getWorldPosition(kS);
+    const [, sy] = toCanvas(kS);
+    const z0 = kS.z, Hd = hands[i], wpp = (view.wpp * (CAM_Z - z0)) / CAM_Z;
+    const palm = Hd ? Hd.fingers[1][0].getWorldPosition(hA).distanceTo(Hd.fingers[1][1].getWorldPosition(hB)) / wpp : at.h * 0.05;
+    // the far hand (left) high, behind the edge; the near one (right) lower, in front of it
+    const back = armSide[i] > 0;
+    const y = clamp(sy + at.h * (back ? 0.02 : 0.12) + tug.x * at.h * 0.03, oy + 18, oy + r.height - 18);
+    if (!back || !Hd) {
+      // in front: the wrist just off the edge, so the palm straddles it and the
+      // fingers lie over the card's face, curled in against it; the thumb up the edge
+      // (it reaches across the body: the hand comes forward, where the screen still
+      // has it on the edge, and the elbow out in front, so the arm passes before the chest)
+      toWorld(ox - palm * 0.15, y, z0 + at.h * wpp * GRIP_FWD, gripTo);
+      reach(arm, gripTo, w, gripPole.set(0.15, -1, 0.9).normalize());
+      if (!Hd) return;
+      Hd.fingers.forEach(([, f1, f2, tip], j) => {
+        const up = 0.2 - j * 0.12; // (fanned a little: the index highest)
+        layTo(f1, f2, hIn.set(1, up, -0.05), w);
+        layTo(f2, tip, hIn.set(0.8, up * 0.5, -0.55), w);
       });
-      // (round the edge toward us, then back over the face)
-      layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.7, 0.12, 0.7), w);
-      layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(1, 0.08, 0.15), w);
+      layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.15, 1, 0.25), w);
+      layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(0.35, 1, 0), w);
+      return;
+    }
+    // behind: the palm flat on the card's back, the fingers along it, out of sight;
+    // the hand set so the root of its thumb is at the edge, and the thumb comes round
+    // it toward us and lies back over the face: a pinch on the edge
+    toWorld(ox + palm * 0.9, y, z0, gripTo);
+    reach(arm, gripTo, w);
+    const [tx, ty] = toCanvas(Hd.thumb[0].getWorldPosition(hA));
+    toWorld(ox + palm * 0.9 + (ox - 1 - tx) * w, y, z0, gripTo);
+    reach(arm, gripTo, w);
+    Hd.fingers.forEach(([, f1, f2, tip]) => {
+      layTo(f1, f2, hIn.set(1, 0, -0.2), w);
+      layTo(f2, tip, hIn.set(1, -0.1, -0.35), w);
     });
+    // (round the edge toward us, then back over the face)
+    layTo(Hd.thumb[0], Hd.thumb[1], hIn.set(0.7, 0.12, 0.7), w);
+    layTo(Hd.thumb[1], Hd.thumb[2], hIn.set(1, 0.08, 0.15), w);
   }
   // (a bone laid along a direction in the world, toward its child: weighted)
   const layA = new THREE.Vector3(), layB = new THREE.Vector3();
@@ -5212,7 +5223,19 @@ export async function start({ reduced = false } = {}) {
   //   grav   what pulls it back down, once it has the X and has shot up with it (px/s²)
   //   drop   how far up that climb it lets the X go (of the time to its top)
   //   wait   how long it waits for the case to open before it goes back down (s)
-  const PERCH = { h: [84, 124], top: 0.73, pad: 0.045, off: 0.3, yaw: 0.42, arm: 0.3, side: 0.19, lean: 0.12, rest: 0.14, recoil: 0.16, fly: [0.8, 1.2], grav: 950, drop: 0.92, wait: 0.8 };
+  //   heft   the X's weight stops it as it takes it: this long, its arm drawn out to it (s)
+  //   burn   the burn that gets it going with the X, from a standstill (s)
+  //   sag    how far below level its arm is dragged, the X in tow, on the burn (rad);
+  //          loft: and how far above level it has swung it by the top
+  //   droop  the X hangs this much lower than the arm's own line on the burn; flick: and
+  //          floats this much above it at the top (rad)
+  //   sway   the X on its rim in that hand: how hard the wrist brings it round, and what
+  //          slows it (1/s², 1/s)
+  //   list   it tips this far toward the load, taking it up (rad)
+  //   give   the body gives as the weight comes on, and stretches off the burn (kicks to
+  //          the bump's spring)
+  //   letgo  its arm eases out of the carry this long after it lets go (s)
+  const PERCH = { h: [84, 124], top: 0.73, pad: 0.045, off: 0.3, yaw: 0.42, arm: 0.3, side: 0.19, lean: 0.12, rest: 0.14, recoil: 0.16, fly: [0.8, 1.2], grav: 950, drop: 0.92, wait: 0.8, heft: 0.1, burn: 0.18, sag: 0.8, loft: -0.4, droop: 0.45, flick: 0.25, sway: [170, 14], list: 0.16, give: [1.5, 2.2], letgo: 0.45 };
   // (seat: how much of its weight is on the edge; legs: each shin's swing, angle and
   // rate; clock: the swing's own time)
   const perch = { seat: 0, legs: [{ a: 0, v: 0 }, { a: 0, v: 0 }], clock: 0 };
@@ -5256,8 +5279,12 @@ export async function start({ reduced = false } = {}) {
     if (!S.hit) { S.hit = true; touchdown('feet'); sfx('jet-burst'); } // (opened while it was still on the pad: off it goes)
     snapRig(); // (out of the show's flight, not cut from it)
     // (X: the case's X once it has it: where it is, how fast it goes, how far it leans
-    // and turns; free: let go of; down: it has hit the edge)
-    S.perch = { st: 'wait', t: 0, u: 0, A: null, hp: at.h, dur: 1, v0: 0, up: 1, bx: 0, rk: null, fired: false, vx: S.vx || 0, vy: S.vy || 0, px: at.x, pv: 0, ax: 0, reach: 0, got: false, take: 0, set: 0, sq: 0, sqv: 0, sat: 0, X: { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, free: false, down: false } };
+    // and turns; s, sv: carried, how far round below level it hangs from the hand, and
+    // how fast it swings; free: let go of; down: it has hit the edge)
+    // (vin: the pace it takes the X at; ta: how long the X's weight holds it; lit: the
+    // burn has gone off; aim: where its arm carries the X, below level; hang: where the X
+    // would hang; let: how long since it let go; bk, bkv: its tip toward the load)
+    S.perch = { st: 'wait', t: 0, u: 0, A: null, hp: at.h, dur: 1, v0: 0, up: 1, bx: 0, rk: null, fired: false, vx: S.vx || 0, vy: S.vy || 0, px: at.x, pv: 0, ax: 0, reach: 0, got: false, take: 0, set: 0, sq: 0, sqv: 0, sat: 0, vin: 0, ta: PERCH.heft, lit: false, aim: PERCH.sag, hang: 0, let: 0, bk: 0, bkv: 0, X: { x: 0, y: 0, vx: 0, vy: 0, a: 0, va: 0, s: 0, sv: 0, free: false, down: false } };
     for (const L of perch.legs) L.a = L.v = 0;
   }
   // (the scene as it was: the X back where it belongs, no room made over the card)
@@ -5320,7 +5347,7 @@ export async function start({ reduced = false } = {}) {
     if (S.seen ? !open : Q.t > PERCH.wait) { leavePerch(); return; }
     let G = perchSpot();
     const P = jr.pose || (jr.pose = newPose());
-    let thrust = 0.8, lean = 0, air = 0.5, seat = 0;
+    let thrust = 0.8, lean = 0, air = 0.5, seat = 0, bank = 0;
     if (Q.st === 'wait') {
       // the scene not laid out yet: it hangs on its jets where the poster threw it,
       // drifting to a stop
@@ -5346,52 +5373,90 @@ export async function start({ reduced = false } = {}) {
     if (Q.st !== 'wait') {
       const hp = Q.hp;
       // Beside the X and a little under it, on its right, where its right hand comes to
-      // its rim, rising past it. Then, the X in that hand, straight up on that line: a
-      // burn that throws it up, and from there it is a thrown thing, slowing as it
-      // climbs, stopped a moment at the top (as high as there is room for over the
-      // card), and falling back, onto the card's top edge at the corner: to the right of
-      // where the X was (it eases over to that on the way down).
+      // its rim, rising past it. Then the X's weight stops it, its hand on the rim and
+      // its arm drawn out to it; a burn from that standstill rips the X off its place and
+      // throws them both up on that line, the X hung from that hand; thrown, it slows as
+      // it climbs, swings the X up beside its head and lets it go, all but at the top (as
+      // high as there is room for over the card); and falls back, onto the card's top
+      // edge at the corner: to the right of where the X was (it eases over to that on
+      // the way down).
       const gx = Math.min(G.x + hp * 0.38, view.w - hp * 0.35), gy = G.y + hp * 0.5; // (all but over where it will sit)
       const bx = Q.bx = Math.min(G.x + Math.max(G.half + 12, hp * PERCH.off), G.right - hp * 0.1), by = G.top;
       const rise = clamp(by - hp - 8, hp * 0.3, hp * 0.8); // (its head stays on the screen, where it can)
       const v0 = Math.sqrt(2 * PERCH.grav * (gy - by + rise)); // (thrown up at this, it tops out that far over the edge)
       const yawG = 0.15;
+      const vin = 0.6 * v0; // (the pace it comes up past the X at; and that the X's weight stops)
       if (Q.st === 'fly') {
         Q.u = Math.min(1, Q.u + dt / Q.dur);
         const u = Q.u, D = Q.dur, A = Q.A;
         at.x = hermite(A.x, A.vx * D, gx, 0, u);
-        at.y = hermite(A.y, A.vy * D, gy, -0.6 * v0 * D, u); // (already on its way up as it takes it)
+        at.y = hermite(A.y, A.vy * D, gy, -vin * D, u); // (already on its way up as it takes it)
         at.h = A.h + (hp - A.h) * smooth(u);
         at.yaw = A.yaw + wrapPi(yawG - A.yaw) * smooth(clamp01(u / 0.8));
-        mixPose(P, POSE.hover, POSE.hover, 0);
         Q.reach = smooth(clamp01((u - 0.5) / 0.45)); // (its right hand out to it as it comes up)
+        mixPose(P, POSE.hover, POSE.wind, 0.3 * Q.reach); // (gathering itself as its hand goes out)
         lean = 0.3 * Math.sin(Math.PI * u);
         if (u >= 1) { // (it has it)
+          const g = PERCH.grav, tb = PERCH.burn;
           Q.st = 'lift';
           Q.u = 0;
           Q.got = true;
-          Q.v0 = v0;
-          Q.up = v0 / PERCH.grav; // (the time to the top; and on down to the edge)
-          Q.dur = Q.up + Math.sqrt((2 * rise) / PERCH.grav);
+          Q.vin = vin;
+          Q.ta = Math.min(PERCH.heft, (0.4 * hp) / vin); // (stopped within its arm's reach of the rim)
+          // (what the burn must leave it with, to top out where it did)
+          const left = Math.max(hp * 0.2, gy - by + rise - 0.5 * vin * Q.ta);
+          Q.v0 = g * (Math.sqrt((tb * tb) / 4 + (2 * left) / g) - tb / 2);
+          Q.up = Q.ta + tb + Q.v0 / g; // (the time to the top; and on down to the edge)
+          Q.dur = Q.up + Math.sqrt((2 * rise) / g);
+          Q.sqv += PERCH.give[0]; // (the weight of it)
           sfx('card-tug');
         }
       } else if (Q.st === 'lift') {
         Q.u = Math.min(1, Q.u + dt / Q.dur);
+        const g = PERCH.grav, tb = PERCH.burn, ta = Q.ta, tB = ta + tb;
         const u = Q.u, t = u * Q.dur, top = clamp01(t / Q.up);
-        // (the throw, as it was set off; the card under it may have moved a little since)
-        const y = gy - Q.v0 * t + 0.5 * PERCH.grav * t * t;
-        at.x = gx + (bx - gx) * smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up)));
-        at.y = u < 1 ? Math.min(y, gy) : by;
+        const fall = clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up));
+        const c = clamp01((t - tB) / Math.max(1e-3, Q.up - tB)); // (how far through the coast to the top)
+        // (how far up from where it took it, as it was set off: checked by the X, off on
+        // the burn, thrown; the card under it may have moved a little since)
+        const s = clamp(t - ta, 0, tb), k = Math.max(0, t - tB);
+        const up = t < ta ? Q.vin * t * (1 - t / (2 * ta)) : 0.5 * Q.vin * ta + (0.5 * Q.v0 * s * s) / tb + Q.v0 * k - 0.5 * g * k * k;
+        at.x = gx + (bx - gx) * smooth(fall);
+        at.y = u < 1 ? Math.min(gy - up, gy) : by;
         at.h = hp;
         at.yaw = yawG + (PERCH.yaw - yawG) * smooth(clamp01((u - 0.3) / 0.6));
-        seat = smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up) / 0.9));
-        mixPose(P, POSE.hover, POSE.perch, seat);
-        Q.take = smooth(clamp01(t / 0.16)); // (the X off its place, into the hand)
-        if (top >= PERCH.drop) Q.X.free = true; // (let go of, all but at the top: it drops onto the edge)
-        Q.set = smooth(clamp01((t - Q.up) / Math.max(1e-3, Q.dur - Q.up))); // (and the hand comes down behind it, onto its rim)
-        // (the jets: a hard burn off the mark, dying as it climbs; nothing but its weight after)
-        thrust = 1.1 * (1 - smooth(clamp01(top / 0.45)));
-        air = 0.5 * (1 - seat);
+        seat = smooth(clamp01(fall / 0.9));
+        // its limbs: gathered over the X, out straight on the burn, the knees up as it
+        // runs out of climb
+        const kA = smooth(clamp01(t / ta)), kB = smooth(clamp01((t - ta) / 0.1)), kC = smooth(clamp01((c - 0.1) / 0.6));
+        const hv = smooth(clamp01((c - 0.1) / 0.5)); // (the heave: the X swung up from its side, and still there well before it lets go)
+        mixPose(P, POSE.hover, POSE.wind, 0.3 + 0.45 * kA);
+        mixPose(P, P, POSE.haul, kB);
+        mixPose(P, P, POSE.hoist, 0.85 * kC);
+        mixPose(P, P, POSE.perch, seat);
+        if (!Q.lit && t >= ta) { // (off it comes: stretched by the burn, its head left behind)
+          Q.lit = true;
+          Q.sqv -= PERCH.give[1];
+          nod.v += 3;
+          sfx('jet-burst', { gain: 0.6 });
+        }
+        Q.take = smooth(clamp01((t - ta) / 0.16)); // (the X off its place, into the hand: once the burn has it)
+        Q.aim = PERCH.sag + (PERCH.loft - PERCH.sag) * hv; // (the arm: dragged low, then swung up beside its head)
+        Q.hang = t < ta ? 0 : Q.aim + PERCH.droop * (1 - hv) - PERCH.flick * hv; // (the X: under the arm's line, then over it)
+        bank = PERCH.list * (t < ta ? 0.6 * kA : 1 - smooth(clamp01(c / 0.3))); // (the loaded shoulder pulled down)
+        if (top >= PERCH.drop && !Q.X.free) { // (let go of, all but at the top: it drops onto the edge)
+          Q.X.free = true;
+          // (not tossed so high that it is still coming down when the guide sits: it is
+          // on the edge a moment before; and never off the top of the screen)
+          const T = Math.max(0.05, Q.dur - t - 0.1);
+          Q.X.vy = Math.max(Q.X.vy, Math.min(0, (G.top - G.half + 1 - Q.X.y - 0.5 * XFALL.g * T * T) / T));
+          Q.X.vy = Math.max(Q.X.vy, -Math.sqrt(2 * XFALL.g * Math.max(0, Q.X.y - G.half - 4)));
+        }
+        Q.set = smooth(fall); // (and the hand comes down behind it, onto its rim)
+        // (the jets: opened up against the X, flat out on the burn, cut before it ends:
+        // the flame trails its throttle, see stepJet; nothing but its weight after)
+        thrust = t < ta ? 0.8 + 0.7 * kA : t < ta + 0.6 * tb ? 1.5 : 0;
+        air = 0.5 * (1 - seat) * (1 - 0.7 * kB * (1 - kC)); // (rigid on the burn, loose again at the top)
         if (u >= 1) {
           // down on the edge: the body gives, the card under it too, and its legs are
           // carried on forward
@@ -5419,11 +5484,14 @@ export async function start({ reduced = false } = {}) {
         air = 0;
       }
     }
-    // the bump of sitting down, a stiff spring
+    // the bump of sitting down, a stiff spring (the X's weight and the burn kick it too);
+    // and its tip toward the load, righting itself
     for (let n = dt; n > 1e-6; n -= 1 / 120) {
       const h = Math.min(n, 1 / 120);
       Q.sqv += (-Q.sq * 240 - Q.sqv * 15) * h;
       Q.sq += Q.sqv * h;
+      Q.bkv += ((bank - Q.bk) * 200 - Q.bkv * 16) * h;
+      Q.bk += Q.bkv * h;
     }
     // its legs: thrown by the seat's motion, kicked idly once it has settled; and the
     // body rocks back a little against them
@@ -5443,7 +5511,7 @@ export async function start({ reduced = false } = {}) {
     jr.air = air;
     jr.tilt = lean;
     jr.spin = 0;
-    jr.bank = 0;
+    jr.bank = Q.bk * (1 - seat); // (none of it left once sat)
     jr.fly = 0;
     jr.pitch = 0;
     jr.squash = Q.sq;
@@ -5451,9 +5519,9 @@ export async function start({ reduced = false } = {}) {
     jr.jet = thrust;
     jr.floor = null;
     seatLift = 0;
-    // it has eyes for the X until it has it; sat, for the visitor (or their pointer)
-    if (G && !Q.got) {
-      [glance.x, glance.y] = [G.x, G.y];
+    // it has eyes for the X until it is down on the edge; sat, for the visitor (or their pointer)
+    if (G && (!Q.got || !Q.X.down)) {
+      [glance.x, glance.y] = Q.got && Q.take > 0.05 ? [Q.X.x, Q.X.y] : [G.x, G.y];
       glance.until = performance.now() + 150;
     }
   }
@@ -6237,25 +6305,25 @@ export async function start({ reduced = false } = {}) {
   const hTo = new THREE.Vector3(), hA = new THREE.Vector3(), hB = new THREE.Vector3(), hIn = new THREE.Vector3(), hPole = new THREE.Vector3();
   const armR = armSide.indexOf(Math.min(...armSide)); // (the model's own right)
   const XFALL = { g: 2600, pull: 50, drag: 11, bounce: 0.38, rock: 130, calm: 9 }; // px/s²; toward its spot (1/s², 1/s); kept of a bounce; its rocking (1/s², 1/s)
-  // While that hand has the X its fingers turn a light steel (they lie on the dark
-  // button, where the suit's teal is lost), and back to teal once it lets go.
-  const gloveX = { k: 0, mats: null, a: new THREE.Color(MODEL.palette.Suit.color), b: new THREE.Color(MODEL.palette.Glove.color) };
+  // While that hand has the X it loses its shine (its colour kept): no metal glint, no
+  // edge-glow, matte, as the metal lights up pale against the dark button; back once
+  // it lets go.
+  const MATTE = { metal: 0.1, rough: 0.9, rim: 0 };
+  const matteX = { k: 0, mats: null };
   function perchHold(dt) {
     const Q = trans && trans.kind === 'case' ? trans.perch : null;
     perchGrip(Q, dt);
     const want = Q && Q.got ? 1 : 0;
-    if (want === gloveX.k) return;
-    gloveX.k = reduced ? want : gloveX.k + (want - gloveX.k) * damp(5, dt);
-    if (Math.abs(want - gloveX.k) < 0.002) gloveX.k = want;
-    // (that hand's skins: the meshes that go behind the X, see behindX)
-    // (and what each had, to go back to)
-    if (!gloveX.mats) gloveX.mats = meshes.filter((o) => o.isSkinnedMesh && o.material.userData.uArm.value === 1).map((o) => ({ m: o.material, metal: o.material.metalness, rough: o.material.roughness, rim: o.material.userData.uRimK.value }));
-    const G = MODEL.palette.Glove, k = gloveX.k;
-    for (const { m, metal, rough, rim } of gloveX.mats) {
-      m.color.lerpColors(gloveX.a, gloveX.b, k);
-      m.metalness = metal + (G.metal - metal) * k;
-      m.roughness = rough + (G.rough - rough) * k;
-      m.userData.uRimK.value = rim + (G.rim - rim) * k;
+    if (want === matteX.k) return;
+    matteX.k = reduced ? want : matteX.k + (want - matteX.k) * damp(5, dt);
+    if (Math.abs(want - matteX.k) < 0.002) matteX.k = want;
+    // (that hand's skins, and what each had, to go back to)
+    if (!matteX.mats) matteX.mats = meshes.filter((o) => o.isSkinnedMesh && o.material.userData.uArm.value === 1).map((o) => ({ m: o.material, metal: o.material.metalness, rough: o.material.roughness, rim: o.material.userData.uRimK.value }));
+    const k = matteX.k;
+    for (const { m, metal, rough, rim } of matteX.mats) {
+      m.metalness = metal + (MATTE.metal - metal) * k;
+      m.roughness = rough + (MATTE.rough - rough) * k;
+      m.userData.uRimK.value = rim + (MATTE.rim - rim) * k;
     }
   }
   function perchGrip(Q, dt) {
@@ -6272,20 +6340,41 @@ export async function start({ reduced = false } = {}) {
       reach(arm, hTo, Q.reach);
       return;
     }
+    // (a pixel at its shoulder's distance; that arm's length on the screen; and where it
+    // carries the X: out at its side, as far below level as the climb has it, never so
+    // high that the X leaves the screen)
+    const wpp = (view.wpp * (CAM_Z - kS.z)) / CAM_Z, z0 = kS.z;
+    const armLen = (arm[0].getWorldPosition(hA).distanceTo(arm[1].getWorldPosition(hB)) + hB.distanceTo(arm[2].getWorldPosition(hA))) / wpp;
+    const rim = half * GRIP, R = Math.min(hp * PERCH.arm, armLen * 0.97);
+    const cx = sx - R * Math.cos(Q.aim), cy = Math.max(sy + R * Math.sin(Q.aim), 2 * half + 6);
     if (!X.free) {
-      // carried: from its place, out at the guide's side
-      toWorld(G.x + half * GRIP + (sx - hp * PERCH.arm - G.x - half * GRIP) * Q.take, G.y + (sy + hp * 0.03 - G.y) * Q.take, kS.z, hTo);
+      // carried: hung from that hand by its rim. It hangs, and swings, behind what the
+      // arm does (s: how far round below level; the page's X turns with it)
+      for (let n = dt; n > 1e-6; n -= 1 / 240) {
+        const h = Math.min(n, 1 / 240);
+        X.sv += ((Q.hang - X.s) * PERCH.sway[0] - X.sv * PERCH.sway[1]) * h;
+        X.s += X.sv * h;
+      }
+      // (the hand: from the rim in its place, to where the arm carries it)
+      toWorld(G.x + rim + (cx - G.x - rim) * Q.take, G.y + (cy - G.y) * Q.take, z0, hTo);
       reach(arm, hTo, 1);
       const [px, py] = toCanvas(arm[2].getWorldPosition(hTo)); // (by where the hand really is)
-      const nx = G.x + (px - half * GRIP - G.x) * Q.take, ny = G.y + (py - G.y) * Q.take;
+      // (the hand near the top of the screen, a short window: the X hangs no higher from
+      // it than keeps it all in view)
+      const sMin = Math.asin(clamp((half + 4 - py) / rim, -1, 1));
+      if (X.s < sMin) { X.s = sMin; X.sv = Math.max(0, X.sv); }
+      const nx = G.x + (px - rim * Math.cos(X.s) - G.x) * Q.take, ny = G.y + (py + rim * Math.sin(X.s) - G.y) * Q.take;
       if (dt > 1e-4 && Q.take > 0.05) { // (how fast it goes: let go of, it goes on at that)
         X.vx += (clamp((nx - X.x) / dt, -900, 900) - X.vx) * damp(20, dt);
         X.vy += (clamp((ny - X.y) / dt, -900, 900) - X.vy) * damp(20, dt);
       }
       X.x = nx;
       X.y = ny;
+      X.a = -X.s; // (held by its rim, it turns as it hangs)
+      X.va = clamp(-X.sv, -14, 14); // (and let go of, goes on turning at that)
     } else {
       // on its own: down onto the edge, where it stands
+      Q.let = Math.min(1, Q.let + dt / PERCH.letgo);
       const xf = Q.bx - hp * PERCH.side - half, yf = G.top - half + 1;
       if (!X.down && X.va === 0) X.va = -5; // (it tumbles a little as it goes)
       for (let n = dt; n > 1e-6; n -= 1 / 240) {
@@ -6309,8 +6398,6 @@ export async function start({ reduced = false } = {}) {
       // The hand: behind it, at its rim, and the fingers over the rim. Where on the rim:
       // from the far side round toward the near one, the first place its arm is long
       // enough for (o: out from the X's middle there, on the screen).
-      const wpp = (view.wpp * (CAM_Z - kS.z)) / CAM_Z, z0 = kS.z; // (a pixel, at its shoulder's distance)
-      const armLen = (arm[0].getWorldPosition(hA).distanceTo(arm[1].getWorldPosition(hB)) + hB.distanceTo(arm[2].getWorldPosition(hA))) / wpp;
       const palm = fingers.length ? fingers[Math.min(1, fingers.length - 1)][0].getWorldPosition(hA).distanceTo(fingers[Math.min(1, fingers.length - 1)][1].getWorldPosition(hB)) / wpp : half * 0.4;
       const L = armLen * 0.92; // (as far as it reaches, less a little)
       let ox = -1, oy = 0;
@@ -6320,6 +6407,11 @@ export async function start({ reduced = false } = {}) {
         if (Math.hypot(X.x + (half - palm) * ox - sx, X.y + (half - palm) * oy - sy) <= L) break;
       }
       const rx = X.x + half * ox, ry = X.y + half * oy;
+      // (its arm does not drop the carry at once: it eases out of it, on down to the X)
+      if (Q.let < 1) {
+        toWorld(cx, cy, z0, hTo);
+        reach(arm, hTo, 1 - smooth(Q.let));
+      }
       // (the wrist a palm's length in from the rim, behind the X; the elbow back, out of sight)
       toWorld(rx - (palm - 2) * ox, ry - (palm - 2) * oy, z0, hTo);
       reach(arm, hTo, Q.set, hPole.set(0, 0.15, -1).normalize());
@@ -6338,10 +6430,10 @@ export async function start({ reduced = false } = {}) {
         hTo.copy(hA).addScaledVector(hIn, l2).z += l2 * 0.1;
         swing(f2, tip, hTo, Q.set);
       });
-      const pr = renderer.getPixelRatio();
-      shared.uDisc.value.set(X.x * pr, (view.h - X.y) * pr, half * pr);
-      shared.uGrip.value.set(rx * pr, (view.h - ry) * pr, half * 0.8 * pr);
-      masked = true;
+      const pr = renderer.getPixelRatio(), m = smooth(clamp01(Q.set / 0.35)); // (the arm goes behind it as it comes down to it, not at once)
+      shared.uDisc.value.set(X.x * pr, (view.h - X.y) * pr, half * pr * m);
+      shared.uGrip.value.set(rx * pr, (view.h - ry) * pr, half * 0.8 * pr * m);
+      masked = m > 0;
     }
     if (!masked) shared.uDisc.value.z = 0;
     const tr = `${(X.x - G.x).toFixed(1)}px ${(X.y - G.y).toFixed(1)}px`, ro = `${X.a.toFixed(3)}rad`;
